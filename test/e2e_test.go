@@ -1,6 +1,7 @@
 package test
 
 import (
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -41,9 +42,13 @@ func TestEnd2End(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	numReplica := int32(viper.GetInt("data-replication-factor"))
 	discPort := uint16(viper.GetInt("disc-port"))
-	discAddr := address.NewLocalDiscAddr(discPort)
+	discIp := viper.GetString(fmt.Sprintf("disc-ip"))
+	// discAddr := address.NewLocalDiscAddr(discPort)
+	discAddr := address.NewGeneralDiscAddr(discIp, discPort)
 	dataPort := uint16(viper.GetInt("data-port"))
-	dataAddr := address.NewLocalDataAddr(numReplica, dataPort)
+	dataIp := viper.GetString(fmt.Sprintf("data-%v-%v-ip", 0, 0))
+	// dataAddr := address.NewLocalDataAddr(numReplica, dataPort)
+	dataAddr := address.NewGeneralDataAddr(dataIp, 1, dataPort)
 	cli, err := client.NewClient(dataAddr, discAddr, numReplica)
 	if err != nil {
 		t.Errorf("create client failure: %v", err)

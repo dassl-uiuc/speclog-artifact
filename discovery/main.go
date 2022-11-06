@@ -19,13 +19,16 @@ import (
 func Start() {
 	// read configuration
 	orderPort := uint16(viper.GetInt("order-port"))
+	orderIp := viper.GetString(fmt.Sprintf("order-%v-ip", 0))
 	// for kubernetes deployment, use k8sOrderAddr := address.NewK8sOrderAddr(orderPort)
-	localOrderAddr := address.NewLocalOrderAddr(orderPort)
+	// localOrderAddr := address.NewLocalOrderAddr(orderPort)
+	generalOrderAddr := address.NewGeneralOrderAddr(orderIp, orderPort)
 	port := int16(viper.GetInt("disc-port"))
+	ip := viper.GetString(fmt.Sprintf("disc-ip"))
 	numReplica := int32(viper.GetInt("data-replication-factor"))
 	log.Infof("%v: %v", "data-replication-factor", numReplica)
 	// listen to the port
-	lis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", port))
+	lis, err := net.Listen("tcp", fmt.Sprintf("%v:%v", ip, port))
 	if err != nil {
 		log.Fatalf("Failed to listen to port %v: %v", port, err)
 	}
@@ -41,7 +44,7 @@ func Start() {
 	healthServer.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
 	healthgrpc.RegisterHealthServer(grpcServer, healthServer)
 	// order server
-	server := NewDiscoveryServer(numReplica, localOrderAddr)
+	server := NewDiscoveryServer(numReplica, generalOrderAddr)
 	if server == nil {
 		log.Fatalf("Failed to create discovery server")
 	}

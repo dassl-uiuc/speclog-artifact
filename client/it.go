@@ -18,11 +18,14 @@ type It struct {
 }
 
 func NewIt() (*It, error) {
+	fmt.Println("[NewIt]")
 	numReplica := int32(viper.GetInt("data-replication-factor"))
 	discPort := uint16(viper.GetInt("disc-port"))
-	discAddr := address.NewLocalDiscAddr(discPort)
+	// discAddr := address.NewLocalDiscAddr(discPort)
+	discAddr := address.NewGeneralDiscAddr("127.0.0.1", discPort)
 	dataPort := uint16(viper.GetInt("data-port"))
-	dataAddr := address.NewLocalDataAddr(numReplica, dataPort)
+	// dataAddr := address.NewLocalDataAddr(numReplica, dataPort)
+	dataAddr := address.NewGeneralDataAddr("127.0.0.1", numReplica, dataPort)
 	client, err := NewClient(dataAddr, discAddr, numReplica)
 	if err != nil {
 		return nil, err
@@ -32,6 +35,7 @@ func NewIt() (*It, error) {
 }
 
 func NewK8sIt() (*It, error) {
+	fmt.Println("[NewK8sIt]")
 	numReplica := int32(viper.GetInt("data-replication-factor"))
 	discPort := uint16(viper.GetInt("disc-port"))
 	discAddr := address.NewK8sDiscAddr(discPort)

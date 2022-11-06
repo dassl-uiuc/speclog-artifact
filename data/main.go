@@ -36,12 +36,16 @@ func StartData(sid, rid int32) {
 	basePort := uint16(viper.GetInt("data-port"))
 	port := basePort + uint16(sid*numReplica+rid)
 	log.Infof("%v: %v", "data-port", port)
+	ip := viper.GetString(fmt.Sprintf("data-%v-%v-ip", sid, rid))
 	orderPort := uint16(viper.GetInt("order-port"))
+	orderIp := viper.GetString(fmt.Sprintf("order-%v-ip", 0))
 	// for kubernetes deployment, use k8sOrderAddr := address.NewK8sOrderAddr(orderPort)
-	localOrderAddr := address.NewLocalOrderAddr(orderPort)
-	localDataAddr := address.NewLocalDataAddr(numReplica, basePort)
+	// localOrderAddr := address.NewLocalOrderAddr(orderPort)
+	// localDataAddr := address.NewLocalDataAddr(numReplica, basePort)
+	generalOrderAddr := address.NewGeneralOrderAddr(orderIp, orderPort)
+	generalDataAddr := address.NewGeneralDataAddr(ip, numReplica, basePort)
 	// listen to the port
-	lis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", port))
+	lis, err := net.Listen("tcp", fmt.Sprintf("%v:%v", ip, port)) // TODO
 	if err != nil {
 		log.Fatalf("Failed to listen to port %v: %v", port, err)
 	}
@@ -57,7 +61,7 @@ func StartData(sid, rid int32) {
 	healthServer.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
 	healthgrpc.RegisterHealthServer(grpcServer, healthServer)
 	// data server
-	server := NewDataServer(rid, sid, numReplica, batchingInterval, localDataAddr, localOrderAddr)
+	server := NewDataServer(rid, sid, numReplica, batchingInterval, generalDataAddr, generalOrderAddr)
 	if server == nil {
 		log.Fatalf("Failed to create data server")
 	}

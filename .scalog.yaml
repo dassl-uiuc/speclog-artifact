@@ -2,9 +2,17 @@ order-port: 26733
 raft-port: 27238
 order-replication-factor: 3
 order-batching-interval: 1000ms
+order-0-ip: "127.0.0.1"
+order-1-ip: "127.0.0.1"
+order-2-ip: "127.0.0.1"
 
 data-port: 23282
 data-replication-factor: 2
 data-batching-interval: 1000ms
+data-0-0-ip: "127.0.0.1"
+data-0-1-ip: "127.0.0.1"
+data-1-0-ip: "127.0.0.1"
+data-1-1-ip: "127.0.0.1"
 
 disc-port: 23472
+disc-ip: "127.0.0.1"

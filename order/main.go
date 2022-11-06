@@ -29,18 +29,20 @@ func StartOrder(oid int32) {
 	if err != nil {
 		log.Fatalf("Failed to parse order-batching-interval: %v", err)
 	}
-	port := int32(viper.GetInt("order-port")) + oid
+	port := uint16(int32(viper.GetInt("order-port")) + oid)
 	log.Infof("order-port: %v", port)
 	raftPort := int32(viper.GetInt("raft-port"))
-	log.Infof("Starting order server %v at 0.0.0.0:%v", oid, port)
+	ip := viper.GetString(fmt.Sprintf("order-%v-ip", oid))
+	// generalOrderAddr := address.NewGeneralOrderAddr(ip, port)
+	log.Infof("Starting order server %v at %v:%v", oid, ip, port)
 	log.Infof("replication-factor: %v", numReplica)
 	log.Infof("order-batching-interval: %v", batchingInterval)
 	peerList := make([]string, numReplica)
 	for i := int32(0); i < numReplica; i++ {
-		peerList[int(i)] = fmt.Sprintf("http://127.0.0.1:%v", raftPort+i)
+		peerList[int(i)] = fmt.Sprintf("http://%v:%v", ip, raftPort+i)
 	}
 	// listen to the port
-	lis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%v", port))
+	lis, err := net.Listen("tcp", fmt.Sprintf("%v:%v", ip, port)) //TODO
 	if err != nil {
 		log.Fatalf("Failed to listen to port %v: %v", port, err)
 	}

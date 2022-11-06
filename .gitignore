@@ -24,3 +24,6 @@ tmp
 storage-*
 raftexample-*
 coverage.txt
+
+# IDEA stuff
+.idea
