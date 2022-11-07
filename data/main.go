@@ -36,16 +36,16 @@ func StartData(sid, rid int32) {
 	basePort := uint16(viper.GetInt("data-port"))
 	port := basePort + uint16(sid*numReplica+rid)
 	log.Infof("%v: %v", "data-port", port)
-	ip := viper.GetString(fmt.Sprintf("data-%v-%v-ip", sid, rid))
+	// ip := viper.GetString(fmt.Sprintf("data-%v-%v-ip", sid, rid))
 	orderPort := uint16(viper.GetInt("order-port"))
 	orderIp := viper.GetString(fmt.Sprintf("order-%v-ip", 0))
 	// for kubernetes deployment, use k8sOrderAddr := address.NewK8sOrderAddr(orderPort)
 	// localOrderAddr := address.NewLocalOrderAddr(orderPort)
 	// localDataAddr := address.NewLocalDataAddr(numReplica, basePort)
 	generalOrderAddr := address.NewGeneralOrderAddr(orderIp, orderPort)
-	generalDataAddr := address.NewGeneralDataAddr(ip, numReplica, basePort)
+	generalDataAddr := address.NewGeneralDataAddr("data-%v-%v-ip", numReplica, basePort)
 	// listen to the port
-	lis, err := net.Listen("tcp", fmt.Sprintf("%v:%v", ip, port)) // TODO
+	lis, err := net.Listen("tcp", fmt.Sprintf("%v", generalDataAddr.Get(sid, rid)))
 	if err != nil {
 		log.Fatalf("Failed to listen to port %v: %v", port, err)
 	}

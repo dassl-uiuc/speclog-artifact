@@ -21,11 +21,13 @@ func NewIt() (*It, error) {
 	fmt.Println("[NewIt]")
 	numReplica := int32(viper.GetInt("data-replication-factor"))
 	discPort := uint16(viper.GetInt("disc-port"))
+	discIp := viper.GetString(fmt.Sprintf("disc-ip"))
 	// discAddr := address.NewLocalDiscAddr(discPort)
-	discAddr := address.NewGeneralDiscAddr("127.0.0.1", discPort)
+	discAddr := address.NewGeneralDiscAddr(discIp, discPort)
 	dataPort := uint16(viper.GetInt("data-port"))
+	// dataIp := viper.GetString(fmt.Sprintf("data-%v-%v-ip", 0, 0))
 	// dataAddr := address.NewLocalDataAddr(numReplica, dataPort)
-	dataAddr := address.NewGeneralDataAddr("127.0.0.1", numReplica, dataPort)
+	dataAddr := address.NewGeneralDataAddr("data-%v-%v-ip", numReplica, dataPort)
 	client, err := NewClient(dataAddr, discAddr, numReplica)
 	if err != nil {
 		return nil, err

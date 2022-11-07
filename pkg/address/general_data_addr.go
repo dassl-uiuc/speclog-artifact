@@ -1,15 +1,18 @@
 package address
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/spf13/viper"
+)
 
 type GeneralDataAddr struct {
-	ip	       string
+	ipFmt	   string
 	numReplica int32
 	basePort   uint16
 }
 
-func NewGeneralDataAddr(ip string, numReplica int32, basePort uint16) *GeneralDataAddr {
-	return &GeneralDataAddr{ip, numReplica, basePort}
+func NewGeneralDataAddr(ipFmt string, numReplica int32, basePort uint16, ) *GeneralDataAddr {
+	return &GeneralDataAddr{ipFmt, numReplica, basePort}
 }
 
 func (s *GeneralDataAddr) UpdateBasePort(basePort uint16) {
@@ -18,5 +21,5 @@ func (s *GeneralDataAddr) UpdateBasePort(basePort uint16) {
 
 func (s *GeneralDataAddr) Get(sid, rid int32) string {
 	port := s.basePort + uint16(sid*s.numReplica+rid)
-	return fmt.Sprintf("%v:%v", s.ip, port)
+	return fmt.Sprintf("%v:%v", viper.GetString(fmt.Sprintf(s.ipFmt, sid, rid)), port)
 }

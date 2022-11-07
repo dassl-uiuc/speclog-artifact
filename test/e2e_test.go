@@ -46,9 +46,9 @@ func TestEnd2End(t *testing.T) {
 	// discAddr := address.NewLocalDiscAddr(discPort)
 	discAddr := address.NewGeneralDiscAddr(discIp, discPort)
 	dataPort := uint16(viper.GetInt("data-port"))
-	dataIp := viper.GetString(fmt.Sprintf("data-%v-%v-ip", 0, 0))
+	// dataIp := viper.GetString(fmt.Sprintf("data-%v-%v-ip", 0, 0))
 	// dataAddr := address.NewLocalDataAddr(numReplica, dataPort)
-	dataAddr := address.NewGeneralDataAddr(dataIp, 1, dataPort)
+	dataAddr := address.NewGeneralDataAddr("data-%v-%v-ip", numReplica, dataPort)
 	cli, err := client.NewClient(dataAddr, discAddr, numReplica)
 	if err != nil {
 		t.Errorf("create client failure: %v", err)
