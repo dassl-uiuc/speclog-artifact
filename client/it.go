@@ -18,7 +18,6 @@ type It struct {
 }
 
 func NewIt() (*It, error) {
-	fmt.Println("[NewIt]")
 	numReplica := int32(viper.GetInt("data-replication-factor"))
 	discPort := uint16(viper.GetInt("disc-port"))
 	discIp := viper.GetString(fmt.Sprintf("disc-ip"))
@@ -37,7 +36,6 @@ func NewIt() (*It, error) {
 }
 
 func NewK8sIt() (*It, error) {
-	fmt.Println("[NewK8sIt]")
 	numReplica := int32(viper.GetInt("data-replication-factor"))
 	discPort := uint16(viper.GetInt("disc-port"))
 	discAddr := address.NewK8sDiscAddr(discPort)
