@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const NumberOfRequest = 100
+const NumberOfRequest = 10
 const NumberOfBytes = 100
 const StreamName = "AppendBenchmark"
 

@@ -173,6 +173,7 @@ func (s *DataServer) Start() {
 		err := s.ConnPeers()
 		if err != nil {
 			log.Errorf("%v", err)
+			time.Sleep(time.Second)
 			continue
 		}
 		go s.processAppend()
