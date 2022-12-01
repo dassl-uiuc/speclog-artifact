@@ -39,7 +39,8 @@ func StartOrder(oid int32) {
 	log.Infof("order-batching-interval: %v", batchingInterval)
 	peerList := make([]string, numReplica)
 	for i := int32(0); i < numReplica; i++ {
-		peerList[int(i)] = fmt.Sprintf("http://%v:%v", ip, raftPort+i)
+		peerIp := viper.GetString(fmt.Sprintf("order-%v-ip", i))
+		peerList[int(i)] = fmt.Sprintf("http://%v:%v", peerIp, raftPort+i)
 	}
 	// listen to the port
 	lis, err := net.Listen("tcp", fmt.Sprintf("%v:%v", ip, port)) //TODO

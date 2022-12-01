@@ -1,0 +1,6 @@
+# Use goreman to run `go get github.com/mattn/goreman`
+
+client-1: go run append_bench.go 10000 50000 50_KB_parallel_append_1.csv
+client-2: go run append_bench.go 10000 50000 50_KB_parallel_append_2.csv
+client-3: go run append_bench.go 10000 50000 50_KB_parallel_append_3.csv
+client-4: go run append_bench.go 10000 50000 50_KB_parallel_append_4.csv

@@ -88,7 +88,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.prevCommittedCut = &orderpb.CommittedCut{}
 	s.records = make(map[int64]*datapb.Record)
 	path := fmt.Sprintf("log/storage-%v-%v", shardID, replicaID) // TODO configure path
-	segLen := int32(1000)                                        // TODO configurable segment length
+	segLen := int32(15000)                                        // TODO configurable segment length
 	storage, err := storage.NewStorage(path, replicaID, numReplica, segLen)
 	if err != nil {
 		log.Fatalf("Create storage failed: %v", err)
@@ -230,7 +230,7 @@ func (s *DataServer) replicateRecords(done <-chan interface{}, ch chan *datapb.R
 	for {
 		select {
 		case record := <-ch:
-			log.Debugf("Data %v,%v send: %v", s.shardID, s.replicaID, record)
+			log.Debugf("Data %v,%v send", s.shardID, s.replicaID)
 			err := (*client).Send(record)
 			if err != nil {
 				log.Errorf("Send record error: %v", err)
@@ -249,7 +249,7 @@ func (s *DataServer) processAppend() {
 		s.replicateC <- record
 		for i, c := range s.replicateSendC {
 			if int32(i) != s.replicaID {
-				log.Debugf("Data forward to %v: %v", i, record)
+				log.Debugf("Data forward to %v", i)
 				c <- record
 			}
 		}
@@ -259,7 +259,7 @@ func (s *DataServer) processAppend() {
 // processReplicate writes records to local storage
 func (s *DataServer) processReplicate() {
 	for record := range s.replicateC {
-		log.Debugf("Data %v,%v process: %v", s.shardID, s.replicaID, record)
+		log.Debugf("Data %v,%v process", s.shardID, s.replicaID)
 		lsn, err := s.storage.WriteToPartition(record.LocalReplicaID, record.Record)
 		if err != nil {
 			log.Fatalf("Write to storage failed: %v", err)

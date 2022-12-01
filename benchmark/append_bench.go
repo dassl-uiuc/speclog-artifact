@@ -75,7 +75,7 @@ func main() {
 		dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
 		runTimes = append(runTimes, runEndTime.Sub(runStartTime))
 
-		_, _ = fmt.Fprintf(os.Stdout, "Append result: { Gsn: %d, Shard: %d, Record: %s }\n", gsn, shard, record)
+		_, _ = fmt.Fprintf(os.Stdout, "Append result: { Gsn: %d, Shard: %d }\n", gsn, shard)
 	}
 	endTime := time.Now()
 

@@ -64,7 +64,8 @@ func main() {
 		runTimes = append(runTimes, runEndTime.Sub(runStartTime))
 		totalBytes += len(record)
 
-		_, _ = fmt.Fprintf(os.Stdout, "%v\n", record)
+		_, _ = fmt.Fprintf(os.Stdout, "Read Result: %v bytes\n", len(record))
+		// _, _ = fmt.Fprintf(os.Stdout, "%v\n", record)
 	}
 	endTime := time.Now()
 
