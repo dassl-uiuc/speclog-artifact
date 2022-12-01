@@ -17,7 +17,11 @@ func main() {
 	if err != nil {
 		log.Errorf("shard id should be integer")
 	}
-	fileName := os.Args[2]
+	numberOfRequest, err := strconv.Atoi(os.Args[2])
+	if err != nil {
+		log.Errorf("number of request should be integer")
+	}
+	fileName := os.Args[3]
 	// clean up old files
 	err = os.RemoveAll("log")
 	if err != nil {
@@ -50,13 +54,13 @@ func main() {
 	totalBytes := 0
 
 	startTime := time.Now()
-	for gsn := 0; ; gsn++ {
+	for gsn := 0; gsn < numberOfRequest; gsn++ {
 		runStartTime := time.Now()
 		record, err := cli.Read(int64(gsn), int32(shardId), int32(0))
 		runEndTime := time.Now()
 
-		if record == "" || err != nil {
-			break
+		if err != nil {
+			continue
 		}
 
 		GSNs = append(GSNs, int64(gsn))
@@ -64,7 +68,7 @@ func main() {
 		runTimes = append(runTimes, runEndTime.Sub(runStartTime))
 		totalBytes += len(record)
 
-		_, _ = fmt.Fprintf(os.Stdout, "Read Result: %v bytes\n", len(record))
+		_, _ = fmt.Fprintf(os.Stdout, "Read Result: { Gsn: %d, Shard: %d, Size: %v bytes}\n", gsn, shardId, len(record))
 		// _, _ = fmt.Fprintf(os.Stdout, "%v\n", record)
 	}
 	endTime := time.Now()

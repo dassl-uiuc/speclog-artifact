@@ -52,6 +52,9 @@ func (s *OrderServer) respondToDataReplica(done chan struct{}, stream orderpb.Or
 				s.subCMu.Unlock()
 				log.Infof("Client %v is closed", cid)
 				close(respC)
+				if _, ok := <-done; !ok {
+					return
+				}
 				close(done)
 				return
 			}
