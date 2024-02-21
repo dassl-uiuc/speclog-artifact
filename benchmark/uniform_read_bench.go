@@ -2,15 +2,16 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
+	"os"
+	"strconv"
+	"time"
+
 	"github.com/scalog/scalog/benchmark/util"
 	"github.com/scalog/scalog/client"
 	log "github.com/scalog/scalog/logger"
 	"github.com/scalog/scalog/pkg/address"
 	"github.com/spf13/viper"
-	"math/rand"
-	"os"
-	"strconv"
-	"time"
 )
 
 func main() {

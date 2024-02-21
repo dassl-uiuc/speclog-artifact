@@ -2,14 +2,15 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"strconv"
+	"time"
+
 	"github.com/scalog/scalog/benchmark/util"
 	"github.com/scalog/scalog/client"
 	log "github.com/scalog/scalog/logger"
 	"github.com/scalog/scalog/pkg/address"
 	"github.com/spf13/viper"
-	"os"
-	"strconv"
-	"time"
 )
 
 const NumberOfRequest = 10
@@ -75,9 +76,9 @@ func main() {
 		dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
 		runTimes = append(runTimes, runEndTime.Sub(runStartTime))
 
-		_, _ = fmt.Fprintf(os.Stdout, "Append result: { Gsn: %d, Shard: %d, Size: %v bytes }\n", gsn, shard, len(record))
+		// _, _ = fmt.Fprintf(os.Stdout, "Append result: { Gsn: %d, Shard: %d, Size: %v bytes }\n", gsn, shard, len(record))
 	}
 	endTime := time.Now()
 
-	util.LogCsvFile(numberOfRequest, numberOfBytes * numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
+	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
 }

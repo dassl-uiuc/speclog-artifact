@@ -18,6 +18,7 @@ require (
 	github.com/inconshreveable/mousetrap v1.0.0
 	github.com/json-iterator/go v1.1.7
 	github.com/magiconair/properties v1.8.1
+	github.com/mattn/goreman v0.3.15 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/mitchellh/mapstructure v1.1.2
@@ -42,7 +43,7 @@ require (
 	golang.org/x/crypto v0.0.0-20190701094942-4def268fd1a4
 	golang.org/x/net v0.0.0-20190812203447-cdfb69ac37fc
 	golang.org/x/oauth2 v0.0.0-20190604053449-0f29369cfe45
-	golang.org/x/sys v0.0.0-20190616124812-15dcb6c0061f
+	golang.org/x/sys v0.6.0
 	golang.org/x/text v0.3.2
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4
 	google.golang.org/appengine v1.6.1
