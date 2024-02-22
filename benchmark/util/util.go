@@ -36,7 +36,7 @@ func LogCsvFile(numberOfRequest, totalByte int, totalTime time.Duration, GSNs []
 
 	csvWriter := csv.NewWriter(file)
 
-	startRow := []string{"id", "gsn", "shardId", "latency", "dataGenTime", "totalBytes", "totalTime"}
+	startRow := []string{"id", "gsn", "shardId", "latency (ns)", "dataGenTime (ns)", "totalBytes", "totalTime (ns)"}
 	err = csvWriter.Write(startRow)
 	if err != nil {
 		log.Println("failed to write csv file")

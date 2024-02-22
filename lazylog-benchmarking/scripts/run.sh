@@ -12,10 +12,13 @@ order=("007" "090" "030")
 # index into remote_nodes/ips for data shards
 data_0=("096" "116")
 
-for ((c=2; c<=8; c++))
-do
-    pids=()
+clients=("1" "2" "4" "6" "8" "10" "12" "15" "18" "24")
 
+for c in "${clients[@]}"; 
+do
+    # mount storage and clear existing logs if any
+    sudo ./run_script_on_all.sh ./setup_disk.sh
+    
     # start order nodes
     for ((i=0; i<=2; i++))
     do
