@@ -87,7 +87,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.wait = make(map[int64]chan *datapb.Ack)
 	s.prevCommittedCut = &orderpb.CommittedCut{}
 	s.records = make(map[int64]*datapb.Record)
-	path := fmt.Sprintf("log/storage-%v-%v", shardID, replicaID) // TODO configure path
+	path := fmt.Sprintf("/scalog-storage/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(50000)                                        // TODO configurable segment length
 	storage, err := storage.NewStorage(path, replicaID, numReplica, segLen)
 	if err != nil {

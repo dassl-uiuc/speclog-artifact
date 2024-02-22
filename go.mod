@@ -16,8 +16,11 @@ require (
 	github.com/googleapis/gnostic v0.3.1
 	github.com/hashicorp/hcl v1.0.0
 	github.com/inconshreveable/mousetrap v1.0.0
+	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/json-iterator/go v1.1.7
 	github.com/magiconair/properties v1.8.1
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/mattn/goreman v0.3.15 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1
 	github.com/mitchellh/go-homedir v1.1.0
@@ -51,6 +54,7 @@ require (
 	google.golang.org/grpc v1.21.1
 	gopkg.in/inf.v0 v0.9.1
 	gopkg.in/yaml.v2 v2.2.2
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/api v0.0.0-20190814101207-0772a1bdf941
 	k8s.io/apimachinery v0.0.0-20190814100815-533d101be9a6
 	k8s.io/client-go v0.0.0-20190620085101-78d2af792bab
