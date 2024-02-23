@@ -12,10 +12,6 @@ num_clients=$1
 # Output Procfile
 procfile="Procfile"
 
-# Output directory for the test output
-output_dir="../append_bench_$1"
-sudo mkdir $output_dir
-
 # Function to generate command for each client
 generate_command() {
   client_number=$1

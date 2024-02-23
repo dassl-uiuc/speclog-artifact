@@ -207,7 +207,7 @@ func (c *Client) processAppend() {
 			ClientSN: c.getNextClientSN(),
 			Record:   r.Record,
 		}
-		log.Infof("shard: %v, replica: %v\n", shard, replica)
+		// log.Infof("shard: %v, replica: %v\n", shard, replica)
 		client, err := c.getDataAppendClient(shard, replica)
 		if err != nil {
 			log.Errorf("%v", err)
@@ -248,7 +248,7 @@ func (c *Client) AppendOne(record string) (int64, int32, error) {
 		Record:   record,
 	}
 	shard, replica := c.shardingPolicy.Shard(c.view, record)
-	log.Infof("shard: %v, replica: %v\n", shard, replica)
+	// log.Infof("shard: %v, replica: %v\n", shard, replica)
 	conn, err := c.getDataServerConn(shard, replica)
 	if err != nil {
 		return 0, 0, err

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/scalog/scalog/benchmark/util"
@@ -52,6 +53,8 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 	}
 
+	parts := strings.Split(fileName, "_")
+	clientId := strings.Split(parts[4], ".")[0] // Remove the file extension
 	var GSNs []int64
 	var shardIds []int32
 	var dataGenTimes []time.Duration
@@ -76,7 +79,9 @@ func main() {
 		dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
 		runTimes = append(runTimes, runEndTime.Sub(runStartTime))
 
-		// _, _ = fmt.Fprintf(os.Stdout, "Append result: { Gsn: %d, Shard: %d, Size: %v bytes }\n", gsn, shard, len(record))
+		if i%500 == 0 {
+			_, _ = fmt.Fprintf(os.Stdout, "[client-%s]: Running command %d\n", clientId, i)
+		}
 	}
 	endTime := time.Now()
 
