@@ -27,7 +27,7 @@ func GenerateRandomString(length int) string {
 	return randomStringMap[length]
 }
 
-func LogCsvFile(numberOfRequest, totalByte int, totalTime time.Duration, GSNs []int64, shardIds []int32, runTimes, dataGenTimes []time.Duration, filename string) {
+func LogCsvFile(numberOfRequest, totalByte int, totalTime time.Duration, GSNs []int64, shardIds []int32, runTimes, dataGenTimes []time.Duration, filename string, numTimeouts int64) {
 	file, err := os.Create(filename)
 	if err != nil {
 		log.Println("failed to open csv file")
@@ -36,7 +36,7 @@ func LogCsvFile(numberOfRequest, totalByte int, totalTime time.Duration, GSNs []
 
 	csvWriter := csv.NewWriter(file)
 
-	startRow := []string{"id", "gsn", "shardId", "latency(ns)", "dataGenTime(ns)", "totalBytes", "totalTime(ns)"}
+	startRow := []string{"id", "gsn", "shardId", "latency(ns)", "dataGenTime(ns)", "totalBytes", "totalTime(ns)", "numTimeouts"}
 	err = csvWriter.Write(startRow)
 	if err != nil {
 		log.Println("failed to write csv file")
@@ -53,7 +53,7 @@ func LogCsvFile(numberOfRequest, totalByte int, totalTime time.Duration, GSNs []
 			dataGenTime = 0
 		}
 
-		row := []string{strconv.Itoa(i), strconv.Itoa(int(gsn)), strconv.Itoa(int(shardId)), strconv.Itoa(int(latency)), strconv.Itoa(int(dataGenTime)), strconv.Itoa(totalByte), strconv.Itoa(int(totalTime))}
+		row := []string{strconv.Itoa(i), strconv.Itoa(int(gsn)), strconv.Itoa(int(shardId)), strconv.Itoa(int(latency)), strconv.Itoa(int(dataGenTime)), strconv.Itoa(totalByte), strconv.Itoa(int(totalTime)), strconv.Itoa(int(numTimeouts))}
 		err = csvWriter.Write(row)
 		if err != nil {
 			log.Println("failed to write csv file")

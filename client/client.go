@@ -23,6 +23,11 @@ type ShardingPolicy interface {
 
 // ShardingPolicy determines which records are appended to which shards.
 
+type tuple struct {
+	ack *datapb.Ack
+	err error
+}
+
 type Client struct {
 	clientID       int32
 	numReplica     int32
@@ -122,7 +127,7 @@ func (c *Client) UpdateDiscoveryAddr(addr string) error {
 	if err != nil {
 		log.Errorf("%v", err)
 	}
-	log.Debugf("Discovery updating view: %v", v)
+	// log.Debugf("Discovery updating view: %v", v)
 	err = c.view.Update(v)
 	if err != nil {
 		log.Errorf("%v", err)
