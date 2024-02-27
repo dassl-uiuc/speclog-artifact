@@ -34,7 +34,8 @@ def calculate_avg_throughput_latency(directory, num_bytes_per_op):
             return (None, None)
     return (None, None)
 
-clients = [10]
+#clients = [8, 10, 12, 16, 18, 20, 24, 30, 64, 128, 256, 512, 600, 700, 800, 900, 1000, 1200, 1300]
+clients = [2]
 throughput = []
 latency = []
 

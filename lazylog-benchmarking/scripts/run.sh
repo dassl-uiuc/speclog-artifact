@@ -12,7 +12,7 @@ order=("007" "090" "030")
 # index into remote_nodes/ips for data shards
 data_0=("096" "116")
 
-client_nodes=("034")
+client_nodes=("034" "078")
 
 cleanup_servers() {
     # kill existing servers
@@ -60,12 +60,9 @@ start_client() {
     ssh -i $PASSLESS_ENTRY sgbhat3@hp$1.utah.cloudlab.us "cd $benchmark_dir/scripts; sudo ./run_client.sh $2 $3 $1 $4 > client_$1.log 2>&1" &
 }
 
-# single client
-#clients=("512" "256" "128" "64" "30" "25" "20" "18" "16" "12" "10" "8" "6" "4" "2" "1")
 
-# two clients
-# clients=("600" "700" "800" "900" "1000" "1200" "1300")
-clients=("10")
+# clients
+clients=("1300" "1200" "1000" "900" "800" "700" "600" "512" "256" "128" "64" "30" "25" "20" "18" "16" "12" "10" "8" "6" "4" "2")
 
 for c in "${clients[@]}"; 
 do
@@ -89,7 +86,7 @@ do
     do
         # run client
         # start_client <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients>
-        start_client $client_node $(($c/$num_client_nodes)) "4m" $c
+        start_client $client_node $(($c/$num_client_nodes)) "2m" $c
     done
 
     echo "Waiting for clients to terminate"
@@ -99,5 +96,9 @@ do
     do
         cleanup_client $client_node
     done
+
+    # clear client logs
+    sudo rm -rf *.log
+    
     cleanup_servers_wo_log_clear
 done
