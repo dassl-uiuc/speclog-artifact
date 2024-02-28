@@ -165,6 +165,9 @@ func (s *Segment) Assign(ssn, length int32, gsn int64) error {
 	if s.closed {
 		return fmt.Errorf("Segment closed")
 	}
+	if ssn == 0 {
+		s.baseGSN = gsn
+	}
 	gsnOffset := int32(gsn - s.baseGSN)
 	for i := int32(0); i < length; i++ {
 		if pos, ok := s.lsnMap[ssn+i]; ok {

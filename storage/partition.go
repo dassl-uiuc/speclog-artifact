@@ -49,6 +49,8 @@ func (p *Partition) Read(gsn int64) (string, error) {
 }
 
 func (p *Partition) ReadGSN(gsn int64) (string, error) {
+	p.segmentsMu.RLock()
+	defer p.segmentsMu.RUnlock()
 	if gsn >= p.activeSegment.baseGSN {
 		return p.activeSegment.ReadGSN(gsn)
 	}
@@ -63,6 +65,8 @@ func (p *Partition) ReadGSN(gsn int64) (string, error) {
 }
 
 func (p *Partition) ReadLSN(lsn int64) (string, error) {
+	p.segmentsMu.RLock()
+	defer p.segmentsMu.RUnlock()
 	if lsn >= p.activeSegment.baseLSN {
 		return p.activeSegment.ReadLSN(lsn)
 	}

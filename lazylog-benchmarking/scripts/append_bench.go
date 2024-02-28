@@ -91,7 +91,7 @@ func main() {
 		record := util.GenerateRandomString(numberOfBytes)
 		dataGenEndTime := time.Now()
 		runStartTime := time.Now()
-		gsn, shard, err := AppendOneWithTimeout(cli, record)
+		gsn, shard, err := cli.AppendOne(record)
 		runEndTime := time.Now()
 
 		if err != nil {

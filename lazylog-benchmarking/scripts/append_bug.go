@@ -42,7 +42,7 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 	}
 
-	for numberOfRequest := 0; numberOfRequest < 1002; numberOfRequest++ {
+	for numberOfRequest := 0; numberOfRequest < 3000; numberOfRequest++ {
 		record := strconv.Itoa(numberOfRequest)
 		gsn, _, err := cli.AppendOne(record)
 
@@ -52,11 +52,16 @@ func main() {
 		}
 		fmt.Println("executing ", record, " ", gsn)
 	}
-	test, err := cli.Read(1001, 0, 0)
-	if err != nil {
-		fmt.Println("read error")
-	}
-	if test != "1001" {
-		fmt.Println("bug!! expected 1001, got ", test)
+
+	for numberOfRequest := 0; numberOfRequest < 3000; numberOfRequest++ {
+		str, err := cli.Read(int64(numberOfRequest), 0, 1)
+		// fmt.Println(str)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "read failure")
+		}
+		num, _ := strconv.Atoi(str)
+		if num != numberOfRequest {
+			fmt.Println("bug!", num, " ", str, " ", numberOfRequest)
+		}
 	}
 }

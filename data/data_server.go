@@ -88,7 +88,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.prevCommittedCut = &orderpb.CommittedCut{}
 	s.records = make(map[int64]*datapb.Record)
 	path := fmt.Sprintf("/users/sgbhat3/scalog-storage/storage-%v-%v", shardID, replicaID) // TODO configure path
-	segLen := int32(2000000000)                                                            // TODO configurable segment length
+	segLen := int32(1000)                                                                  // TODO configurable segment length
 	storage, err := storage.NewStorage(path, replicaID, numReplica, segLen)
 	if err != nil {
 		log.Fatalf("Create storage failed: %v", err)
@@ -264,9 +264,11 @@ func (s *DataServer) processReplicate() {
 		if err != nil {
 			log.Fatalf("Write to storage failed: %v", err)
 		}
-		s.recordsMu.Lock()
-		s.records[lsn] = record
-		s.recordsMu.Unlock()
+		if record.LocalReplicaID == s.replicaID {
+			s.recordsMu.Lock()
+			s.records[lsn] = record
+			s.recordsMu.Unlock()
+		}
 		s.localCutMu.Lock()
 		s.localCut[record.LocalReplicaID] = lsn + 1
 		s.localCutMu.Unlock()
