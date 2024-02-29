@@ -88,7 +88,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.prevCommittedCut = &orderpb.CommittedCut{}
 	s.records = make(map[int64]*datapb.Record)
 	path := fmt.Sprintf("/users/sgbhat3/scalog-storage/storage-%v-%v", shardID, replicaID) // TODO configure path
-	segLen := int32(1000)                                                                  // TODO configurable segment length
+	segLen := int32(50000)                                                                 // TODO configurable segment length
 	storage, err := storage.NewStorage(path, replicaID, numReplica, segLen)
 	if err != nil {
 		log.Fatalf("Create storage failed: %v", err)
@@ -400,12 +400,22 @@ func (s *DataServer) processCommittedEntry() {
 	}
 }
 
-func (s *DataServer) WaitForAck(cid, csn int32) *datapb.Ack {
+func (s *DataServer) CreateAck(cid, csn int32) {
 	id := int64(cid)<<32 + int64(csn)
-	ackC := make(chan *datapb.Ack, 4096)
+	ackC := make(chan *datapb.Ack, 1)
 	s.waitMu.Lock()
 	s.wait[id] = ackC
 	s.waitMu.Unlock()
+}
+
+func (s *DataServer) WaitForAck(cid, csn int32) *datapb.Ack {
+	id := int64(cid)<<32 + int64(csn)
+	s.waitMu.RLock()
+	ackC, ok := s.wait[id]
+	s.waitMu.RUnlock()
+	if !ok {
+		log.Errorf("error, never occurs")
+	}
 	ack := <-ackC
 	s.waitMu.Lock()
 	delete(s.wait, id)

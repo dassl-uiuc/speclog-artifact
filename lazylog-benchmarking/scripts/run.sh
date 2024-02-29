@@ -12,7 +12,7 @@ order=("007" "090" "030")
 # index into remote_nodes/ips for data shards
 data_0=("096" "116")
 
-client_nodes=("078")
+client_nodes=("078" "034")
 
 cleanup_servers() {
     # kill existing servers
@@ -55,6 +55,13 @@ start_discovery() {
     ssh -i $PASSLESS_ENTRY "sgbhat3@hp${data_0[0]}.utah.cloudlab.us" "sh -c \"cd $benchmark_dir/disc; nohup sudo ./run_goreman.sh > /users/sgbhat3/scalog-storage/disc.log 2>&1 &\""
 }
 
+check_data_log() {
+    for ((i=0; i<=1; i++))
+    do
+        echo "Checking data node $i..."
+        ssh -i $PASSLESS_ENTRY "sgbhat3@hp${data_0[$i]}.utah.cloudlab.us" "grep error /users/sgbhat3/scalog-storage/data-0-$i.log"
+    done
+}
 
 start_client() {
     ssh -i $PASSLESS_ENTRY sgbhat3@hp$1.utah.cloudlab.us "cd $benchmark_dir/scripts; sudo ./run_client.sh $2 $3 $1 $4 > /users/sgbhat3/scalog-storage/client_$1.log 2>&1" &
@@ -63,14 +70,13 @@ start_client() {
 
 # clients
 # clients=("1300" "1200" "1000" "900" "800" "700" "600" "512" "256" "128" "64" "30" "25" "20" "18" "16" "12" "10" "8" "6" "4" "2")
-# clients=("1300")
-
-# for c in "${clients[@]}"; 
-# do
-#     for client_node in "${client_nodes[@]}";
-#     do
-#         cleanup_client $client_node
-#     done 
+clients=("600")
+for c in "${clients[@]}"; 
+do
+    for client_node in "${client_nodes[@]}";
+    do
+        cleanup_client $client_node
+    done 
 
     cleanup_servers
 
@@ -78,28 +84,28 @@ start_client() {
     start_data_nodes 
     start_discovery
 
-#     # wait for 10 secs
-#     sleep 10
+    # wait for 10 secs
+    sleep 10
 
-#     num_client_nodes=${#client_nodes[@]}
+    num_client_nodes=${#client_nodes[@]}
 
-#     for client_node in "${client_nodes[@]}";
-#     do
-#         # run client
-#         # start_client <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients>
-#         start_client $client_node $(($c/$num_client_nodes)) "2m" $c
-#     done
+    for client_node in "${client_nodes[@]}";
+    do
+        # run client
+        # start_client <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients>
+        start_client $client_node $(($c/$num_client_nodes)) "2m" $c
+    done
 
-#     echo "Waiting for clients to terminate"
-#     wait
+    echo "Waiting for clients to terminate"
+    wait
 
-#     for client_node in "${client_nodes[@]}";
-#     do
-#         cleanup_client $client_node
-#     done
+    for client_node in "${client_nodes[@]}";
+    do
+        cleanup_client $client_node
+    done
 
-#     # clear client logs
-#     sudo rm -rf /users/sgbhat3/scalog-storage/*.log
+    # clear client logs
+    sudo rm -rf /users/sgbhat3/scalog-storage/*.log
     
-#     cleanup_servers_wo_log_clear
-# done
+    cleanup_servers_wo_log_clear
+done
