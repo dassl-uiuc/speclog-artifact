@@ -1,6 +1,6 @@
 #!/bin/bash
 
-remote_nodes=("007" "090" "030" "096" "116")
+remote_nodes=("034" "007" "158" "127" "144" "121" "147" "021" "126" "039" "159" "038" "036" "124" "123")
 PASSLESS_ENTRY="/users/sgbhat3/.ssh/id_rsa"
 
 # Check if the local script path is provided as a command line argument
@@ -15,5 +15,7 @@ local_script="$1"
 for node in "${remote_nodes[@]}"; do
     echo "Executing script on $node..."
     ssh -i ${PASSLESS_ENTRY} "sgbhat3@hp$node.utah.cloudlab.us" "sudo bash -s" < "$local_script"
-    echo "Script execution on $node completed."
 done
+
+wait
+echo "Done"

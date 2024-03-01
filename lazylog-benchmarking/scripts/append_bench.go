@@ -36,7 +36,7 @@ func AppendOneWithTimeout(cli *client.Client, record string) (int64, int32, erro
 		select {
 		case res := <-channel:
 			return res.gsn, res.shard, res.err
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(500 * time.Millisecond):
 			numTimeouts = numTimeouts + 1
 			continue
 		}
@@ -104,9 +104,6 @@ func main() {
 		dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
 		runTimes = append(runTimes, runEndTime.Sub(runStartTime))
 		numberOfRequest++
-		if numberOfRequest%500 == 0 {
-			_, _ = fmt.Printf("executing %d\n", numberOfRequest)
-		}
 		select {
 		case <-timeout:
 			stay = false

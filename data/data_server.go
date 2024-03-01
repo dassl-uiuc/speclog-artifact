@@ -80,7 +80,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.ackSendC = make(map[int32]chan *datapb.Ack)
 	s.subC = make(map[int32]chan *datapb.Record)
 	s.ackC = make(chan *datapb.Ack, 4096)
-	s.appendC = make(chan *datapb.Record, 4096)
+	s.appendC = make(chan *datapb.Record, 8192)
 	s.replicateC = make(chan *datapb.Record, 4096)
 	s.replicateSendC = make([]chan *datapb.Record, numReplica)
 	s.peerDoneC = make([]chan interface{}, numReplica)

@@ -78,22 +78,27 @@ func (p *Partition) ReadLSN(lsn int64) (string, error) {
 }
 
 func binarySearch(segs []*Segment, get func(*Segment) int64, target int64) *Segment {
-	// Currently the function is scanning the list.
-	// TODO: implement binary search.
-	if len(segs) == 0 {
+	ind := binarySearchIndex(segs, get, target)
+	if ind == -1 {
 		return nil
 	}
-	for i, s := range segs {
-		if get(s) > target {
-			return segs[i-1]
-		}
-	}
-	return segs[len(segs)-1]
+	return segs[ind]
 }
 
 func binarySearchIndex(segs []*Segment, get func(*Segment) int64, target int64) int {
-	// Currently the function is scanning the list.
-	// TODO: implement binary search.
+	// if len(segs) == 0 {
+	// 	return -1
+	// }
+	// low, high, mid := 0, len(segs)-1, 0
+	// for low < high {
+	// 	mid = low + (high-low)/2
+	// 	if get(segs[mid]) >= target {
+	// 		high = mid
+	// 	} else {
+	// 		low = mid + 1
+	// 	}
+	// }
+	// return low
 	if len(segs) == 0 {
 		return -1
 	}
