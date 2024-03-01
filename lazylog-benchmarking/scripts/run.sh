@@ -8,11 +8,11 @@ order=("159" "038" "036")
 
 # index into remote_nodes/ips for data shards
 data_0=("124" "123")
-data_1=("126" "039")
+# data_1=("126" "039")
 
-client_nodes=("136" "034" "007" "158")
+client_nodes=("136" "034" "007")
 
-batching_intervals=("0.1ms" "10ms")
+batching_intervals=("10ms")
 
 modify_batching_intervals() {
     sed -i "s|order-batching-interval: .*|order-batching-interval: $1|" "${benchmark_dir}/../.scalog.yaml"
@@ -56,11 +56,11 @@ start_data_nodes() {
         ssh -i $PASSLESS_ENTRY "sgbhat3@hp${data_0[$i]}.utah.cloudlab.us" "sh -c \"cd $benchmark_dir/data-0-$i; nohup sudo ./run_goreman.sh > /users/sgbhat3/scalog-storage/data-0-$i.log 2>&1 &\""
     done
 
-    for ((i=0; i<=1; i++))
-    do
-        echo "Starting data-1-${i} on sgbhat3@hp${data_1[$i]}.utah.cloudlab.us"
-        ssh -i $PASSLESS_ENTRY "sgbhat3@hp${data_1[$i]}.utah.cloudlab.us" "sh -c \"cd $benchmark_dir/data-1-$i; nohup sudo ./run_goreman.sh > /users/sgbhat3/scalog-storage/data-1-$i.log 2>&1 &\""
-    done
+    # for ((i=0; i<=1; i++))
+    # do
+    #     echo "Starting data-1-${i} on sgbhat3@hp${data_1[$i]}.utah.cloudlab.us"
+    #     ssh -i $PASSLESS_ENTRY "sgbhat3@hp${data_1[$i]}.utah.cloudlab.us" "sh -c \"cd $benchmark_dir/data-1-$i; nohup sudo ./run_goreman.sh > /users/sgbhat3/scalog-storage/data-1-$i.log 2>&1 &\""
+    # done
 }
 
 start_discovery() {
@@ -82,8 +82,8 @@ start_client() {
 }
 
 # clients
-clients=("2100" "1800" "1600" "1200" "1000" "800" "600" "512" "256" "128" "64" "32" "16" "8" "4")
-
+# clients=("2100" "1800" "1600" "1200" "1000" "800" "600" "512" "256" "128" "64" "32" "16" "8" "4")
+clients=("1500")
 for interval in "${batching_intervals[@]}";
 do
     # modify intervals
