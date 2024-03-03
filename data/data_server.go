@@ -90,7 +90,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.prevCommittedCut = &orderpb.CommittedCut{}
 	s.records = make(map[int64]*datapb.Record)
 	path := fmt.Sprintf("/users/sgbhat3/scalog-storage/storage-%v-%v", shardID, replicaID) // TODO configure path
-	segLen := int32(50000)                                                                 // TODO configurable segment length
+	segLen := int32(1000)                                                                  // TODO configurable segment length
 	storage, err := storage.NewStorage(path, replicaID, numReplica, segLen)
 	if err != nil {
 		log.Fatalf("Create storage failed: %v", err)
