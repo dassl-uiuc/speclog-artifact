@@ -15,6 +15,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+const backendOnly = false
+
 type DataServer struct {
 	// data s configurations
 	shardID          int32
@@ -270,8 +272,32 @@ func (s *DataServer) processReplicate() {
 			s.recordsMu.Unlock()
 		}
 		s.localCutMu.Lock()
-		s.localCut[record.LocalReplicaID] = lsn + 1
+		if backendOnly {
+			s.localCut[record.LocalReplicaID] = 0
+		} else {
+			s.localCut[record.LocalReplicaID] = lsn + 1
+		}
 		s.localCutMu.Unlock()
+		if backendOnly {
+			if record.LocalReplicaID == s.replicaID {
+				id := int64(record.ClientID)<<32 + int64(record.ClientSN)
+				s.waitMu.RLock()
+				c, ok := s.wait[id]
+				s.waitMu.RUnlock()
+				if ok {
+					ack := &datapb.Ack{
+						ClientID:       record.ClientID,
+						ClientSN:       record.ClientSN,
+						ShardID:        s.shardID,
+						LocalReplicaID: s.replicaID,
+						ViewID:         s.viewID,
+						GlobalSN:       0,
+					}
+					c <- ack
+				}
+			}
+		}
+
 	}
 }
 

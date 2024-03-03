@@ -10,9 +10,9 @@ order=("159" "038" "036")
 data_0=("124" "123")
 # data_1=("126" "039")
 
-client_nodes=("136" "034" "007")
+client_nodes=("136" "034")
 
-batching_intervals=("10ms")
+batching_intervals=("0.1ms")
 
 modify_batching_intervals() {
     sed -i "s|order-batching-interval: .*|order-batching-interval: $1|" "${benchmark_dir}/../.scalog.yaml"
@@ -83,7 +83,7 @@ start_client() {
 
 # clients
 # clients=("2100" "1800" "1600" "1200" "1000" "800" "600" "512" "256" "128" "64" "32" "16" "8" "4")
-clients=("1500")
+clients=("2" "4" "6" "8" "12" "24" "32" "64" "128" "256" "512")
 for interval in "${batching_intervals[@]}";
 do
     # modify intervals
@@ -107,7 +107,7 @@ do
         for client_node in "${client_nodes[@]}";
         do
             # start_client <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients>
-            start_client $client_node $(($c/$num_client_nodes)) "4m" $c $interval
+            start_client $client_node $(($c/$num_client_nodes)) "3m" $c $interval
         done
 
         echo "Waiting for clients to terminate"
