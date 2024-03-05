@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"math/rand"
 	"os"
 	"strconv"
 	"time"
@@ -13,36 +15,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-const NumberOfRequest = 10
-const NumberOfBytes = 100
-const StreamName = "AppendBenchmark"
-
-type tuple struct {
-	gsn   int64
-	shard int32
-	err   error
-}
-
-// var numTimeouts int64
-
-// func AppendOneWithTimeout(cli *client.Client, record string) (int64, int32, error) {
-// 	for {
-// 		channel := make(chan tuple, 1)
-// 		go func() {
-// 			g, s, e := cli.AppendOne(record)
-// 			channel <- tuple{g, s, e}
-// 		}()
-
-// 		select {
-// 		case res := <-channel:
-// 			return res.gsn, res.shard, res.err
-// 		case <-time.After(500 * time.Millisecond):
-// 			numTimeouts = numTimeouts + 1
-// 			continue
-// 		}
-// 	}
-// }
-
 func main() {
 	timeLimit, err := time.ParseDuration(os.Args[1])
 	if err != nil {
@@ -52,7 +24,8 @@ func main() {
 	if err != nil {
 		log.Errorf("number of bytes should be integer")
 	}
-	fileName := os.Args[3]
+	inputFileName := os.Args[3]
+	outputFileName := os.Args[4]
 	// read configuration file
 	viper.SetConfigFile("../../.scalog.yaml")
 	viper.AutomaticEnv()
@@ -75,30 +48,49 @@ func main() {
 		return
 	}
 
+	// populate gsn to ShardId map
+	ifile, err := os.Open(inputFileName)
+	if err != nil {
+		fmt.Println("error opening file:", err)
+		return
+	}
+	defer ifile.Close()
+	var gsnToShardId []int32
+
+	scanner := bufio.NewScanner(ifile)
+	for scanner.Scan() {
+		line := scanner.Text()
+		num, err := strconv.Atoi(line)
+		if err != nil {
+			fmt.Println("invalid entry in input file")
+			return
+		}
+		gsnToShardId = append(gsnToShardId, int32(num))
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Println("error reading file:", err)
+		return
+	}
+
 	var GSNs []int64
 	var shardIds []int32
-	var dataGenTimes []time.Duration
 	var runTimes []time.Duration
-	var numberOfRequest int
 
+	randGen := rand.New(rand.NewSource(0))
 	startTime := time.Now()
-	numberOfRequest = 0
+	numberOfRequest := 0
 	for stay, timeout := true, time.After(timeLimit); stay; {
-		dataGenStartTime := time.Now()
-		record := util.GenerateRandomString(numberOfBytes)
-		dataGenEndTime := time.Now()
+		index := randGen.Intn(len(gsnToShardId))
 		runStartTime := time.Now()
-		gsn, shard, err := cli.AppendOne(record)
+		_, err := cli.Read(int64(index), int32(gsnToShardId[index]), int32(0))
 		runEndTime := time.Now()
 
 		if err != nil {
-			_, _ = fmt.Fprintln(os.Stderr, err)
 			goto end
 		}
 
-		GSNs = append(GSNs, gsn)
-		shardIds = append(shardIds, shard)
-		dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
+		GSNs = append(GSNs, int64(index))
+		shardIds = append(shardIds, int32(gsnToShardId[index]))
 		runTimes = append(runTimes, runEndTime.Sub(runStartTime))
 		numberOfRequest++
 
@@ -111,5 +103,5 @@ func main() {
 	}
 	endTime := time.Now()
 
-	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
+	util.LogCsvFile(len(runTimes), numberOfRequest*numberOfBytes, endTime.Sub(startTime), GSNs, shardIds, runTimes, nil, outputFileName)
 }

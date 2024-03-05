@@ -2,19 +2,19 @@ import os
 import csv
 import numpy as np 
 
-def check_timeouts(directory):
-    for filename in os.listdir(directory):
-        if filename.endswith(".csv"):
-            file_path = os.path.join(directory, filename)
-            with open(file_path, 'r') as csvfile:
-                csv_reader = csv.reader(csvfile)
-                header = next(csv_reader)
-                first_line = next(csv_reader, None)
+# def check_timeouts(directory):
+#     for filename in os.listdir(directory):
+#         if filename.endswith(".csv"):
+#             file_path = os.path.join(directory, filename)
+#             with open(file_path, 'r') as csvfile:
+#                 csv_reader = csv.reader(csvfile)
+#                 header = next(csv_reader)
+#                 first_line = next(csv_reader, None)
 
-            if first_line and int(first_line[7]) != 0:
-                return True
+#             if first_line and int(first_line[7]) != 0:
+#                 return True
     
-    return False
+#     return False
 
 def get_latencies(directory):
     all_latencies = []
@@ -58,7 +58,7 @@ def get_avg_throughput(directory, num_bytes_per_op):
     return None
 
 #clients = [2, 4, 6, 8, 16, 20, 32, 64, 128, 256, 512, 600, 700, 800, 900, 1000, 1200, 1300]
-clients = [512]
+clients = [2, 4, 6, 8, 12, 24, 32, 64, 128, 256, 512]
 throughput = []
 latency = []
 
@@ -71,8 +71,8 @@ for n in clients:
     avg_tput = get_avg_throughput(directory_path, 4096)
     mean, p50, p99 = get_latency_metrics(get_latencies(directory_path))
 
-    timeout = check_timeouts(directory_path)
-    if timeout: 
-        print("warning! timeouts detected in measurements")
+    # timeout = check_timeouts(directory_path)
+    # if timeout: 
+    #     print("warning! timeouts detected in measurements")
 
     print(f"{n},{avg_tput},{mean},{p50},{p99}")

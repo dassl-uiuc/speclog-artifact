@@ -39,6 +39,10 @@ cleanup_clients() {
     sudo ./run_script_on_clients.sh ./kill_all_benchmark.sh
 }
 
+drop_server_caches() {
+    sudo ./run_script_on_servers.sh ./drop_caches.sh
+}
+
 start_order_nodes() {
     # start order nodes
     for ((i=0; i<=2; i++))
@@ -77,20 +81,75 @@ check_data_log() {
     done
 }
 
-start_client() {
-    ssh -i $PASSLESS_ENTRY sgbhat3@hp$1.utah.cloudlab.us "cd $benchmark_dir/scripts; sudo ./run_client.sh $2 $3 $1 $4 $5 > /users/sgbhat3/scalog-storage/client_$1.log 2>&1" &
+start_append_clients() {
+    ssh -i $PASSLESS_ENTRY sgbhat3@hp$1.utah.cloudlab.us "cd $benchmark_dir/scripts; sudo ./run_append_client.sh $2 $3 $1 $4 $5 > /users/sgbhat3/scalog-storage/client_$1.log 2>&1" &
 }
 
-# clients
-# clients=("2100" "1800" "1600" "1200" "1000" "800" "600" "512" "256" "128" "64" "32" "16" "8" "4")
-clients=("2" "4" "6" "8" "12" "24" "32" "64" "128" "256" "512")
-for interval in "${batching_intervals[@]}";
-do
-    # modify intervals
-    modify_batching_intervals $interval
+start_random_read_clients() {
+    ssh -i $PASSLESS_ENTRY sgbhat3@hp$1.utah.cloudlab.us "cd $benchmark_dir/scripts; sudo ./run_random_read_client.sh $2 $3 $1 $4 $5 $6 > /users/sgbhat3/scalog-storage/client_$1.log 2>&1" &
+}
 
-    for c in "${clients[@]}"; 
+start_sequential_read_clients() {
+    ssh -i $PASSLESS_ENTRY sgbhat3@hp$1.utah.cloudlab.us "cd $benchmark_dir/scripts; sudo ./run_sequential_read_client.sh $2 $3 $1 $4 $5 $6 > /users/sgbhat3/scalog-storage/client_$1.log 2>&1" &
+}
+
+load_phase() {
+    sudo /usr/local/go/bin/go run load.go $1 $2 $3 $4 
+}
+
+# mode 
+#   0 -> append experiment mode
+#   1 -> read experiment mode
+#   2 -> setup servers
+#   3 -> kill server and client, read server logs for errors
+#   4 -> clear server and client logs
+
+mode="$1"
+if [ "$mode" -eq 0 ]; then # append experiment mode
+    clients=("2" "4" "6" "8" "12" "24" "32" "64" "128" "256" "512")
+    for interval in "${batching_intervals[@]}";
     do
+        # modify intervals
+        modify_batching_intervals $interval
+
+        for c in "${clients[@]}"; 
+        do
+            cleanup_clients
+            cleanup_servers
+            clear_server_logs
+            clear_client_logs
+
+            start_order_nodes
+            start_data_nodes 
+            start_discovery
+
+            # wait for 10 secs
+            sleep 10
+
+            num_client_nodes=${#client_nodes[@]}
+            for client_node in "${client_nodes[@]}";
+            do
+                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients>
+                start_append_clients $client_node $(($c/$num_client_nodes)) "3m" $c $interval
+            done
+
+            echo "Waiting for clients to terminate"
+            wait
+
+            cleanup_clients
+            cleanup_servers
+
+            # check for errors in log files
+            check_data_log
+        done
+    done
+elif [ "$mode" -eq 1 ]; then # read experiment mode
+    clients=("2" "4" "6" "8" "12" "24" "32" "64" "128" "256" "512")
+    for interval in "${batching_intervals[@]}";
+    do
+        # modify intervals
+        modify_batching_intervals $interval
+
         cleanup_clients
         cleanup_servers
         clear_server_logs
@@ -103,20 +162,47 @@ do
         # wait for 10 secs
         sleep 10
 
-        num_client_nodes=${#client_nodes[@]}
-        for client_node in "${client_nodes[@]}";
-        do
-            # start_client <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients>
-            start_client $client_node $(($c/$num_client_nodes)) "3m" $c $interval
+        load_phase "4096" "2000000" "10" "gsnToShardMap.txt"
+
+        echo "Done with loading"
+
+        for c in "${clients[@]}"; 
+        do 
+            drop_server_caches 
+
+            num_client_nodes=${#client_nodes[@]}
+            for client_node in "${client_nodes[@]}";
+            do
+                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <input_filename>
+                start_sequential_read_clients $client_node $(($c/$num_client_nodes)) "3m" $c $interval "gsnToShardMap.txt"
+            done
+
+            echo "Waiting for clients to terminate"
+            wait
+
+            cleanup_clients
         done
-
-        echo "Waiting for clients to terminate"
-        wait
-
-        cleanup_clients
+        
         cleanup_servers
-
         # check for errors in log files
         check_data_log
     done
-done
+elif [ "$mode" -eq 2 ]; then # setup servers mode
+    cleanup_clients
+    cleanup_servers
+    clear_server_logs
+    clear_client_logs
+
+    start_order_nodes
+    start_data_nodes 
+    start_discovery
+elif [ "$mode" -eq 3 ]; then # kill servers and clients 
+    cleanup_clients
+    cleanup_servers
+
+    # check for errors in log files
+    check_data_log
+else # cleanup logs
+    clear_server_logs
+    clear_client_logs
+fi
