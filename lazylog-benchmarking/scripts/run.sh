@@ -106,7 +106,8 @@ load_phase() {
 
 mode="$1"
 if [ "$mode" -eq 0 ]; then # append experiment mode
-    clients=("2" "4" "6" "8" "12" "24" "32" "64" "128" "256" "512")
+    #clients=("2" "4" "6" "8" "12" "16" "20" "24" "32" "64" "128" "256" "512")
+    clients=("100" "128")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -162,7 +163,7 @@ elif [ "$mode" -eq 1 ]; then # read experiment mode
         # wait for 10 secs
         sleep 10
 
-        load_phase "4096" "2000000" "10" "gsnToShardMap.txt"
+        load_phase "1024" "2000000" "10" "gsnToShardMap.txt"
 
         echo "Done with loading"
 

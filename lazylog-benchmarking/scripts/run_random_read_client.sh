@@ -13,11 +13,11 @@ interval="$5"
 input_filename="$6"
 
 # output directory for the test output
-output_dir="../results/${interval}/append_bench_${total_clients}"
+output_dir="../results/${interval}/random_read_bench_${total_clients}"
 sudo mkdir -p $output_dir
 
 for ((i=1; i<=$client_number; i++)); do
-    request_size="4096"
+    request_size="1024"
     cmd="sudo /usr/local/go/bin/go run random_read_bench.go $time_limit $request_size $input_filename ${output_dir}/<hp${client_id}>_${time_limit}_${request_size}_${i}.csv"
     $cmd &
 done
