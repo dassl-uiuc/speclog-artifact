@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-const backendOnly = false
+const backendOnly = true
 
 type DataServer struct {
 	// data s configurations
@@ -266,18 +266,6 @@ func (s *DataServer) processReplicate() {
 		if err != nil {
 			log.Fatalf("Write to storage failed: %v", err)
 		}
-		if record.LocalReplicaID == s.replicaID {
-			s.recordsMu.Lock()
-			s.records[lsn] = record
-			s.recordsMu.Unlock()
-		}
-		s.localCutMu.Lock()
-		if backendOnly {
-			s.localCut[record.LocalReplicaID] = 0
-		} else {
-			s.localCut[record.LocalReplicaID] = lsn + 1
-		}
-		s.localCutMu.Unlock()
 		if backendOnly {
 			if record.LocalReplicaID == s.replicaID {
 				id := int64(record.ClientID)<<32 + int64(record.ClientSN)
@@ -297,7 +285,18 @@ func (s *DataServer) processReplicate() {
 				}
 			}
 		}
-
+		if record.LocalReplicaID == s.replicaID {
+			s.recordsMu.Lock()
+			s.records[lsn] = record
+			s.recordsMu.Unlock()
+		}
+		s.localCutMu.Lock()
+		if backendOnly {
+			s.localCut[record.LocalReplicaID] = 0
+		} else {
+			s.localCut[record.LocalReplicaID] = lsn + 1
+		}
+		s.localCutMu.Unlock()
 	}
 }
 

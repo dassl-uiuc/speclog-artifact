@@ -20,7 +20,7 @@ def get_latencies(directory):
     all_latencies = []
 
     for filename in os.listdir(directory):
-        if filename.endswith(".csv"):
+        if filename.endswith(".csv") and filename[0] == "<":
             file_path = os.path.join(directory, filename)
             with open(file_path, 'r') as csvfile:
                 csv_reader = csv.DictReader(csvfile)
@@ -40,7 +40,7 @@ def get_avg_throughput(directory, num_bytes_per_op):
     max_total_time = 0
 
     for filename in os.listdir(directory):
-        if filename.endswith(".csv"):
+        if filename.endswith(".csv") and filename[0] == "<":
             file_path = os.path.join(directory, filename)
 
             with open(file_path, 'r') as csvfile:
@@ -58,17 +58,17 @@ def get_avg_throughput(directory, num_bytes_per_op):
     return None
 
 #clients = [2, 4, 6, 8, 16, 20, 32, 64, 128, 256, 512, 600, 700, 800, 900, 1000, 1200, 1300]
-clients = [100, 128]
+clients = [4, 8, 12, 16, 20, 24, 32, 64, 80, 100, 128, 196, 256, 300, 512]
 throughput = []
 latency = []
 
 print(f"#clients,avg tput(ops/sec),avg latency(ms/op),p50 latency(ms/op),p99 latency(ms/op)")
 for n in clients:
     # Specify the directory path
-    directory_path = "../results/0.1ms/append_bench_" + str(n)
+    directory_path = "../../ll-paper-results/append/4K/0.1ms_be_only_1k_seglen/append_bench_" + str(n)
 
     # Calculate and print the average throughput
-    avg_tput = get_avg_throughput(directory_path, 1024)
+    avg_tput = get_avg_throughput(directory_path, 4096)
     mean, p50, p99 = get_latency_metrics(get_latencies(directory_path))
 
     # timeout = check_timeouts(directory_path)

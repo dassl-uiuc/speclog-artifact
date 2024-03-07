@@ -14,7 +14,7 @@ local_script="$1"
 # Iterate over remote nodes and execute the script
 for node in "${remote_nodes[@]}"; do
     echo "Executing script on $node..."
-    ssh -i ${PASSLESS_ENTRY} "sgbhat3@hp$node.utah.cloudlab.us" "sudo bash -s" < "$local_script" &
+    ssh -o StrictHostKeyChecking=no -i ${PASSLESS_ENTRY} "sgbhat3@hp$node.utah.cloudlab.us" "sudo bash -s" < "$local_script" &
 done
 
 wait 
