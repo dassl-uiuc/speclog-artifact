@@ -10,7 +10,7 @@ order=("159" "038" "036")
 data_0=("124" "123")
 # data_1=("126" "039")
 
-client_nodes=("136" "034" "007")
+client_nodes=("136")
 
 batching_intervals=("0.1ms")
 
@@ -174,7 +174,7 @@ if [ "$mode" -eq 0 ]; then # append experiment mode
         done
     done
 elif [ "$mode" -eq 1 ]; then # read experiment mode
-    clients=("2" "4" "6" "8" "12" "24" "32" "64" "128" "256" "512")
+    clients=("1")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -192,7 +192,7 @@ elif [ "$mode" -eq 1 ]; then # read experiment mode
         # wait for 10 secs
         sleep 10
 
-        load_phase "1024" "2000000" "10" "gsnToShardMap.txt"
+        load_phase "4096" "2000000" "10" "gsnToShardMap.txt"
 
         echo "Done with loading"
 
@@ -215,7 +215,7 @@ elif [ "$mode" -eq 1 ]; then # read experiment mode
                 fi
 
                 # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <input_filename>
-                start_sequential_read_clients $client_node $num_jobs_for_client "3m" $c $interval "gsnToShardMap.txt"
+                start_sequential_read_clients "${client_nodes[$i]}" $num_jobs_for_client "3m" $c $interval "gsnToShardMap.txt"
             done
 
             echo "Waiting for clients to terminate"

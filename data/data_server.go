@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-const backendOnly = true
+const backendOnly = false
 
 type DataServer struct {
 	// data s configurations
