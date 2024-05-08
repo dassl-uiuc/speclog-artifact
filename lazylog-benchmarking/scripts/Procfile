@@ -1,5 +1,0 @@
-# Procfile for 4 clients
-client-1: sh -c "./run_client.sh ../append_bench_4 1"
-client-2: sh -c "./run_client.sh ../append_bench_4 2"
-client-3: sh -c "./run_client.sh ../append_bench_4 3"
-client-4: sh -c "./run_client.sh ../append_bench_4 4"

@@ -1,3 +1,0 @@
-# Use goreman to run `go get github.com/mattn/goreman`
-
-disc: sudo ../../scalog discovery --config=../../.scalog.yaml

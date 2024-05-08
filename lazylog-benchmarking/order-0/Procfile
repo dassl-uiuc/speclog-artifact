@@ -1,3 +1,0 @@
-# Use goreman to run `go get github.com/mattn/goreman`
-
-order-0: sudo ../../scalog order --config=../../.scalog.yaml --oid=0
