@@ -11,8 +11,8 @@ data-replication-factor: 2
 data-batching-interval: 0.1ms
 data-0-0-ip: "10.10.1.4"
 data-0-1-ip: "10.10.1.5"
-# data-1-0-ip: "10.10.1.10"
-# data-1-1-ip: "10.10.1.11"
+data-1-0-ip: "10.10.1.6"
+data-1-1-ip: "10.10.1.7"
 
 disc-port: 23472
 disc-ip: "10.10.1.4"
