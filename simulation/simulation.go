@@ -73,9 +73,14 @@ func simulation(params *SimulationParameters) {
 		select {
 		case <-print_ticker.C:
 			fmt.Println("[simulation]: global cut: ", shard_cut)
-			fmt.Println("[simulation]: moving averages: ")
+			fmt.Print("[simulation]: moving averages: [")
 			for i := 0; i < params.num_shard_primaries; i++ {
-				fmt.Printf("[simulation]: shard %v: %v\n", i, ma[i].Avg())
+				fmt.Printf("%v", ma[i].Avg())
+				if i < params.num_shard_primaries-1 {
+					fmt.Print(", ")
+				} else {
+					fmt.Println("]")
+				}
 			}
 		default:
 			for i := 0; i < params.num_shard_primaries; i++ {
