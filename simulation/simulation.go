@@ -90,7 +90,7 @@ func simulation(params *SimulationParameters) {
 				ma[i].Add(tput)
 				window_avg := ma[i].Avg()
 				if window_avg > 1.2*curr_tput || window_avg < 0.8*curr_tput {
-					per_shard_quota[i] = get_quota(tput, params)
+					per_shard_quota[i] = get_quota(window_avg, params)
 				}
 			}
 			time.Sleep(time.Duration(params.batchingIntervalMicros) * time.Microsecond)
