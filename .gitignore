@@ -27,3 +27,6 @@ coverage.txt
 
 # IDEA stuff
 .idea
+
+# Benchmarking results
+benchmarking/results/*
