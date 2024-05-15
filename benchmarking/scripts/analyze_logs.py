@@ -30,10 +30,10 @@ def parse_log_file(log_file):
 log_file = '../logs/order-0.log'  
 startGSN_values, cuts = parse_log_file(log_file)
 
-data1 = cuts[0][200000:]
-data2 = cuts[1][200000:]
-data3 = cuts[2][200000:]
-data4 = cuts[3][200000:]
+data1 = cuts[0]
+data2 = cuts[1]
+data3 = cuts[2]
+data4 = cuts[3]
 
 differences = [np.diff(data1), np.diff(data2), np.diff(data3), np.diff(data4)]
 
