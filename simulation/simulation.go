@@ -13,22 +13,46 @@ import (
 	"gonum.org/v1/gonum/stat/distuv"
 )
 
-var run bool = false
-var per_shard_quota []int64
-var per_shard_throughput []int64
-var shard_cut []int64
-
-var dist distuv.Normal
-
-type SimulationParameters struct {
-	num_shard_primaries          int
-	initial_per_shard_throughput int64
-	batchingIntervalMicros       int
+type AvgStream struct {
+	sum   float64
+	count int64
 }
 
-func addNoise(tput float64) float64 {
-	dist.Sigma = 0.2 * tput
-	return dist.Rand() + tput
+func (sp *AvgStream) Add(num float64) {
+	sp.sum += num
+	sp.count++
+}
+
+func (sp *AvgStream) Avg() float64 {
+	if sp.count == 0 {
+		return 0
+	}
+	avg := sp.sum / float64(sp.count)
+	return math.Round(avg*100) / 100
+}
+
+var run bool = false
+var per_shard_quota []int64
+var per_shard_entries_per_bi []int64
+var per_shard_queue []chan (Entry)
+var per_shard_batch_delay_avg []AvgStream
+var per_shard_batch_delay_moving_avg []*movingaverage.MovingAverage
+var shard_cut []int64
+var dist distuv.Normal
+
+type Entry struct {
+	gen_iter int64
+}
+
+type SimulationParameters struct {
+	num_shard_primaries    int
+	initial_entries_per_bi int64
+	batchingIntervalMicros int
+}
+
+func addNoise(entries int64) int64 {
+	dist.Sigma = 0 //float64(entries)
+	return int64(math.Round(float64(entries) + dist.Rand()))
 }
 
 func min64(a, b int64) int64 {
@@ -38,25 +62,23 @@ func min64(a, b int64) int64 {
 	return b
 }
 
-func get_quota(tput float64, params *SimulationParameters) int64 {
-	return int64(math.Ceil(tput * float64(params.batchingIntervalMicros) / 1.0e6))
-}
-
-func get_tput(quota int64, params *SimulationParameters) float64 {
-	return float64(quota) * 1.0e6 / float64(params.batchingIntervalMicros)
-}
-
 func simulation(params *SimulationParameters) {
 	per_shard_quota = make([]int64, params.num_shard_primaries)
-	per_shard_throughput = make([]int64, params.num_shard_primaries)
-	initial_quota := get_quota(float64(params.initial_per_shard_throughput), params)
+	per_shard_entries_per_bi = make([]int64, params.num_shard_primaries)
+	per_shard_queue = make([]chan (Entry), params.num_shard_primaries)
+	per_shard_batch_delay_avg = make([]AvgStream, params.num_shard_primaries)
+	per_shard_batch_delay_moving_avg = make([]*movingaverage.MovingAverage, params.num_shard_primaries)
+	initial_quota := params.initial_entries_per_bi
 
 	for i := 0; i < params.num_shard_primaries; i++ {
 		per_shard_quota[i] = initial_quota
-		per_shard_throughput[i] = params.initial_per_shard_throughput
+		per_shard_entries_per_bi[i] = initial_quota
+		per_shard_queue[i] = make(chan (Entry), 4096)
+		per_shard_batch_delay_avg[i] = AvgStream{sum: 0, count: 0}
+		per_shard_batch_delay_moving_avg[i] = movingaverage.New(10)
 	}
 	fmt.Println("[simulation]: initial quota: ", per_shard_quota)
-	fmt.Println("[simulation]: initial throughput: ", per_shard_throughput)
+	fmt.Println("[simulation]: initial entries received at shard per bi: ", per_shard_entries_per_bi)
 
 	shard_cut = make([]int64, params.num_shard_primaries)
 	for i := 0; i < params.num_shard_primaries; i++ {
@@ -69,11 +91,13 @@ func simulation(params *SimulationParameters) {
 	}
 
 	print_ticker := time.NewTicker(1 * time.Second)
+	iter := int64(0)
 	for run {
 		select {
 		case <-print_ticker.C:
-			fmt.Println("[simulation]: global cut: ", shard_cut)
-			fmt.Print("[simulation]: moving averages: [")
+			fmt.Println("[simulation]: statistics")
+			fmt.Println("\tglobal cut: ", shard_cut)
+			fmt.Print("\tmoving averages of generated entries: [")
 			for i := 0; i < params.num_shard_primaries; i++ {
 				fmt.Printf("%v", ma[i].Avg())
 				if i < params.num_shard_primaries-1 {
@@ -82,18 +106,60 @@ func simulation(params *SimulationParameters) {
 					fmt.Println("]")
 				}
 			}
+			fmt.Print("\tappend batching delay averages: [")
+			for i := 0; i < params.num_shard_primaries; i++ {
+				fmt.Printf("%v", per_shard_batch_delay_avg[i].Avg())
+				if i < params.num_shard_primaries-1 {
+					fmt.Print(", ")
+				} else {
+					fmt.Println("]")
+				}
+			}
+			fmt.Print("\tappend batching delay moving average: [")
+			for i := 0; i < params.num_shard_primaries; i++ {
+				fmt.Printf("%v", per_shard_batch_delay_moving_avg[i].Avg())
+				if i < params.num_shard_primaries-1 {
+					fmt.Print(", ")
+				} else {
+					fmt.Println("]")
+				}
+			}
+			fmt.Print("\tbuffer length: [")
+			for i := 0; i < params.num_shard_primaries; i++ {
+				fmt.Printf("%v", len(per_shard_queue[i]))
+				if i < params.num_shard_primaries-1 {
+					fmt.Print(", ")
+				} else {
+					fmt.Println("]")
+				}
+			}
+
 		default:
 			for i := 0; i < params.num_shard_primaries; i++ {
-				tput := addNoise(float64(atomic.LoadInt64(&per_shard_throughput[i])))
-				curr_tput := get_tput(per_shard_quota[i], params)
+				entries_gen := addNoise(atomic.LoadInt64(&per_shard_entries_per_bi[i]))
+				for j := int64(0); j < entries_gen; j++ {
+					entry := Entry{
+						gen_iter: iter,
+					}
+					per_shard_queue[i] <- entry
+				}
 				shard_cut[i] = per_shard_quota[i]
-				ma[i].Add(tput)
-				window_avg := ma[i].Avg()
-				if window_avg > 1.2*curr_tput || window_avg < 0.8*curr_tput {
-					per_shard_quota[i] = get_quota(window_avg, params)
+				for j := int64(0); j < per_shard_quota[i]; j++ {
+					select {
+					case entry := <-per_shard_queue[i]:
+						per_shard_batch_delay_avg[i].Add(float64(iter - entry.gen_iter))
+						per_shard_batch_delay_moving_avg[i].Add(float64(iter - entry.gen_iter))
+					default:
+						break
+					}
+				}
+				ma[i].Add(float64(entries_gen))
+				if ma[i].Avg() > 1.1*float64(per_shard_quota[i]) || ma[i].Avg() < 0.9*float64(per_shard_quota[i]) {
+					per_shard_quota[i] = int64(math.Ceil(ma[i].Avg()))
 				}
 			}
 			time.Sleep(time.Duration(params.batchingIntervalMicros) * time.Microsecond)
+			iter++
 		}
 	}
 }
@@ -103,9 +169,9 @@ func main() {
 		Mu: 0,
 	}
 	params := SimulationParameters{
-		num_shard_primaries:          5,
-		initial_per_shard_throughput: 20000,
-		batchingIntervalMicros:       100,
+		num_shard_primaries:    5,
+		initial_entries_per_bi: 2,
+		batchingIntervalMicros: 100,
 	}
 	run = true
 	go simulation(&params)
@@ -142,8 +208,8 @@ func main() {
 		if err != nil {
 			fmt.Printf("error: %v\n", err)
 		}
-		new_tput := atomic.AddInt64(&per_shard_throughput[shard_index], delta)
-		fmt.Printf("[simulation]: shard %v new throughput: %v\n", shard_index, new_tput)
+		new_tput := atomic.AddInt64(&per_shard_entries_per_bi[shard_index], delta)
+		fmt.Printf("[simulation]: shard %v new entries per bi: %v\n", shard_index, new_tput)
 	}
 
 	conn.Close()
