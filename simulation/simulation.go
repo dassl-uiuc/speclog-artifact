@@ -34,11 +34,14 @@ func (sp *AvgStream) Avg() float64 {
 var run bool = false
 var per_shard_quota []int64
 var per_shard_entries_per_bi []int64
+var per_shard_feedback []Feedback
 var per_shard_queue []chan (Entry)
 var per_shard_batch_delay_avg []AvgStream
 var per_shard_batch_delay_moving_avg []*movingaverage.MovingAverage
+var per_shard_previous_size []int64
 var shard_cut []int64
 var dist distuv.Normal
+var cut_batch int64 = 3
 
 type Entry struct {
 	gen_iter int64
@@ -48,6 +51,11 @@ type SimulationParameters struct {
 	num_shard_primaries    int
 	initial_entries_per_bi int64
 	batchingIntervalMicros int
+}
+
+type Feedback struct {
+	num_holes     int64
+	buffer_length int64
 }
 
 func addNoise(entries int64) int64 {
@@ -68,6 +76,8 @@ func simulation(params *SimulationParameters) {
 	per_shard_queue = make([]chan (Entry), params.num_shard_primaries)
 	per_shard_batch_delay_avg = make([]AvgStream, params.num_shard_primaries)
 	per_shard_batch_delay_moving_avg = make([]*movingaverage.MovingAverage, params.num_shard_primaries)
+	per_shard_feedback = make([]Feedback, params.num_shard_primaries)
+	per_shard_previous_size = make([]int64, params.num_shard_primaries)
 	initial_quota := params.initial_entries_per_bi
 
 	for i := 0; i < params.num_shard_primaries; i++ {
@@ -76,6 +86,8 @@ func simulation(params *SimulationParameters) {
 		per_shard_queue[i] = make(chan (Entry), 4096)
 		per_shard_batch_delay_avg[i] = AvgStream{sum: 0, count: 0}
 		per_shard_batch_delay_moving_avg[i] = movingaverage.New(10)
+		per_shard_feedback[i] = Feedback{num_holes: 0, buffer_length: 0}
+		per_shard_previous_size[i] = 0
 	}
 	fmt.Println("[simulation]: initial quota: ", per_shard_quota)
 	fmt.Println("[simulation]: initial entries received at shard per bi: ", per_shard_entries_per_bi)
@@ -85,9 +97,13 @@ func simulation(params *SimulationParameters) {
 		shard_cut[i] = 0
 	}
 
-	ma := make([]*movingaverage.MovingAverage, params.num_shard_primaries)
+	ma_holes := make([]*movingaverage.MovingAverage, params.num_shard_primaries)
 	for i := 0; i < params.num_shard_primaries; i++ {
-		ma[i] = movingaverage.New(10)
+		ma_holes[i] = movingaverage.New(10)
+	}
+	ma_new_entries := make([]*movingaverage.MovingAverage, params.num_shard_primaries)
+	for i := 0; i < params.num_shard_primaries; i++ {
+		ma_new_entries[i] = movingaverage.New(10)
 	}
 
 	print_ticker := time.NewTicker(1 * time.Second)
@@ -99,7 +115,7 @@ func simulation(params *SimulationParameters) {
 			fmt.Println("\tglobal cut: ", shard_cut)
 			fmt.Print("\tmoving averages of generated entries: [")
 			for i := 0; i < params.num_shard_primaries; i++ {
-				fmt.Printf("%v", ma[i].Avg())
+				fmt.Printf("%v", ma_new_entries[i].Avg())
 				if i < params.num_shard_primaries-1 {
 					fmt.Print(", ")
 				} else {
@@ -136,6 +152,7 @@ func simulation(params *SimulationParameters) {
 
 		default:
 			for i := 0; i < params.num_shard_primaries; i++ {
+				// client side
 				entries_gen := addNoise(atomic.LoadInt64(&per_shard_entries_per_bi[i]))
 				for j := int64(0); j < entries_gen; j++ {
 					entry := Entry{
@@ -144,6 +161,19 @@ func simulation(params *SimulationParameters) {
 					per_shard_queue[i] <- entry
 				}
 				shard_cut[i] = per_shard_quota[i]
+				if int(per_shard_quota[i])-len(per_shard_queue[i]) > 0 {
+					per_shard_feedback[i].num_holes = int64(per_shard_quota[i]) - int64(len(per_shard_queue[i]))
+					per_shard_feedback[i].buffer_length = 0
+				} else {
+					per_shard_feedback[i].num_holes = 0
+					per_shard_feedback[i].buffer_length = int64(len(per_shard_queue[i])) - int64(per_shard_quota[i])
+				}
+
+				// server side
+				ma_holes[i].Add(float64(per_shard_feedback[i].num_holes))
+				ma_new_entries[i].Add(float64(per_shard_feedback[i].buffer_length + shard_cut[i] - per_shard_feedback[i].num_holes - per_shard_previous_size[i]))
+				per_shard_previous_size[i] = int64(per_shard_feedback[i].buffer_length + shard_cut[i] - per_shard_feedback[i].num_holes)
+
 				for j := int64(0); j < per_shard_quota[i]; j++ {
 					select {
 					case entry := <-per_shard_queue[i]:
@@ -153,10 +183,15 @@ func simulation(params *SimulationParameters) {
 						break
 					}
 				}
-				ma[i].Add(float64(entries_gen))
-				if ma[i].Avg() > 1.1*float64(per_shard_quota[i]) || ma[i].Avg() < 0.9*float64(per_shard_quota[i]) {
-					per_shard_quota[i] = int64(math.Ceil(ma[i].Avg()))
+
+				if iter%cut_batch == 0 {
+					if ma_holes[i].Avg() > 0.5 {
+						per_shard_quota[i] = int64(math.Round(ma_new_entries[i].Avg()))
+					} else if ma_new_entries[i].Avg() > 0.1*float64(per_shard_quota[i]) {
+						per_shard_quota[i] = int64(math.Round(ma_new_entries[i].Avg()))
+					}
 				}
+
 			}
 			time.Sleep(time.Duration(params.batchingIntervalMicros) * time.Microsecond)
 			iter++
