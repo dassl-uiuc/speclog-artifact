@@ -13,7 +13,7 @@ data_1=("node5" "node6")
 
 client_nodes=("node7" "node8")
 
-batching_intervals=("1ms")
+batching_intervals=("0.1ms")
 
 modify_batching_intervals() {
     sed -i "s|order-batching-interval: .*|order-batching-interval: $1|" "${benchmark_dir}/../.scalog.yaml"
@@ -269,6 +269,8 @@ elif [ "$mode" -eq 3 ]; then # kill servers and clients
     # check for errors in log files
     check_data_log
 elif [ "$mode" -eq 4 ]; then 
+    cleanup_clients
+    cleanup_servers
     collect_logs
 else # cleanup logs
     clear_server_logs

@@ -42,6 +42,7 @@ type DataServer struct {
 	// channels used to communate with clients, peers, and ordering layer
 	appendC        chan *datapb.Record
 	replicateC     chan *datapb.Record
+	selfReplicateC chan *datapb.Record
 	replicateSendC []chan *datapb.Record
 	ackC           chan *datapb.Ack
 	ackSendC       map[int32]chan *datapb.Ack
@@ -59,6 +60,14 @@ type DataServer struct {
 	// stores records directly sent to this replica
 	records   map[int64]*datapb.Record
 	recordsMu sync.Mutex
+
+	// wait group to confirm the replication of records
+	replicateConfWg map[int64]*sync.WaitGroup
+	replicateConfMu sync.RWMutex
+
+	// written to disk
+	diskWriteC  map[int64]chan bool
+	diskWriteMu sync.RWMutex
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -83,12 +92,16 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.subC = make(map[int32]chan *datapb.Record)
 	s.ackC = make(chan *datapb.Ack, 4096)
 	s.appendC = make(chan *datapb.Record, 8192)
+	s.selfReplicateC = make(chan *datapb.Record, 4096)
 	s.replicateC = make(chan *datapb.Record, 4096)
 	s.replicateSendC = make([]chan *datapb.Record, numReplica)
 	s.peerDoneC = make([]chan interface{}, numReplica)
 	s.wait = make(map[int64]chan *datapb.Ack)
 	s.prevCommittedCut = &orderpb.CommittedCut{}
 	s.records = make(map[int64]*datapb.Record)
+	s.replicateConfWg = make(map[int64]*sync.WaitGroup)
+	s.diskWriteC = make(map[int64]chan bool)
+
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
 	storage, err := storage.NewStorage(path, replicaID, numReplica, segLen)
@@ -166,6 +179,7 @@ func (s *DataServer) ConnPeers() error {
 		client := s.peerClients[i]
 		s.peerDoneC[i] = done
 		go s.replicateRecords(done, sendC, client)
+		go s.confirmReplication(client)
 	}
 	return nil
 }
@@ -180,6 +194,7 @@ func (s *DataServer) Start() {
 		}
 		go s.processAppend()
 		go s.processReplicate()
+		go s.processSelfReplicate()
 		go s.processAck()
 		go s.processCommittedEntry()
 		go s.reportLocalCut()
@@ -243,57 +258,106 @@ func (s *DataServer) replicateRecords(done <-chan interface{}, ch chan *datapb.R
 	}
 }
 
+func (s *DataServer) confirmReplication(client *datapb.Data_ReplicateClient) {
+	for {
+		ack, err := (*client).Recv()
+		if err != nil {
+			log.Errorf("Receive replication acknowledgement error: %v", err)
+			return
+		}
+		id := int64(ack.ClientID)<<32 + int64(ack.ClientSN)
+		s.replicateConfMu.RLock()
+		s.replicateConfWg[id].Done()
+		s.replicateConfMu.RUnlock()
+	}
+}
+
 // processAppend sends records to replicateC and replicates them to peers
 func (s *DataServer) processAppend() {
 	for record := range s.appendC {
 		record.LocalReplicaID = s.replicaID
 		record.ShardID = s.shardID
-		s.replicateC <- record
+		// create wait group to confirm the replication of the record
+		id := int64(record.ClientID)<<32 + int64(record.ClientSN)
+		s.replicateConfMu.Lock()
+		s.replicateConfWg[id] = &sync.WaitGroup{}
+		s.replicateConfWg[id].Add(int(s.numReplica - 1))
+		s.replicateConfMu.Unlock()
 		for i, c := range s.replicateSendC {
 			if int32(i) != s.replicaID {
 				log.Debugf("Data forward to %v", i)
 				c <- record
 			}
 		}
+		s.selfReplicateC <- record
 	}
 }
 
-// processReplicate writes records to local storage
+// processReplicate writes my peers records to local storage
 func (s *DataServer) processReplicate() {
 	for record := range s.replicateC {
+		log.Debugf("Data %v,%v process", s.shardID, s.replicaID)
+		_, err := s.storage.WriteToPartition(record.LocalReplicaID, record.Record)
+		if err != nil {
+			log.Fatalf("Write to storage failed: %v", err)
+		}
+
+		s.diskWriteMu.RLock()
+		id := int64(record.ClientID)<<32 + int64(record.ClientSN)
+		if c, ok := s.diskWriteC[id]; ok {
+			c <- true
+		}
+		s.diskWriteMu.RUnlock()
+		s.localCutMu.Lock()
+		s.localCut[record.LocalReplicaID] = 0
+		s.localCutMu.Unlock()
+	}
+}
+
+// processSelfReplicate writes my own records to local storage
+func (s *DataServer) processSelfReplicate() {
+	for record := range s.selfReplicateC {
 		log.Debugf("Data %v,%v process", s.shardID, s.replicaID)
 		lsn, err := s.storage.WriteToPartition(record.LocalReplicaID, record.Record)
 		if err != nil {
 			log.Fatalf("Write to storage failed: %v", err)
 		}
+
+		// wait for confirmation from all peers
+		s.replicateConfMu.RLock()
+		recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
+		wg := s.replicateConfWg[recordID]
+		s.replicateConfMu.RUnlock()
+		wg.Wait()
+		s.replicateConfMu.Lock()
+		s.replicateConfWg[recordID] = nil
+		delete(s.replicateConfWg, recordID)
+		s.replicateConfMu.Unlock()
+
 		if backendOnly {
-			if record.LocalReplicaID == s.replicaID {
-				id := int64(record.ClientID)<<32 + int64(record.ClientSN)
-				s.waitMu.RLock()
-				c, ok := s.wait[id]
-				s.waitMu.RUnlock()
-				if ok {
-					ack := &datapb.Ack{
-						ClientID:       record.ClientID,
-						ClientSN:       record.ClientSN,
-						ShardID:        s.shardID,
-						LocalReplicaID: s.replicaID,
-						ViewID:         s.viewID,
-						GlobalSN:       0,
-					}
-					c <- ack
+			id := int64(record.ClientID)<<32 + int64(record.ClientSN)
+			s.waitMu.RLock()
+			c, ok := s.wait[id]
+			s.waitMu.RUnlock()
+			if ok {
+				ack := &datapb.Ack{
+					ClientID:       record.ClientID,
+					ClientSN:       record.ClientSN,
+					ShardID:        s.shardID,
+					LocalReplicaID: s.replicaID,
+					ViewID:         s.viewID,
+					GlobalSN:       0,
 				}
+				c <- ack
 			}
 		}
-		if record.LocalReplicaID == s.replicaID {
-			s.recordsMu.Lock()
-			s.records[lsn] = record
-			s.recordsMu.Unlock()
-		}
+
+		s.recordsMu.Lock()
+		s.records[lsn] = record
+		s.recordsMu.Unlock()
+
 		s.localCutMu.Lock()
-		if backendOnly {
-			s.localCut[record.LocalReplicaID] = 0
-		} else {
+		if !backendOnly {
 			s.localCut[record.LocalReplicaID] = lsn + 1
 		}
 		s.localCutMu.Unlock()

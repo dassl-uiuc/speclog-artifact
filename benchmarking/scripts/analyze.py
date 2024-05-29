@@ -65,7 +65,7 @@ latency = []
 print(f"#clients,avg tput(ops/sec),avg latency(ms/op),p50 latency(ms/op),p99 latency(ms/op)")
 for n in clients:
     # Specify the directory path
-    directory_path = "../results/1ms/append_bench_" + str(n)
+    directory_path = "../results/0.1ms/append_bench_" + str(n)
 
     # Calculate and print the average throughput
     avg_tput = get_avg_throughput(directory_path, 4096)

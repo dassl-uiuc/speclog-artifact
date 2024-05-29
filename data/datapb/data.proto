@@ -7,7 +7,7 @@ service Data {
 	rpc Append(stream Record) returns (stream Ack) {}
 	rpc AppendOne(Record) returns (Ack) {}
 	// replicas set proper shardID and localReplicaID
-	rpc Replicate(stream Record) returns (Empty) {}
+	rpc Replicate(stream Record) returns (stream Ack) {}
 	// the servers don't need to know the sources of the following requests
 	rpc Subscribe(GlobalSN) returns (stream Record) {}
 	rpc Trim(GlobalSN) returns (Ack) {}

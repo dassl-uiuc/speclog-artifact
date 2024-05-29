@@ -1,7 +1,6 @@
 package order
 
 import (
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -133,17 +132,17 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		}
 		localReplicaID := rid % s.dataNumReplica
 		begin := rid - localReplicaID
-		min := int64(math.MaxInt64)
+		max := int64(0)
 		for i := int32(0); i < s.dataNumReplica; i++ {
 			if cut, ok := lcs[begin+i]; ok {
-				if min > cut.Cut[localReplicaID] {
-					min = cut.Cut[localReplicaID]
+				if max < cut.Cut[localReplicaID] {
+					max = cut.Cut[localReplicaID]
 				}
 			} else {
-				min = int64(0)
+				max = int64(0)
 			}
 		}
-		ccut[rid] = min
+		ccut[rid] = max
 	}
 	if incrViewID {
 		atomic.AddInt32(&s.viewID, 1)

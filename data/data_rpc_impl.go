@@ -80,7 +80,28 @@ func (s *DataServer) Replicate(stream datapb.Data_ReplicateServer) error {
 			log.Errorf("Receive replicate error: %v", err)
 			return err
 		}
+		s.diskWriteMu.Lock()
+		id := int64(record.ClientID)<<32 + int64(record.ClientSN)
+		c := make(chan bool)
+		s.diskWriteC[id] = c
+		s.diskWriteMu.Unlock()
 		s.replicateC <- record
+		// wait for the disk write to finish
+		<-c
+		ack := &datapb.Ack{
+			ClientID:       record.ClientID,
+			ClientSN:       record.ClientSN,
+			ShardID:        s.shardID,
+			LocalReplicaID: s.replicaID,
+			ViewID:         s.viewID,
+			GlobalSN:       0,
+		}
+		if err = stream.Send(ack); err != nil {
+			return err
+		}
+		s.diskWriteMu.Lock()
+		delete(s.diskWriteC, id)
+		s.diskWriteMu.Unlock()
 	}
 }
 
