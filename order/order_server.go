@@ -132,17 +132,17 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		}
 		localReplicaID := rid % s.dataNumReplica
 		begin := rid - localReplicaID
-		max := int64(0)
+		chosen := int64(0)
 		for i := int32(0); i < s.dataNumReplica; i++ {
 			if cut, ok := lcs[begin+i]; ok {
-				if max < cut.Cut[localReplicaID] {
-					max = cut.Cut[localReplicaID]
+				if cut.Cut[localReplicaID] > 0 {
+					chosen = cut.Cut[localReplicaID]
 				}
 			} else {
-				max = int64(0)
+				chosen = int64(0)
 			}
 		}
-		ccut[rid] = max
+		ccut[rid] = chosen
 	}
 	if incrViewID {
 		atomic.AddInt32(&s.viewID, 1)

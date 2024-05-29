@@ -40,15 +40,17 @@ type DataServer struct {
 	peerClients []*datapb.Data_ReplicateClient
 	peerDoneC   []chan interface{}
 	// channels used to communate with clients, peers, and ordering layer
-	appendC        chan *datapb.Record
-	replicateC     chan *datapb.Record
-	selfReplicateC chan *datapb.Record
-	replicateSendC []chan *datapb.Record
-	ackC           chan *datapb.Ack
-	ackSendC       map[int32]chan *datapb.Ack
-	ackSendCMu     sync.RWMutex
-	subC           map[int32]chan *datapb.Record
-	subCMu         sync.RWMutex
+	appendC           chan *datapb.Record
+	replicateC        chan *datapb.Record
+	selfReplicateC    chan *datapb.Record
+	replicateSendC    []chan *datapb.Record
+	ackC              chan *datapb.Ack
+	ackSendC          map[int32]chan *datapb.Ack
+	ackSendCMu        sync.RWMutex
+	subC              map[int32]chan *datapb.Record
+	subCMu            sync.RWMutex
+	prevSentLocalCut  int64
+	localCglobalCSync chan bool
 
 	storage *storage.Storage
 
@@ -101,6 +103,8 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.records = make(map[int64]*datapb.Record)
 	s.replicateConfWg = make(map[int64]*sync.WaitGroup)
 	s.diskWriteC = make(map[int64]chan bool)
+	s.localCglobalCSync = make(chan bool, 1)
+	s.prevSentLocalCut = 0
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -388,7 +392,13 @@ func (s *DataServer) processAck() {
 
 func (s *DataServer) reportLocalCut() {
 	tick := time.NewTicker(s.batchingInterval)
+	// first := true
 	for range tick.C {
+		// if !first {
+		// 	<-s.localCglobalCSync
+		// } else {
+		// 	first = false
+		// }
 		lcs := &orderpb.LocalCuts{}
 		lcs.Cuts = make([]*orderpb.LocalCut, 1)
 		lcs.Cuts[0] = &orderpb.LocalCut{
@@ -399,6 +409,14 @@ func (s *DataServer) reportLocalCut() {
 		lcs.Cuts[0].Cut = make([]int64, len(s.localCut))
 		copy(lcs.Cuts[0].Cut, s.localCut)
 		s.localCutMu.Unlock()
+
+		// for i, c := range lcs.Cuts[0].Cut {
+		// 	if c > 0 {
+		// 		lcs.Cuts[0].Cut[i] = min(c, s.prevSentLocalCut+2)
+		// 		s.prevSentLocalCut = lcs.Cuts[0].Cut[i]
+		// 	}
+		// }
+
 		log.Debugf("Data report: %v", lcs)
 		err := (*s.orderClient).Send(lcs)
 		if err != nil {
@@ -417,6 +435,7 @@ func (s *DataServer) receiveCommittedCut() {
 			log.Fatalf("Receive from ordering layer error: %v", err)
 		}
 		s.committedEntryC <- e
+		// s.localCglobalCSync <- true
 	}
 }
 
