@@ -195,7 +195,6 @@ if [ "$mode" -eq 0 ]; then # append experiment mode
             collect_logs
             
             # move iostat dump to results folder
-            mkdir -p results
             get_disk_stats "results/$interval/append_bench_$c/"
         done
     done
