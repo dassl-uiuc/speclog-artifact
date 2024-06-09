@@ -17,8 +17,4 @@ It is also expected that the disk used to store local logs as well as data in th
 ./run_script_on_all.sh ./install_go.sh
 ```
 * Only build the `scalog` object on one machine (it is shared through NFS) by running `go build` within the `speclog` directory. 
-* The main script to run the experiments is at `benchmarking/scripts/run.sh`. For running append only benchmarks, the current setup requires you to run this script as 
-```
-./run.sh 0
-```
-Other parameters such as the number of data nodes, number of append clients, append data sizes etc must be specified within the `run.sh` script and various sub-scripts it uses.
+* The main script to run the experiments is at `benchmarking/scripts/run.sh`. For running append only benchmarks, the current setup requires you to run this script as `./run.sh 0`. Other parameters such as the number of data nodes, number of append clients, append data sizes etc must be specified within the `run.sh` script and various sub-scripts it uses. Once the run finishes, it creates a results directory under `benchmarking`. One can analyze the results by changing the number of clients and path of the results directory in `benchmarking/scripts/analyze.py` and then running the script with no arguments. 
