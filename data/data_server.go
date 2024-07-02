@@ -17,6 +17,20 @@ import (
 
 const backendOnly = false
 
+type clientSubscriber struct {
+	state    clientSubscriberState
+	respChan chan *datapb.Record
+	startGsn int64
+}
+
+type clientSubscriberState int
+
+const (
+	BEHIND  clientSubscriberState = 0
+	UPDATED clientSubscriberState = 1
+	CLOSED  clientSubscriberState = 2
+)
+
 type DataServer struct {
 	// data s configurations
 	shardID          int32
@@ -40,20 +54,24 @@ type DataServer struct {
 	peerClients []*datapb.Data_ReplicateClient
 	peerDoneC   []chan interface{}
 	// channels used to communate with clients, peers, and ordering layer
-	appendC           chan *datapb.Record
-	replicateC        chan *datapb.Record
-	selfReplicateC    chan *datapb.Record
-	replicateSendC    []chan *datapb.Record
-	ackC              chan *datapb.Ack
-	ackSendC          map[int32]chan *datapb.Ack
-	ackSendCMu        sync.RWMutex
-	subC              map[int32]chan *datapb.Record
-	subCMu            sync.RWMutex
+	appendC                  chan *datapb.Record
+	replicateC               chan *datapb.Record
+	selfReplicateC           chan *datapb.Record
+	replicateSendC           []chan *datapb.Record
+	ackC                     chan *datapb.Ack
+	ackSendC                 map[int32]chan *datapb.Ack
+	ackSendCMu               sync.RWMutex
+	clientSubscribers        []*clientSubscriber
+	clientSubscribersMu      sync.Mutex
+	newClientSubscribersChan chan *clientSubscriber
+	liveSubscribeC           chan int64
+	subWg                    sync.WaitGroup
+
 	prevSentLocalCut  int64
 	localCglobalCSync chan bool
 
-	// exposable records
-	exposableRecords chan *datapb.Record
+	committedRecords   map[int64]*datapb.Record
+	committedRecordsMu sync.RWMutex
 
 	storage *storage.Storage
 
@@ -64,7 +82,7 @@ type DataServer struct {
 
 	// stores records directly sent to this replica
 	records   map[int64]*datapb.Record
-	recordsMu sync.Mutex
+	recordsMu sync.RWMutex
 
 	// wait group to confirm the replication of records
 	replicateConfWg map[int64]*sync.WaitGroup
@@ -94,7 +112,6 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	// initialize basic data structures
 	s.committedEntryC = make(chan *orderpb.CommittedEntry, 4096)
 	s.ackSendC = make(map[int32]chan *datapb.Ack)
-	s.subC = make(map[int32]chan *datapb.Record)
 	s.ackC = make(chan *datapb.Ack, 4096)
 	s.appendC = make(chan *datapb.Record, 8192)
 	s.selfReplicateC = make(chan *datapb.Record, 4096)
@@ -108,7 +125,10 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.diskWriteC = make(map[int64]chan bool)
 	s.localCglobalCSync = make(chan bool, 1)
 	s.prevSentLocalCut = 0
-	s.exposableRecords = make(chan *datapb.Record, 4096)
+	s.newClientSubscribersChan = make(chan *clientSubscriber, 4096)
+	s.liveSubscribeC = make(chan int64, 4096)
+	s.subWg = sync.WaitGroup{}
+	s.committedRecords = make(map[int64]*datapb.Record)
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -207,10 +227,83 @@ func (s *DataServer) Start() {
 		go s.processCommittedEntry()
 		go s.reportLocalCut()
 		go s.receiveCommittedCut()
-		go s.processSubscribe()
+		go s.processNewSubscribers()
+		go s.processLiveSubscribe()
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)
+}
+
+func (s *DataServer) processNewSubscribers() {
+	for sub := range s.newClientSubscribersChan {
+		s.clientSubscribersMu.Lock()
+		s.clientSubscribers = append(s.clientSubscribers, sub)
+		s.clientSubscribersMu.Unlock()
+	}
+}
+
+func (s *DataServer) sendToSubscriber(sub *clientSubscriber, gsn int64) {
+	if sub.state == CLOSED {
+		return
+	}
+	startRecords := gsn
+	endRecords := gsn
+	if sub.state == BEHIND {
+		startRecords = sub.startGsn
+	}
+	s.committedRecordsMu.RLock()
+	for i := startRecords; i <= endRecords; i++ {
+		if record, ok := s.committedRecords[i]; ok {
+			sub.respChan <- record
+		}
+	}
+	s.committedRecordsMu.RUnlock()
+	if sub.state == BEHIND {
+		sub.state = UPDATED
+	}
+	s.subWg.Done()
+}
+
+func (s *DataServer) processLiveSubscribe() {
+	var latestGsn int64
+	latestGsn = -1
+	for {
+		select {
+		case gsn := <-s.liveSubscribeC:
+			latestGsn = gsn
+			s.clientSubscribersMu.Lock()
+			numSub := len(s.clientSubscribers)
+			s.subWg.Add(numSub)
+			for _, sub := range s.clientSubscribers {
+				if sub == nil {
+					continue
+				}
+				if sub.state != CLOSED && gsn >= sub.startGsn {
+					go s.sendToSubscriber(sub, gsn)
+				}
+			}
+			s.clientSubscribersMu.Unlock()
+			s.subWg.Wait()
+		case <-time.After(10 * time.Millisecond):
+			// update only those behind upto the latestGsn received so far
+			if latestGsn == -1 {
+				continue
+			}
+			s.clientSubscribersMu.Lock()
+			numSub := len(s.clientSubscribers)
+			s.subWg.Add(numSub)
+			for _, sub := range s.clientSubscribers {
+				if sub == nil {
+					continue
+				}
+				if sub.state == BEHIND && latestGsn >= sub.startGsn {
+					go s.sendToSubscriber(sub, latestGsn)
+				}
+			}
+			s.clientSubscribersMu.Unlock()
+			s.subWg.Wait()
+		}
+	}
 }
 
 func (s *DataServer) connectToPeer(peer int32) error {
@@ -250,18 +343,6 @@ func (s *DataServer) connectToPeer(peer int32) error {
 	}
 	s.peerClients[peer] = &replicateSendClient
 	return nil
-}
-
-// process subscriber requests
-func (s *DataServer) processSubscribe() {
-	for record := range s.exposableRecords {
-		s.subCMu.RLock()
-		// log.Debugf("Data %v,%v send to %v subscribers", s.shardID, s.replicaID, len(s.subC))
-		for _, c := range s.subC {
-			c <- record
-		}
-		s.subCMu.RUnlock()
-	}
 }
 
 func (s *DataServer) replicateRecords(done <-chan interface{}, ch chan *datapb.Record, client *datapb.Data_ReplicateClient) {
@@ -517,7 +598,12 @@ func (s *DataServer) processCommittedEntry() {
 							record.LocalReplicaID = s.replicaID
 							record.ShardID = s.shardID
 							record.ViewID = s.viewID
-							s.exposableRecords <- record
+
+							s.committedRecordsMu.Lock()
+							s.committedRecords[startGSN+int64(j)] = record
+							s.committedRecordsMu.Unlock()
+
+							s.liveSubscribeC <- record.GlobalSN
 						}
 					}
 					startGSN += int64(diff)

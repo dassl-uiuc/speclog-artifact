@@ -127,25 +127,24 @@ func (s *DataServer) Read(ctx context.Context, gsn *datapb.GlobalSN) (*datapb.Re
 
 func (s *DataServer) Subscribe(gsn *datapb.GlobalSN, stream datapb.Data_SubscribeServer) error {
 	subC := make(chan *datapb.Record, 4096)
-	s.subCMu.Lock()
-	cid := s.clientID
-	s.clientID++
-	s.subC[cid] = subC
-	s.subCMu.Unlock()
-	for sub := range subC {
-		if sub.GlobalSN >= gsn.GSN {
-			// log.Debugf("Send record %v to client %v", sub.Record, cid)
-			err := stream.Send(sub)
-			if err == nil {
-				continue
-			}
-			s.subCMu.Lock()
-			delete(s.subC, cid)
-			s.subCMu.Unlock()
-			log.Infof("Client %v is closed", cid)
-			close(subC)
-			return err
-		}
+	clientSub := &clientSubscriber{
+		state:    BEHIND,
+		respChan: subC,
+		startGsn: gsn.GSN,
 	}
+	s.newClientSubscribersChan <- clientSub
+
+	for sub := range subC {
+		err := stream.Send(sub)
+		if err == nil {
+			continue
+		}
+		log.Debugf("Send record error: %v, closing channel...", err)
+		clientSub.state = CLOSED
+		close(subC)
+		return err
+	}
+
+	clientSub.state = CLOSED
 	return nil
 }
