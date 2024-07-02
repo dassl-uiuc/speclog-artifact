@@ -145,7 +145,7 @@ get_disk_stats() {
 
 mode="$1"
 if [ "$mode" -eq 0 ]; then # append experiment mode
-    clients=("600")
+    clients=("300")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals

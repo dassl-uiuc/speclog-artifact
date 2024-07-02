@@ -133,16 +133,19 @@ func (s *DataServer) Subscribe(gsn *datapb.GlobalSN, stream datapb.Data_Subscrib
 	s.subC[cid] = subC
 	s.subCMu.Unlock()
 	for sub := range subC {
-		err := stream.Send(sub)
-		if err == nil {
-			continue
+		if sub.GlobalSN >= gsn.GSN {
+			// log.Debugf("Send record %v to client %v", sub.Record, cid)
+			err := stream.Send(sub)
+			if err == nil {
+				continue
+			}
+			s.subCMu.Lock()
+			delete(s.subC, cid)
+			s.subCMu.Unlock()
+			log.Infof("Client %v is closed", cid)
+			close(subC)
+			return err
 		}
-		s.subCMu.Lock()
-		delete(s.subC, cid)
-		s.subCMu.Unlock()
-		log.Infof("Client %v is closed", cid)
-		close(subC)
-		return err
 	}
 	return nil
 }

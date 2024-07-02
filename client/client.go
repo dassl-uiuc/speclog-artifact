@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -28,18 +29,25 @@ type tuple struct {
 	err error
 }
 
+type CommittedRecord struct {
+	GSN    int64
+	Record string
+}
+
 type Client struct {
-	clientID       int32
-	numReplica     int32
-	nextCSN        int32
-	nextGSN        int32
-	viewID         int32
-	view           *view.View
-	viewC          chan *discpb.View
-	appendC        chan *datapb.Record
-	ackC           chan *datapb.Ack
-	subC           chan *datapb.Record
-	shardingPolicy ShardingPolicy
+	clientID           int32
+	numReplica         int32
+	nextCSN            int32
+	nextGSN            int64
+	viewID             int32
+	view               *view.View
+	viewC              chan *discpb.View
+	appendC            chan *datapb.Record
+	ackC               chan *datapb.Ack
+	subC               chan CommittedRecord
+	committedRecords   map[int64]CommittedRecord
+	committedRecordsMu sync.RWMutex
+	shardingPolicy     ShardingPolicy
 
 	discAddr   address.DiscAddr
 	discConn   *grpc.ClientConn
@@ -67,10 +75,11 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 	c.viewC = make(chan *discpb.View, 4096)
 	c.appendC = make(chan *datapb.Record, 4096)
 	c.ackC = make(chan *datapb.Ack, 4096)
-	c.subC = make(chan *datapb.Record, 4096)
+	c.subC = make(chan CommittedRecord, 4096)
 	c.dataConn = make(map[int32]*grpc.ClientConn)
 	c.dataAppendClient = make(map[int32]datapb.Data_AppendClient)
 	c.view = view.NewView()
+	c.committedRecords = make(map[int64]CommittedRecord)
 	err := c.UpdateDiscovery()
 	if err != nil {
 		return nil, err
@@ -280,6 +289,70 @@ func (c *Client) Read(gsn int64, shard, replica int32) (string, error) {
 		return "", err
 	}
 	return record.Record, nil
+}
+
+func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, error) {
+	c.committedRecordsMu.Lock()
+	c.nextGSN = gsn
+	c.committedRecordsMu.Unlock()
+
+	for _, shard := range c.view.LiveShards {
+		for replicaId := int32(0); replicaId < c.numReplica; replicaId++ {
+			go c.subscribeShardServer(shard, replicaId)
+		}
+	}
+
+	return c.subC, nil
+}
+
+func (c *Client) subscribeShardServer(shard, replica int32) {
+	conn, err := c.getDataServerConn(shard, replica)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	opts := []grpc.CallOption{}
+	dataClient := datapb.NewDataClient(conn)
+	globalSN := &datapb.GlobalSN{GSN: c.nextGSN}
+	stream, err := dataClient.Subscribe(context.Background(), globalSN, opts...)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	for {
+		record, err := stream.Recv()
+		if err == io.EOF {
+			log.Infof("Receive subscribe stream closed.")
+			return
+		}
+		if err != nil {
+			log.Errorf("%v", err)
+			return
+		}
+		c.committedRecordsMu.Lock()
+		c.committedRecords[record.GlobalSN] = CommittedRecord{
+			GSN:    record.GlobalSN,
+			Record: record.Record,
+		}
+		if record.GlobalSN == c.nextGSN {
+			c.respondToClient()
+		}
+		c.committedRecordsMu.Unlock()
+		// TODO(shreesha): handle view change
+	}
+}
+
+// called with lock held
+func (c *Client) respondToClient() {
+	for {
+		commitedRecord, in := c.committedRecords[c.nextGSN]
+		if !in {
+			break
+		}
+		c.subC <- commitedRecord
+		delete(c.committedRecords, c.nextGSN)
+		c.nextGSN++
+	}
 }
 
 func (c *Client) SetShardingPolicy(p ShardingPolicy) {

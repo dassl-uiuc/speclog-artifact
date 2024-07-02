@@ -15,6 +15,8 @@ const NumberOfRequest = 10
 const NumberOfBytes = 100
 const StreamName = "AppendBenchmark"
 
+const readType = "subscribe"
+
 func main() {
 	var err error
 	// clean up old files
@@ -37,14 +39,25 @@ func main() {
 	dataPort := uint16(viper.GetInt("data-port"))
 	dataAddr := address.NewGeneralDataAddr("data-%v-%v-ip", numReplica, dataPort)
 
-	cli, err := client.NewClient(dataAddr, discAddr, numReplica)
+	clients := make([]*client.Client, 3)
+	clients[0], err = client.NewClient(dataAddr, discAddr, numReplica)
+	clients[1], err = client.NewClient(dataAddr, discAddr, numReplica)
+	clients[2], err = client.NewClient(dataAddr, discAddr, numReplica)
+
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 	}
 
+	var stream chan client.CommittedRecord
+	if readType == "subscribe" {
+		stream, err = clients[2].Subscribe(0)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}
 	for numberOfRequest := 0; numberOfRequest < 3000; numberOfRequest++ {
 		record := strconv.Itoa(numberOfRequest)
-		gsn, _, err := cli.AppendOne(record)
+		gsn, _, err := clients[numberOfRequest%2].AppendOne(record)
 
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
@@ -53,15 +66,26 @@ func main() {
 		fmt.Println("executing ", record, " ", gsn)
 	}
 
-	for numberOfRequest := 0; numberOfRequest < 3000; numberOfRequest++ {
-		str, err := cli.Read(int64(numberOfRequest), 0, 1)
-		// fmt.Println(str)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "read failure")
+	if readType != "subscribe" {
+		for numberOfRequest := 0; numberOfRequest < 3000; numberOfRequest++ {
+			str, err := clients[2].Read(int64(numberOfRequest), 0, 1)
+			// fmt.Println(str)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "read failure")
+			}
+			num, _ := strconv.Atoi(str)
+			if num != numberOfRequest {
+				fmt.Println("bug!", num, " ", str, " ", numberOfRequest)
+			}
 		}
-		num, _ := strconv.Atoi(str)
-		if num != numberOfRequest {
-			fmt.Println("bug!", num, " ", str, " ", numberOfRequest)
+	} else {
+		for i := 0; i < 3000; i++ {
+			r := <-stream
+			num, _ := strconv.Atoi(r.Record)
+			if int64(num) != r.GSN {
+				fmt.Println("bug!", num, " ", r.Record, " ", r.GSN)
+			}
 		}
+
 	}
 }

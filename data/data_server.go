@@ -52,6 +52,9 @@ type DataServer struct {
 	prevSentLocalCut  int64
 	localCglobalCSync chan bool
 
+	// exposable records
+	exposableRecords chan *datapb.Record
+
 	storage *storage.Storage
 
 	wait   map[int64]chan *datapb.Ack
@@ -105,6 +108,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.diskWriteC = make(map[int64]chan bool)
 	s.localCglobalCSync = make(chan bool, 1)
 	s.prevSentLocalCut = 0
+	s.exposableRecords = make(chan *datapb.Record, 4096)
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -203,6 +207,7 @@ func (s *DataServer) Start() {
 		go s.processCommittedEntry()
 		go s.reportLocalCut()
 		go s.receiveCommittedCut()
+		go s.processSubscribe()
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)
@@ -247,11 +252,23 @@ func (s *DataServer) connectToPeer(peer int32) error {
 	return nil
 }
 
+// process subscriber requests
+func (s *DataServer) processSubscribe() {
+	for record := range s.exposableRecords {
+		s.subCMu.RLock()
+		// log.Debugf("Data %v,%v send to %v subscribers", s.shardID, s.replicaID, len(s.subC))
+		for _, c := range s.subC {
+			c <- record
+		}
+		s.subCMu.RUnlock()
+	}
+}
+
 func (s *DataServer) replicateRecords(done <-chan interface{}, ch chan *datapb.Record, client *datapb.Data_ReplicateClient) {
 	for {
 		select {
 		case record := <-ch:
-			log.Debugf("Data %v,%v send", s.shardID, s.replicaID)
+			// log.Debugf("Data %v,%v send", s.shardID, s.replicaID)
 			err := (*client).Send(record)
 			if err != nil {
 				log.Errorf("Send record error: %v", err)
@@ -300,7 +317,7 @@ func (s *DataServer) processAppend() {
 // processReplicate writes my peers records to local storage
 func (s *DataServer) processReplicate() {
 	for record := range s.replicateC {
-		log.Debugf("Data %v,%v process", s.shardID, s.replicaID)
+		// log.Debugf("Data %v,%v process", s.shardID, s.replicaID)
 		_, err := s.storage.WriteToPartition(record.LocalReplicaID, record.Record)
 		if err != nil {
 			log.Fatalf("Write to storage failed: %v", err)
@@ -321,7 +338,7 @@ func (s *DataServer) processReplicate() {
 // processSelfReplicate writes my own records to local storage
 func (s *DataServer) processSelfReplicate() {
 	for record := range s.selfReplicateC {
-		log.Debugf("Data %v,%v process", s.shardID, s.replicaID)
+		// log.Debugf("Data %v,%v process", s.shardID, s.replicaID)
 		lsn, err := s.storage.WriteToPartition(record.LocalReplicaID, record.Record)
 		if err != nil {
 			log.Fatalf("Write to storage failed: %v", err)
@@ -494,6 +511,13 @@ func (s *DataServer) processCommittedEntry() {
 								GlobalSN:       startGSN + int64(j),
 							}
 							s.ackC <- ack
+
+							// send record on exposable records channel
+							record.GlobalSN = startGSN + int64(j)
+							record.LocalReplicaID = s.replicaID
+							record.ShardID = s.shardID
+							record.ViewID = s.viewID
+							s.exposableRecords <- record
 						}
 					}
 					startGSN += int64(diff)
