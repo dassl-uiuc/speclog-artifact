@@ -12,7 +12,7 @@ func Printf(format string, v ...interface{}) {
 }
 
 func Debugf(format string, v ...interface{}) {
-	logger.Printf(format, v...)
+	// logger.Printf(format, v...)
 }
 
 func Infof(format string, v ...interface{}) {
