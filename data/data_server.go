@@ -16,6 +16,7 @@ import (
 )
 
 const backendOnly = false
+const measureOrderingInterval = false
 
 type clientSubscriber struct {
 	state    clientSubscriberState
@@ -84,6 +85,10 @@ type DataServer struct {
 	records   map[int64]*datapb.Record
 	recordsMu sync.RWMutex
 
+	timeOfEntry              map[int64]time.Time
+	avgOrderingLatencyMicros float64
+	numOrders                int64
+
 	// wait group to confirm the replication of records
 	replicateConfWg map[int64]*sync.WaitGroup
 	replicateConfMu sync.RWMutex
@@ -129,6 +134,9 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.liveSubscribeC = make(chan int64, 4096)
 	s.subWg = sync.WaitGroup{}
 	s.committedRecords = make(map[int64]*datapb.Record)
+	s.timeOfEntry = make(map[int64]time.Time)
+	s.numOrders = 0
+	s.avgOrderingLatencyMicros = 0
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -243,6 +251,7 @@ func (s *DataServer) processNewSubscribers() {
 }
 
 func (s *DataServer) sendToSubscriber(sub *clientSubscriber, gsn int64) {
+	defer s.subWg.Done()
 	if sub.state == CLOSED {
 		return
 	}
@@ -261,7 +270,6 @@ func (s *DataServer) sendToSubscriber(sub *clientSubscriber, gsn int64) {
 	if sub.state == BEHIND {
 		sub.state = UPDATED
 	}
-	s.subWg.Done()
 }
 
 func (s *DataServer) processLiveSubscribe() {
@@ -276,10 +284,13 @@ func (s *DataServer) processLiveSubscribe() {
 			s.subWg.Add(numSub)
 			for _, sub := range s.clientSubscribers {
 				if sub == nil {
+					s.subWg.Done()
 					continue
 				}
 				if sub.state != CLOSED && gsn >= sub.startGsn {
 					go s.sendToSubscriber(sub, gsn)
+				} else {
+					s.subWg.Done()
 				}
 			}
 			s.clientSubscribersMu.Unlock()
@@ -294,10 +305,13 @@ func (s *DataServer) processLiveSubscribe() {
 			s.subWg.Add(numSub)
 			for _, sub := range s.clientSubscribers {
 				if sub == nil {
+					s.subWg.Done()
 					continue
 				}
 				if sub.state == BEHIND && latestGsn >= sub.startGsn {
 					go s.sendToSubscriber(sub, latestGsn)
+				} else {
+					s.subWg.Done()
 				}
 			}
 			s.clientSubscribersMu.Unlock()
@@ -490,13 +504,7 @@ func (s *DataServer) processAck() {
 
 func (s *DataServer) reportLocalCut() {
 	tick := time.NewTicker(s.batchingInterval)
-	// first := true
 	for range tick.C {
-		// if !first {
-		// 	<-s.localCglobalCSync
-		// } else {
-		// 	first = false
-		// }
 		lcs := &orderpb.LocalCuts{}
 		lcs.Cuts = make([]*orderpb.LocalCut, 1)
 		lcs.Cuts[0] = &orderpb.LocalCut{
@@ -508,12 +516,18 @@ func (s *DataServer) reportLocalCut() {
 		copy(lcs.Cuts[0].Cut, s.localCut)
 		s.localCutMu.Unlock()
 
-		// for i, c := range lcs.Cuts[0].Cut {
-		// 	if c > 0 {
-		// 		lcs.Cuts[0].Cut[i] = min(c, s.prevSentLocalCut+2)
-		// 		s.prevSentLocalCut = lcs.Cuts[0].Cut[i]
-		// 	}
-		// }
+		if measureOrderingInterval {
+			for _, c := range lcs.Cuts[0].Cut {
+				if c > 0 {
+					for j := s.prevSentLocalCut; j < c; j++ {
+						s.recordsMu.Lock()
+						s.timeOfEntry[j] = time.Now()
+						s.recordsMu.Unlock()
+					}
+					s.prevSentLocalCut = c
+				}
+			}
+		}
 
 		log.Debugf("Data report: %v", lcs)
 		err := (*s.orderClient).Send(lcs)
@@ -533,7 +547,6 @@ func (s *DataServer) receiveCommittedCut() {
 			log.Fatalf("Receive from ordering layer error: %v", err)
 		}
 		s.committedEntryC <- e
-		// s.localCglobalCSync <- true
 	}
 }
 
@@ -577,8 +590,17 @@ func (s *DataServer) processCommittedEntry() {
 							record, ok := s.records[start+int64(j)]
 							if ok {
 								delete(s.records, start+int64(j))
+								if measureOrderingInterval {
+									elapsed := time.Since(s.timeOfEntry[start+int64(j)])
+									s.avgOrderingLatencyMicros = (s.avgOrderingLatencyMicros*float64(s.numOrders) + float64(elapsed.Microseconds())) / float64(s.numOrders+1)
+									s.numOrders++
+									delete(s.timeOfEntry, start+int64(j))
+								}
 							}
 							s.recordsMu.Unlock()
+							if measureOrderingInterval {
+								log.Printf("avg ordering latency: %v", s.avgOrderingLatencyMicros)
+							}
 							if !ok {
 								log.Errorf("error, not able to find records")
 								continue
