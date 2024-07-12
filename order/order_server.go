@@ -1,6 +1,8 @@
 package order
 
 import (
+	"maps"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -8,6 +10,7 @@ import (
 	log "github.com/scalog/scalog/logger"
 	"github.com/scalog/scalog/order/orderpb"
 
+	movingaverage "github.com/RobinUS2/golang-moving-average"
 	"github.com/golang/protobuf/proto"
 	"go.etcd.io/etcd/etcdserver/api/snap"
 	"go.etcd.io/etcd/raft/raftpb"
@@ -36,8 +39,19 @@ type OrderServer struct {
 	rnCommitC          <-chan *string
 	rnErrorC           <-chan error
 	rnSnapshotterReady <-chan *snap.Snapshotter
+
+	lastCutTime          map[int32]time.Time
+	avgDelta             map[int32]*movingaverage.MovingAverage
+	quota                map[int32]int64
+	prevLocalCutNum      map[int32]int64
+	localCutChangeWindow int64
+	quotaChanged         int64 // number of primaries for whom quota has been changed
 }
 
+// fraction of the local cut window at which quota change decisions are made for a shard
+const quotaChangeFraction float64 = 0.75
+
+// TODO: Currently assuming batching interval is the same as the ordering interval
 func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval time.Duration, peerList []string) *OrderServer {
 	s := &OrderServer{
 		index:            index,
@@ -53,6 +67,13 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.commitC = make(chan *orderpb.CommittedEntry, 4096)
 	s.finalizeC = make(chan *orderpb.FinalizeEntry, 4096)
 	s.subC = make(map[int32]chan *orderpb.CommittedEntry)
+
+	s.lastCutTime = make(map[int32]time.Time)
+	s.avgDelta = make(map[int32]*movingaverage.MovingAverage)
+	s.quota = make(map[int32]int64)
+	s.prevLocalCutNum = make(map[int32]int64)
+	s.localCutChangeWindow = 10
+	s.quotaChanged = 0
 
 	s.rnConfChangeC = make(chan raftpb.ConfChange)
 	s.rnProposeC = make(chan string)
@@ -172,6 +193,37 @@ func (s *OrderServer) processReport() {
 					}
 					if valid {
 						lcs[id] = lc
+
+						// update the average delta between consecutive cuts
+						if _, ok := s.avgDelta[id]; !ok {
+							// if first local cut from that replica
+							s.avgDelta[id] = movingaverage.New(int(s.localCutChangeWindow))
+							s.quota[id] = lc.Quota
+							s.lastCutTime[id] = time.Now()
+							s.prevLocalCutNum[id] = lc.LocalCutNum
+						} else {
+							// if local cut is strictly the next one in order (ignore retries, can occur during shard internal failures)
+							if lc.LocalCutNum == (s.prevLocalCutNum[id]+1)%s.localCutChangeWindow {
+								delta := time.Since(s.lastCutTime[id]).Nanoseconds()
+								s.avgDelta[id].Add(float64(delta))
+								s.lastCutTime[id] = time.Now()
+								s.prevLocalCutNum[id] = lc.LocalCutNum
+
+								if lc.LocalCutNum == int64(float64(s.localCutChangeWindow)*quotaChangeFraction) {
+									// compute new quota for shard if necessary
+									avgDelta := s.avgDelta[id].Avg()
+									currFreq := float64(1e9 / avgDelta)
+									defaultFreq := float64(1e9 / float64(s.batchingInterval.Nanoseconds()))
+
+									// check if frequency changed by more than 10%
+									if math.Abs(currFreq-defaultFreq)/defaultFreq >= 0.1 {
+										// decided new quota for the next window
+										s.quota[id] = int64(float64(lc.Quota) * currFreq / defaultFreq)
+									}
+									s.quotaChanged++
+								}
+							}
+						}
 					}
 				}
 			} else {
@@ -184,8 +236,22 @@ func (s *OrderServer) processReport() {
 			if s.isLeader { // compute committedCut
 				ccut := s.computeCommittedCut(lcs)
 				vid := atomic.LoadInt32(&s.viewID)
-				ce := &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
-				s.proposeC <- ce
+				numLiveShards := 0
+				for _, v := range s.shards {
+					if v {
+						numLiveShards++
+					}
+				}
+				if s.quotaChanged == int64(numLiveShards)*int64(s.dataNumReplica) {
+					quota := make(map[int32]int64)
+					maps.Copy(quota, s.quota)
+					ce := &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, ShardQuotas: quota, IsShardQuotaUpdated: true, Cut: ccut}, FinalizeShards: nil}
+					s.proposeC <- ce
+				} else {
+					ce := &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
+					s.proposeC <- ce
+				}
+
 				s.startGSN += s.computeCutDiff(s.prevCut, ccut)
 				s.prevCut = ccut
 			}
