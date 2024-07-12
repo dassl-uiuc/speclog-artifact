@@ -255,8 +255,15 @@ func (s *OrderServer) processReport() {
 			// TODO: check to make sure the key in lcs exist
 			// log.Debugf("processReport ticker")
 			if s.isLeader { // compute committedCut
+
+				// wait for the batch to be ready (i.e. all live shard primaries for this window must have sent a local cut upto this batch)
 				batch := <-readyBatch
 				ccut := s.computeCommittedCut(lcsBatches[batch])
+				// delete the entries in the batch so that the next batch can be processed afresh
+				for k := range lcsBatches[batch] {
+					delete(lcsBatches[batch], k)
+				}
+
 				vid := atomic.LoadInt32(&s.viewID)
 				if s.quotaChanged == int64(len(liveShardPrimaries)) {
 					quota := make(map[int32]int64)
