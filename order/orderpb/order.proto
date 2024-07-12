@@ -26,7 +26,7 @@ message CommittedCut {
 	// globalReplicaID = shardID * numReplicas + localReplicaID
 	map<int32, int64> cut = 2;
     map<int32, int64> shardQuotas = 3;
-	map<int32, bool> isShardQuotaUpdated = 4;
+	bool isShardQuotaUpdated = 4;
 }
 
 message CommittedEntry {
