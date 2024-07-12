@@ -96,6 +96,14 @@ type DataServer struct {
 	// written to disk
 	diskWriteC  map[int64]chan bool
 	diskWriteMu sync.RWMutex
+
+	// Channel used to determine if local cut should be send
+	addEntryToLocalCut chan bool
+	entryCount 	   int64
+	quota 		   int64
+	localCutNum     int64
+	numLocalCutsThreshold int64
+	waitForNewQuota chan bool
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -137,6 +145,13 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.timeOfEntry = make(map[int64]time.Time)
 	s.numOrders = 0
 	s.avgOrderingLatencyMicros = 0
+
+	s.addEntryToLocalCut = make(chan bool, 1)
+	s.entryCount = 0
+	s.quota = 3
+	s.localCutNum = 0
+	s.numLocalCutsThreshold = 10
+	s.waitForNewQuota = make(chan bool, 1)
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -477,6 +492,8 @@ func (s *DataServer) processSelfReplicate() {
 			s.localCut[record.LocalReplicaID] = lsn + 1
 		}
 		s.localCutMu.Unlock()
+
+		s.addEntryToLocalCut <- true
 	}
 }
 
@@ -503,36 +520,51 @@ func (s *DataServer) processAck() {
 }
 
 func (s *DataServer) reportLocalCut() {
-	tick := time.NewTicker(s.batchingInterval)
-	for range tick.C {
-		lcs := &orderpb.LocalCuts{}
-		lcs.Cuts = make([]*orderpb.LocalCut, 1)
-		lcs.Cuts[0] = &orderpb.LocalCut{
-			ShardID:        s.shardID,
-			LocalReplicaID: s.replicaID,
-		}
-		s.localCutMu.Lock()
-		lcs.Cuts[0].Cut = make([]int64, len(s.localCut))
-		copy(lcs.Cuts[0].Cut, s.localCut)
-		s.localCutMu.Unlock()
+	for range s.addEntryToLocalCut {
+		s.entryCount++
 
-		if measureOrderingInterval {
-			for _, c := range lcs.Cuts[0].Cut {
-				if c > 0 {
-					for j := s.prevSentLocalCut; j < c; j++ {
-						s.recordsMu.Lock()
-						s.timeOfEntry[j] = time.Now()
-						s.recordsMu.Unlock()
+		if s.entryCount == s.quota {
+			lcs := &orderpb.LocalCuts{}
+			lcs.Cuts = make([]*orderpb.LocalCut, 1)
+			lcs.Cuts[0] = &orderpb.LocalCut{
+				ShardID:        s.shardID,
+				LocalReplicaID: s.replicaID,
+			}
+			s.localCutMu.Lock()
+			lcs.Cuts[0].Cut = make([]int64, len(s.localCut))
+			copy(lcs.Cuts[0].Cut, s.localCut)
+			s.localCutMu.Unlock()
+
+			if measureOrderingInterval {
+				for _, c := range lcs.Cuts[0].Cut {
+					if c > 0 {
+						for j := s.prevSentLocalCut; j < c; j++ {
+							s.recordsMu.Lock()
+							s.timeOfEntry[j] = time.Now()
+							s.recordsMu.Unlock()
+						}
+						s.prevSentLocalCut = c
 					}
-					s.prevSentLocalCut = c
 				}
 			}
-		}
 
-		log.Debugf("Data report: %v", lcs)
-		err := (*s.orderClient).Send(lcs)
-		if err != nil {
-			log.Errorf("%v", err)
+			if lcs.Cuts[0].Cut[s.replicaID] != 0 {
+				s.localCutNum++
+				lcs.Cuts[0].LocalCutNum = s.localCutNum
+				lcs.Cuts[0].Quota = s.quota
+			}
+
+			log.Debugf("Data report: %v", lcs)
+			err := (*s.orderClient).Send(lcs)
+			if err != nil {
+				log.Errorf("%v", err)
+			}
+
+			if s.localCutNum == s.numLocalCutsThreshold {
+				<-s.waitForNewQuota
+				s.localCutNum = 0
+			}
+			s.entryCount = 0
 		}
 	}
 }
@@ -553,6 +585,12 @@ func (s *DataServer) receiveCommittedCut() {
 func (s *DataServer) processCommittedEntry() {
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
+			rid := s.shardID*s.numReplica + s.replicaID
+			if entry.CommittedCut.IsShardQuotaUpdated[rid] {
+				s.quota = entry.CommittedCut.ShardQuotas[rid]
+				s.waitForNewQuota <- true
+			}
+
 			startReplicaID := s.shardID * s.numReplica
 			startGSN := entry.CommittedCut.StartGSN
 			// compute startGSN using the number of records stored
