@@ -52,6 +52,7 @@ type OrderServer struct {
 const quotaChangeFraction float64 = 0.75
 
 // TODO: Currently assuming batching interval is the same as the ordering interval
+// TODO: Currently assuming no change in number of shards
 func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval time.Duration, peerList []string) *OrderServer {
 	s := &OrderServer{
 		index:            index,
@@ -173,7 +174,17 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 
 // proposeCommit broadcasts entries in commitC to all subCs.
 func (s *OrderServer) processReport() {
-	lcs := make(map[int32]*orderpb.LocalCut) // all local cuts
+	lcsBatches := make(map[int64](map[int32]*orderpb.LocalCut)) // map from local cut number to the local cuts
+	readyBatch := make(chan (int64), 2*s.localCutChangeWindow)  // channel on which ready batches of local cuts are sent
+	lcs := make(map[int32]*orderpb.LocalCut)                    // all local cuts
+	liveShardPrimaries := make([]int32, 0)
+	for id, v := range s.shards {
+		if v {
+			for i := int32(0); i < s.dataNumReplica; i++ {
+				liveShardPrimaries = append(liveShardPrimaries, id*s.dataNumReplica+i)
+			}
+		}
+	}
 	ticker := time.NewTicker(s.batchingInterval)
 	for {
 		select {
@@ -224,6 +235,16 @@ func (s *OrderServer) processReport() {
 								}
 							}
 						}
+
+						if _, ok := lcsBatches[lc.LocalCutNum]; !ok {
+							lcsBatches[lc.LocalCutNum] = make(map[int32]*orderpb.LocalCut)
+						}
+						lcsBatches[lc.LocalCutNum][id] = lc
+
+						// check if the batch is ready
+						if len(lcsBatches[lc.LocalCutNum]) == len(liveShardPrimaries) {
+							readyBatch <- lc.LocalCutNum
+						}
 					}
 				}
 			} else {
@@ -234,19 +255,15 @@ func (s *OrderServer) processReport() {
 			// TODO: check to make sure the key in lcs exist
 			// log.Debugf("processReport ticker")
 			if s.isLeader { // compute committedCut
-				ccut := s.computeCommittedCut(lcs)
+				batch := <-readyBatch
+				ccut := s.computeCommittedCut(lcsBatches[batch])
 				vid := atomic.LoadInt32(&s.viewID)
-				numLiveShards := 0
-				for _, v := range s.shards {
-					if v {
-						numLiveShards++
-					}
-				}
-				if s.quotaChanged == int64(numLiveShards)*int64(s.dataNumReplica) {
+				if s.quotaChanged == int64(len(liveShardPrimaries)) {
 					quota := make(map[int32]int64)
 					maps.Copy(quota, s.quota)
 					ce := &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, ShardQuotas: quota, IsShardQuotaUpdated: true, Cut: ccut}, FinalizeShards: nil}
 					s.proposeC <- ce
+					s.quotaChanged = 0
 				} else {
 					ce := &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
 					s.proposeC <- ce
