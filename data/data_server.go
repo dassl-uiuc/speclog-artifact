@@ -98,12 +98,12 @@ type DataServer struct {
 	diskWriteMu sync.RWMutex
 
 	// Channel used to determine if local cut should be send
-	addEntryToLocalCut chan bool
-	entryCount 	   int64
-	quota 		   int64
-	localCutNum     int64
+	addEntryToLocalCut    chan bool
+	entryCount            int64
+	quota                 int64
+	localCutNum           int64
 	numLocalCutsThreshold int64
-	waitForNewQuota chan bool
+	waitForNewQuota       chan bool
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -586,7 +586,7 @@ func (s *DataServer) processCommittedEntry() {
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
 			rid := s.shardID*s.numReplica + s.replicaID
-			if entry.CommittedCut.IsShardQuotaUpdated[rid] {
+			if entry.CommittedCut.IsShardQuotaUpdated {
 				s.quota = entry.CommittedCut.ShardQuotas[rid]
 				s.waitForNewQuota <- true
 			}
