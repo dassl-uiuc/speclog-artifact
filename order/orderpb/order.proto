@@ -4,6 +4,7 @@ package orderpb;
 
 service Order {
 	rpc Report(stream LocalCuts) returns (stream CommittedEntry) {}
+    rpc Register(LocalCut) returns (Empty) {}
 	rpc Forward(stream LocalCuts) returns (Empty) {}
 	rpc Finalize(FinalizeEntry) returns (Empty) {}
 }
