@@ -520,51 +520,85 @@ func (s *DataServer) processAck() {
 }
 
 func (s *DataServer) reportLocalCut() {
-	for range s.addEntryToLocalCut {
-		s.entryCount++
+	tick := time.NewTicker(s.batchingInterval)
+	prevLcs := &orderpb.LocalCuts{}
+	prevLcs.Cuts = make([]*orderpb.LocalCut, 1)
+	prevLcs.Cuts[0] = &orderpb.LocalCut{
+		ShardID:        s.shardID,
+		LocalReplicaID: s.replicaID,
+	}
+	prevLcs.Cuts[0].Cut = make([]int64, len(s.localCut))
+	for {
+		select {
+		case <-s.addEntryToLocalCut:
+			s.entryCount++
 
-		if s.entryCount == s.quota {
+			if s.entryCount == s.quota {
+				lcs := &orderpb.LocalCuts{}
+				lcs.Cuts = make([]*orderpb.LocalCut, 1)
+				lcs.Cuts[0] = &orderpb.LocalCut{
+					ShardID:        s.shardID,
+					LocalReplicaID: s.replicaID,
+				}
+				s.localCutMu.Lock()
+				lcs.Cuts[0].Cut = make([]int64, len(s.localCut))
+				copy(lcs.Cuts[0].Cut, s.localCut)
+				s.localCutMu.Unlock()
+
+				if measureOrderingInterval {
+					for _, c := range lcs.Cuts[0].Cut {
+						if c > 0 {
+							for j := s.prevSentLocalCut; j < c; j++ {
+								s.recordsMu.Lock()
+								s.timeOfEntry[j] = time.Now()
+								s.recordsMu.Unlock()
+							}
+							s.prevSentLocalCut = c
+						}
+					}
+				}
+
+				if lcs.Cuts[0].Cut[s.replicaID] != 0 {
+					s.localCutNum++
+					lcs.Cuts[0].LocalCutNum = s.localCutNum
+					lcs.Cuts[0].Quota = s.quota
+				}
+
+				log.Debugf("Data report: %v", lcs)
+				err := (*s.orderClient).Send(lcs)
+				if err != nil {
+					log.Errorf("%v", err)
+				}
+
+				// update prevLcs
+				prevLcs.Cuts[0].Cut = make([]int64, len(s.localCut))
+				copy(prevLcs.Cuts[0].Cut, s.localCut)
+				prevLcs.Cuts[0].LocalCutNum = s.localCutNum
+				prevLcs.Cuts[0].Quota = s.quota
+
+				if s.localCutNum == s.numLocalCutsThreshold {
+					<-s.waitForNewQuota
+					s.localCutNum = 0
+				}
+				s.entryCount = 0
+			}
+		case <-tick.C:
+			// send prev local cut to ordering layer
 			lcs := &orderpb.LocalCuts{}
 			lcs.Cuts = make([]*orderpb.LocalCut, 1)
 			lcs.Cuts[0] = &orderpb.LocalCut{
 				ShardID:        s.shardID,
 				LocalReplicaID: s.replicaID,
 			}
-			s.localCutMu.Lock()
-			lcs.Cuts[0].Cut = make([]int64, len(s.localCut))
-			copy(lcs.Cuts[0].Cut, s.localCut)
-			s.localCutMu.Unlock()
-
-			if measureOrderingInterval {
-				for _, c := range lcs.Cuts[0].Cut {
-					if c > 0 {
-						for j := s.prevSentLocalCut; j < c; j++ {
-							s.recordsMu.Lock()
-							s.timeOfEntry[j] = time.Now()
-							s.recordsMu.Unlock()
-						}
-						s.prevSentLocalCut = c
-					}
-				}
-			}
-
-			if lcs.Cuts[0].Cut[s.replicaID] != 0 {
-				s.localCutNum++
-				lcs.Cuts[0].LocalCutNum = s.localCutNum
-				lcs.Cuts[0].Quota = s.quota
-			}
-
+			lcs.Cuts[0].Cut = make([]int64, len(prevLcs.Cuts[0].Cut))
+			copy(lcs.Cuts[0].Cut, prevLcs.Cuts[0].Cut)
+			lcs.Cuts[0].LocalCutNum = prevLcs.Cuts[0].LocalCutNum
+			lcs.Cuts[0].Quota = prevLcs.Cuts[0].Quota
 			log.Debugf("Data report: %v", lcs)
 			err := (*s.orderClient).Send(lcs)
 			if err != nil {
 				log.Errorf("%v", err)
 			}
-
-			if s.localCutNum == s.numLocalCutsThreshold {
-				<-s.waitForNewQuota
-				s.localCutNum = 0
-			}
-			s.entryCount = 0
 		}
 	}
 }
