@@ -29,6 +29,11 @@ func (s *OrderServer) Report(stream orderpb.Order_ReportServer) error {
 	}
 }
 
+func (s *OrderServer) Register(lc orderpb.LocalCut) error {
+	s.registerC <- lc
+	return nil
+}
+
 func (s *OrderServer) respondToDataReplica(done chan struct{}, stream orderpb.Order_ReportServer) {
 	respC := make(chan *orderpb.CommittedEntry, 4096)
 	s.subCMu.Lock()
