@@ -522,7 +522,6 @@ func (s *DataServer) processAck() {
 func (s *DataServer) registerToOrderingLayer() {
 	orderClient := orderpb.NewOrderClient(s.orderConn)
 
-	// send prev local cut to ordering layer
 	localCut := &orderpb.LocalCut{
 		ShardID:        s.shardID,
 		LocalReplicaID: s.replicaID,
