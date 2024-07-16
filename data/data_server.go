@@ -149,7 +149,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 
 	s.addEntryToLocalCut = make(chan bool, 1)
 	s.entryCount = 0
-	s.quota = 3
+	s.quota = 4
 	s.localCutNum = 0
 	s.numLocalCutsThreshold = 10
 	s.waitForNewQuota = make(chan int64, 1)
@@ -527,7 +527,7 @@ func (s *DataServer) registerToOrderingLayer() {
 	localCut := &orderpb.LocalCut{
 		ShardID:        s.shardID,
 		LocalReplicaID: s.replicaID,
-		Quota:          4,
+		Quota:          s.quota, // Initially 4
 	}
 	localCut.Cut = make([]int64, len(s.localCut))
 
