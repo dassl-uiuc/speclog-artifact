@@ -29,9 +29,9 @@ func (s *OrderServer) Report(stream orderpb.Order_ReportServer) error {
 	}
 }
 
-func (s *OrderServer) Register(lc orderpb.LocalCut) error {
+func (s *OrderServer) Register(ctx context.Context, lc *orderpb.LocalCut) (*orderpb.Empty, error) {
 	s.registerC <- lc
-	return nil
+	return &orderpb.Empty{}, nil
 }
 
 func (s *OrderServer) respondToDataReplica(done chan struct{}, stream orderpb.Order_ReportServer) {
