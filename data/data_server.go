@@ -104,6 +104,7 @@ type DataServer struct {
 	localCutNum           int64
 	numLocalCutsThreshold int64
 	waitForNewQuota       chan int64
+	windowNumber		  int64
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -152,6 +153,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.localCutNum = 0
 	s.numLocalCutsThreshold = 10
 	s.waitForNewQuota = make(chan int64, 1)
+	s.windowNumber = 0
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -525,6 +527,7 @@ func (s *DataServer) registerToOrderingLayer() {
 	localCut := &orderpb.LocalCut{
 		ShardID:        s.shardID,
 		LocalReplicaID: s.replicaID,
+		Quota:          4,
 	}
 	localCut.Cut = make([]int64, len(s.localCut))
 
@@ -575,6 +578,7 @@ func (s *DataServer) reportLocalCut() {
 				lcs.Cuts[0] = &orderpb.LocalCut{
 					ShardID:        s.shardID,
 					LocalReplicaID: s.replicaID,
+					WindowNum: s.windowNumber,
 				}
 				s.localCutMu.Lock()
 				lcs.Cuts[0].Cut = make([]int64, len(s.localCut))
@@ -614,6 +618,7 @@ func (s *DataServer) reportLocalCut() {
 
 				if s.localCutNum == s.numLocalCutsThreshold {
 					s.quota = <-s.waitForNewQuota
+					s.windowNumber++
 					s.localCutNum = 0
 				}
 				s.entryCount = 0
@@ -656,7 +661,7 @@ func (s *DataServer) processCommittedEntry() {
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
 			rid := s.shardID*s.numReplica + s.replicaID
-			if entry.CommittedCut.IsShardQuotaUpdated {
+			if entry.CommittedCut.IsShardQuotaUpdated && entry.CommittedCut.WindowNum == s.windowNumber {
 				s.waitForNewQuota <- entry.CommittedCut.ShardQuotas[rid]
 			}
 
