@@ -661,7 +661,7 @@ func (s *DataServer) processCommittedEntry() {
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
 			rid := s.shardID*s.numReplica + s.replicaID
-			if entry.CommittedCut.IsShardQuotaUpdated && entry.CommittedCut.WindowNum == s.windowNumber {
+			if entry.CommittedCut.IsShardQuotaUpdated && entry.CommittedCut.WindowNum == s.windowNumber + 1 {
 				s.waitForNewQuota <- entry.CommittedCut.ShardQuotas[rid]
 			}
 
