@@ -47,7 +47,7 @@ type OrderServer struct {
 	rnErrorC           <-chan error
 	rnSnapshotterReady <-chan *snap.Snapshotter
 
-	registerC               chan orderpb.LocalCut // new replicas to be registered
+	registerC               chan *orderpb.LocalCut // new replicas to be registered
 	lastCutTime             map[int32]time.Time
 	avgDelta                map[int32]*movingaverage.MovingAverage
 	quota                   map[int32]int64
@@ -81,7 +81,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.finalizeC = make(chan *orderpb.FinalizeEntry, 4096)
 	s.subC = make(map[int32]chan *orderpb.CommittedEntry)
 
-	s.registerC = make(chan orderpb.LocalCut, 4096)
+	s.registerC = make(chan *orderpb.LocalCut, 4096)
 	s.lastCutTime = make(map[int32]time.Time)
 	s.avgDelta = make(map[int32]*movingaverage.MovingAverage)
 	s.quota = make(map[int32]int64)
