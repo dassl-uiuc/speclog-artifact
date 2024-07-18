@@ -16,18 +16,14 @@ import (
 )
 
 // helper functions
-func MoveAndClear(from map[int32]bool, to map[int32]bool) {
-	for k := range from {
-		to[k] = true
-		delete(from, k)
-	}
-}
-
 func isHigher(l1, w1, l2, w2 int64) bool {
 	if w1 > w2 {
 		return true
 	}
-	return l1 > l2
+	if w1 == w2 {
+		return l1 > l2
+	}
+	return false
 }
 
 func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
@@ -129,6 +125,11 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.rnErrorC = errorC
 	s.rnSnapshotterReady = snapshotterReady
 	return s
+}
+
+// assuming isHigher(l1, w1, l2, w2) is true
+func (s *OrderServer) diffCut(l1, w1, l2, w2 int64) int64 {
+	return s.localCutChangeWindow*(w1-w2) + l1 - l2
 }
 
 func (s *OrderServer) Start() {
@@ -280,7 +281,7 @@ func (s *OrderServer) processReport() {
 						if _, ok := lcs[id]; !ok || isHigher(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum) {
 							if _, ok := s.lastCutTime[id]; ok {
 								// dividing average by difference in local cut numbers in case some are missing
-								s.avgDelta[id].Add(float64(time.Since(s.lastCutTime[id]).Nanoseconds()) / float64(lc.LocalCutNum-lcs[id].LocalCutNum))
+								s.avgDelta[id].Add(float64(time.Since(s.lastCutTime[id]).Nanoseconds()) / float64(s.diffCut(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum)))
 							}
 							s.lastCutTime[id] = time.Now()
 
