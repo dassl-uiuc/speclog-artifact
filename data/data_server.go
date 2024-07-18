@@ -103,7 +103,8 @@ type DataServer struct {
 	quota                 int64
 	localCutNum           int64
 	numLocalCutsThreshold int64
-	waitForNewQuota       chan bool
+	waitForNewQuota       chan int64
+	windowNumber		  int64
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -148,10 +149,11 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 
 	s.addEntryToLocalCut = make(chan bool, 1)
 	s.entryCount = 0
-	s.quota = 3
+	s.quota = 4
 	s.localCutNum = 0
 	s.numLocalCutsThreshold = 10
-	s.waitForNewQuota = make(chan bool, 1)
+	s.waitForNewQuota = make(chan int64, 1)
+	s.windowNumber = 0
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -519,6 +521,38 @@ func (s *DataServer) processAck() {
 	}
 }
 
+func (s *DataServer) registerToOrderingLayer() {
+	orderClient := orderpb.NewOrderClient(s.orderConn)
+
+	localCut := &orderpb.LocalCut{
+		ShardID:        s.shardID,
+		LocalReplicaID: s.replicaID,
+		Quota:          s.quota, // Initially 4
+	}
+	localCut.Cut = make([]int64, len(s.localCut))
+
+	maxRetries := 5
+	for i := 0; i < maxRetries; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		_, err := orderClient.Register(ctx, localCut)
+		if err == nil {
+			fmt.Println("Successfully registered LocalCut")
+			return
+		}
+
+		fmt.Printf("Register shard failed: %v\n", err)
+
+		// Wait before retrying
+		backoff := time.Duration((1 << i)) * time.Second
+		fmt.Printf("Retrying in %v...\n", backoff)
+		time.Sleep(backoff)
+	}
+
+	log.Errorf("Max retries reached. Registration failed.")
+}
+
 func (s *DataServer) reportLocalCut() {
 	tick := time.NewTicker(s.batchingInterval)
 	prevLcs := &orderpb.LocalCuts{}
@@ -528,6 +562,11 @@ func (s *DataServer) reportLocalCut() {
 		LocalReplicaID: s.replicaID,
 	}
 	prevLcs.Cuts[0].Cut = make([]int64, len(s.localCut))
+
+	// register to ordering layer
+	s.registerToOrderingLayer()
+	s.quota = <-s.waitForNewQuota
+
 	for {
 		select {
 		case <-s.addEntryToLocalCut:
@@ -539,6 +578,7 @@ func (s *DataServer) reportLocalCut() {
 				lcs.Cuts[0] = &orderpb.LocalCut{
 					ShardID:        s.shardID,
 					LocalReplicaID: s.replicaID,
+					WindowNum: s.windowNumber,
 				}
 				s.localCutMu.Lock()
 				lcs.Cuts[0].Cut = make([]int64, len(s.localCut))
@@ -577,7 +617,8 @@ func (s *DataServer) reportLocalCut() {
 				prevLcs.Cuts[0].Quota = s.quota
 
 				if s.localCutNum == s.numLocalCutsThreshold {
-					<-s.waitForNewQuota
+					s.quota = <-s.waitForNewQuota
+					s.windowNumber++
 					s.localCutNum = 0
 				}
 				s.entryCount = 0
@@ -620,9 +661,8 @@ func (s *DataServer) processCommittedEntry() {
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
 			rid := s.shardID*s.numReplica + s.replicaID
-			if entry.CommittedCut.IsShardQuotaUpdated {
-				s.quota = entry.CommittedCut.ShardQuotas[rid]
-				s.waitForNewQuota <- true
+			if entry.CommittedCut.IsShardQuotaUpdated && entry.CommittedCut.WindowNum == s.windowNumber + 1 {
+				s.waitForNewQuota <- entry.CommittedCut.ShardQuotas[rid]
 			}
 
 			startReplicaID := s.shardID * s.numReplica
