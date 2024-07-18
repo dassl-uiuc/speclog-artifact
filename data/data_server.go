@@ -39,11 +39,13 @@ type DataServer struct {
 	numReplica       int32
 	batchingInterval time.Duration
 	// s state
-	clientID         int32 // incremental counter to distinguish clients
-	viewID           int32
-	localCut         []int64
-	localCutMu       sync.Mutex
-	prevCommittedCut *orderpb.CommittedCut
+	clientID                int32 // incremental counter to distinguish clients
+	viewID                  int32
+	localCut                []int64
+	localCutMu              sync.Mutex
+	prevCommittedCut        *orderpb.CommittedCut
+	nextExpectedLocalCutNum int64
+	nextExpectedWindowNum   int64
 	// ordering layer information
 	orderAddr   address.OrderAddr
 	orderConn   *grpc.ClientConn
@@ -104,7 +106,8 @@ type DataServer struct {
 	localCutNum           int64
 	numLocalCutsThreshold int64
 	waitForNewQuota       chan int64
-	windowNumber		  int64
+	windowNumber          int64
+	quotas                map[int64](map[int32]int64) // quotas for each window
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -154,6 +157,9 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.numLocalCutsThreshold = 10
 	s.waitForNewQuota = make(chan int64, 1)
 	s.windowNumber = 0
+	s.nextExpectedLocalCutNum = 0
+	s.nextExpectedWindowNum = 0
+	s.quotas = make(map[int64](map[int32]int64))
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -578,7 +584,7 @@ func (s *DataServer) reportLocalCut() {
 				lcs.Cuts[0] = &orderpb.LocalCut{
 					ShardID:        s.shardID,
 					LocalReplicaID: s.replicaID,
-					WindowNum: s.windowNumber,
+					WindowNum:      s.windowNumber,
 				}
 				s.localCutMu.Lock()
 				lcs.Cuts[0].Cut = make([]int64, len(s.localCut))
@@ -661,86 +667,108 @@ func (s *DataServer) processCommittedEntry() {
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
 			rid := s.shardID*s.numReplica + s.replicaID
-			if entry.CommittedCut.IsShardQuotaUpdated && entry.CommittedCut.WindowNum == s.windowNumber + 1 {
+			if entry.CommittedCut.IsShardQuotaUpdated && entry.CommittedCut.WindowNum == s.windowNumber+1 {
 				s.waitForNewQuota <- entry.CommittedCut.ShardQuotas[rid]
+				s.quotas[entry.CommittedCut.WindowNum] = entry.CommittedCut.ShardQuotas
 			}
 
 			startReplicaID := s.shardID * s.numReplica
 			startGSN := entry.CommittedCut.StartGSN
-			// compute startGSN using the number of records stored
-			// in shards with smaller ids
-			for rid, lsn := range entry.CommittedCut.Cut {
-				if rid < startReplicaID {
-					diff := lsn
-					if l, ok := s.prevCommittedCut.Cut[rid]; ok {
-						diff = lsn - l
-					}
-					if diff > 0 {
-						startGSN += diff
-					}
+			for {
+				terminate := true
+				for rid, lsn := range entry.CommittedCut.Cut {
+					terminate = terminate && (s.prevCommittedCut.Cut[rid] == lsn)
 				}
-			}
-			// assign gsn to records in my shard
-			for i := int32(0); i < s.numReplica; i++ {
-				rid := startReplicaID + i
-				lsn := entry.CommittedCut.Cut[rid]
-				diff := int32(lsn)
-				start := int64(0)
-				if l, ok := s.prevCommittedCut.Cut[rid]; ok {
-					start = l
-					diff = int32(lsn - l)
+				if terminate {
+					break
 				}
-				if diff > 0 {
-					err := s.storage.Assign(i, start, diff, startGSN)
-					if err != nil {
-						log.Errorf("Assign GSN to storage error: %v", err)
-						continue
-					}
-					if i == s.replicaID {
-						for j := int32(0); j < diff; j++ {
-							s.recordsMu.Lock()
-							record, ok := s.records[start+int64(j)]
-							if ok {
-								delete(s.records, start+int64(j))
-								if measureOrderingInterval {
-									elapsed := time.Since(s.timeOfEntry[start+int64(j)])
-									s.avgOrderingLatencyMicros = (s.avgOrderingLatencyMicros*float64(s.numOrders) + float64(elapsed.Microseconds())) / float64(s.numOrders+1)
-									s.numOrders++
-									delete(s.timeOfEntry, start+int64(j))
-								}
-							}
-							s.recordsMu.Unlock()
-							if measureOrderingInterval {
-								log.Printf("avg ordering latency: %v", s.avgOrderingLatencyMicros)
-							}
-							if !ok {
-								log.Errorf("error, not able to find records")
-								continue
-							}
-							ack := &datapb.Ack{
-								ClientID:       record.ClientID,
-								ClientSN:       record.ClientSN,
-								ShardID:        s.shardID,
-								LocalReplicaID: s.replicaID,
-								ViewID:         s.viewID,
-								GlobalSN:       startGSN + int64(j),
-							}
-							s.ackC <- ack
-
-							// send record on exposable records channel
-							record.GlobalSN = startGSN + int64(j)
-							record.LocalReplicaID = s.replicaID
-							record.ShardID = s.shardID
-							record.ViewID = s.viewID
-
-							s.committedRecordsMu.Lock()
-							s.committedRecords[startGSN+int64(j)] = record
-							s.committedRecordsMu.Unlock()
-
-							s.liveSubscribeC <- record.GlobalSN
+				// compute startGSN using the number of records stored
+				// in shards with smaller ids
+				for rid, lsn := range entry.CommittedCut.Cut {
+					if rid < startReplicaID {
+						diff := lsn
+						if l, ok := s.prevCommittedCut.Cut[rid]; ok {
+							diff = lsn - l
+						}
+						if diff > 0 {
+							startGSN += min(diff, s.quotas[s.nextExpectedWindowNum][rid])
 						}
 					}
-					startGSN += int64(diff)
+				}
+				// assign gsn to records in my shard
+				for i := int32(0); i < s.numReplica; i++ {
+					rid := startReplicaID + i
+					lsn := entry.CommittedCut.Cut[rid]
+					diff := int32(lsn)
+					start := int64(0)
+					if l, ok := s.prevCommittedCut.Cut[rid]; ok {
+						start = l
+						diff = min(int32(lsn-l), int32(s.quotas[s.nextExpectedWindowNum][rid]))
+					}
+					if diff > 0 {
+						err := s.storage.Assign(i, start, diff, startGSN)
+						if err != nil {
+							log.Errorf("Assign GSN to storage error: %v", err)
+							continue
+						}
+						if i == s.replicaID {
+							for j := int32(0); j < diff; j++ {
+								s.recordsMu.Lock()
+								record, ok := s.records[start+int64(j)]
+								if ok {
+									delete(s.records, start+int64(j))
+									if measureOrderingInterval {
+										elapsed := time.Since(s.timeOfEntry[start+int64(j)])
+										s.avgOrderingLatencyMicros = (s.avgOrderingLatencyMicros*float64(s.numOrders) + float64(elapsed.Microseconds())) / float64(s.numOrders+1)
+										s.numOrders++
+										delete(s.timeOfEntry, start+int64(j))
+									}
+								}
+								s.recordsMu.Unlock()
+								if measureOrderingInterval {
+									log.Printf("avg ordering latency: %v", s.avgOrderingLatencyMicros)
+								}
+								if !ok {
+									log.Errorf("error, not able to find records")
+									continue
+								}
+								ack := &datapb.Ack{
+									ClientID:       record.ClientID,
+									ClientSN:       record.ClientSN,
+									ShardID:        s.shardID,
+									LocalReplicaID: s.replicaID,
+									ViewID:         s.viewID,
+									GlobalSN:       startGSN + int64(j),
+								}
+								s.ackC <- ack
+
+								// send record on exposable records channel
+								record.GlobalSN = startGSN + int64(j)
+								record.LocalReplicaID = s.replicaID
+								record.ShardID = s.shardID
+								record.ViewID = s.viewID
+
+								s.committedRecordsMu.Lock()
+								s.committedRecords[startGSN+int64(j)] = record
+								s.committedRecordsMu.Unlock()
+
+								s.liveSubscribeC <- record.GlobalSN
+							}
+						}
+						startGSN += int64(diff)
+					}
+				}
+
+				// update previous committed cut's cut portion
+				for rid, _ := range entry.CommittedCut.Cut {
+					s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
+				}
+
+				// update next expected local cut number and window
+				s.nextExpectedLocalCutNum = s.nextExpectedLocalCutNum + 1
+				if s.nextExpectedLocalCutNum == s.numLocalCutsThreshold {
+					s.nextExpectedLocalCutNum = 0
+					s.nextExpectedWindowNum = s.nextExpectedWindowNum + 1
 				}
 			}
 			// replace previous committed cut
