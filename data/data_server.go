@@ -153,10 +153,10 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.addEntryToLocalCut = make(chan bool, 1)
 	s.entryCount = 0
 	s.quota = 4
-	s.localCutNum = 0
+	s.localCutNum = -1
 	s.numLocalCutsThreshold = 10
 	s.waitForNewQuota = make(chan int64, 1)
-	s.windowNumber = 0
+	s.windowNumber = -1
 	s.nextExpectedLocalCutNum = 0
 	s.nextExpectedWindowNum = 0
 	s.quotas = make(map[int64](map[int32]int64))
@@ -414,6 +414,7 @@ func (s *DataServer) confirmReplication(client *datapb.Data_ReplicateClient) {
 // processAppend sends records to replicateC and replicates them to peers
 func (s *DataServer) processAppend() {
 	for record := range s.appendC {
+		log.Debugf("received client request")
 		record.LocalReplicaID = s.replicaID
 		record.ShardID = s.shardID
 		// create wait group to confirm the replication of the record
@@ -573,6 +574,10 @@ func (s *DataServer) reportLocalCut() {
 	s.registerToOrderingLayer()
 	s.quota = <-s.waitForNewQuota
 
+	if s.quota == 0 {
+		log.Errorf("error: quota is 0")
+	}
+
 	for {
 		select {
 		case <-s.addEntryToLocalCut:
@@ -621,8 +626,9 @@ func (s *DataServer) reportLocalCut() {
 				copy(prevLcs.Cuts[0].Cut, s.localCut)
 				prevLcs.Cuts[0].LocalCutNum = s.localCutNum
 				prevLcs.Cuts[0].Quota = s.quota
+				prevLcs.Cuts[0].WindowNum = s.windowNumber
 
-				if s.localCutNum == s.numLocalCutsThreshold {
+				if s.localCutNum == s.numLocalCutsThreshold-1 {
 					s.quota = <-s.waitForNewQuota
 					s.windowNumber++
 					s.localCutNum = 0
@@ -641,6 +647,7 @@ func (s *DataServer) reportLocalCut() {
 			copy(lcs.Cuts[0].Cut, prevLcs.Cuts[0].Cut)
 			lcs.Cuts[0].LocalCutNum = prevLcs.Cuts[0].LocalCutNum
 			lcs.Cuts[0].Quota = prevLcs.Cuts[0].Quota
+			lcs.Cuts[0].WindowNum = prevLcs.Cuts[0].WindowNum
 			log.Debugf("Data report: %v", lcs)
 			err := (*s.orderClient).Send(lcs)
 			if err != nil {
@@ -667,14 +674,24 @@ func (s *DataServer) processCommittedEntry() {
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
 			rid := s.shardID*s.numReplica + s.replicaID
-			if entry.CommittedCut.IsShardQuotaUpdated && entry.CommittedCut.WindowNum == s.windowNumber+1 {
-				s.waitForNewQuota <- entry.CommittedCut.ShardQuotas[rid]
+			_, quotaExists := s.quotas[entry.CommittedCut.WindowNum]
+			log.Debugf("quota exists: %v, window num: %v", quotaExists, entry.CommittedCut.WindowNum)
+			if entry.CommittedCut.IsShardQuotaUpdated && !quotaExists {
+				log.Debugf("entry.CommittedCut: %v", entry.CommittedCut)
+				if _, inNextQuota := entry.CommittedCut.ShardQuotas[rid]; inNextQuota {
+					log.Debugf("Data %v,%v received new quota: %v", s.shardID, s.replicaID, entry.CommittedCut.ShardQuotas[rid])
+					s.waitForNewQuota <- entry.CommittedCut.ShardQuotas[rid]
+					if s.windowNumber == -1 {
+						s.windowNumber = entry.CommittedCut.WindowNum
+					}
+				}
 				s.quotas[entry.CommittedCut.WindowNum] = entry.CommittedCut.ShardQuotas
 			}
 
 			startReplicaID := s.shardID * s.numReplica
 			startGSN := entry.CommittedCut.StartGSN
 			for {
+				log.Debugf("processing next expected local cut num: %v, next expected window num: %v", s.nextExpectedLocalCutNum, s.nextExpectedWindowNum)
 				terminate := true
 				for rid, lsn := range entry.CommittedCut.Cut {
 					terminate = terminate && (s.prevCommittedCut.Cut[rid] == lsn)

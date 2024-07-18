@@ -205,6 +205,7 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 
 	// find lowest numbered window across all replicas
 	lowestWindowNum := getLowestWindowNum(lcs)
+	log.Debugf("lowest window num: %v", lowestWindowNum)
 	ccut := make(map[int32]int64)
 	if lowestWindowNum == int64(math.MaxInt64) {
 		// no local cuts have been received
@@ -217,6 +218,7 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 	// lowestLocalCutNum, lowestWindowNum is the highest cuts that can be included in the committed cut across all replicas
 	// find the lowest local cut number for this window
 	lowestLocalCutNum := getLowestLocalCutNum(lcs, lowestWindowNum)
+	log.Debugf("lowest local cut num: %v", lowestLocalCutNum)
 
 	for rid := range lcs {
 		shard := rid / s.dataNumReplica
@@ -257,13 +259,14 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 // proposeCommit broadcasts entries in commitC to all subCs.
 func (s *OrderServer) processReport() {
 	lcs := make(map[int32]*orderpb.LocalCut) // all local cuts
+	// sleep initially to allow all replicas to connect
 	ticker := time.NewTicker(s.batchingInterval)
 	for {
 		select {
 		case e := <-s.forwardC:
 			// Received a LocalCuts message from one of the replica sets
 			// This branch has two tasks, store the local cuts and update the quota for the replica set if necessary
-			log.Debugf("processReport forwardC")
+			// log.Debugf("processReport forwardC")
 			if s.isLeader { // store local cuts
 				for _, lc := range e.Cuts {
 					id := lc.ShardID*s.dataNumReplica + lc.LocalReplicaID
@@ -279,9 +282,11 @@ func (s *OrderServer) processReport() {
 					if valid {
 						// check if this is a higher local cut
 						if _, ok := lcs[id]; !ok || isHigher(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum) {
+							log.Debugf("received cut for window num %v, local cut num %v from shard %v", lc.WindowNum, lc.LocalCutNum, id)
 							if _, ok := s.lastCutTime[id]; ok {
 								// dividing average by difference in local cut numbers in case some are missing
 								s.avgDelta[id].Add(float64(time.Since(s.lastCutTime[id]).Nanoseconds()) / float64(s.diffCut(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum)))
+								log.Debugf("avg delta for shard %v is %v", id, s.avgDelta[id].Avg())
 							}
 							s.lastCutTime[id] = time.Now()
 
@@ -301,6 +306,7 @@ func (s *OrderServer) processReport() {
 										s.quota[lc.WindowNum+1][id] = int64(float64(lc.Quota) * currentFreq / defaultFreq)
 									}
 									s.numQuotaChanged++
+									log.Debugf("numQuotaChanged: %v", s.numQuotaChanged)
 								}
 							}
 						}
@@ -315,22 +321,24 @@ func (s *OrderServer) processReport() {
 		case lc := <-s.registerC:
 			// A new replicaset requested to register
 			// This branch marks the replicas quota and keeps it as a replica in reserve to be included in the next possible window
-			log.Debugf("processReport registerC")
+			// log.Debugf("processReport registerC")
 			if s.isLeader { // update quota for new replicas
 				id := lc.ShardID*s.dataNumReplica + lc.LocalReplicaID
 				s.replicasInReserve[id] = lc.Quota
 				s.avgDelta[id] = movingaverage.New(10)
+				log.Debugf("Replica %v registered with quota %v", id, lc.Quota)
 			}
 		case <-ticker.C:
 			// TODO: check to make sure the key in lcs exist
 			// This thread is responsible for computing the committed cut and proposing it to the Raft node
-			log.Debugf("processReport ticker")
+			// log.Debugf("processReport ticker")
 			if s.isLeader { // compute committedCut
 				ccut := s.computeCommittedCut(lcs)
 				vid := atomic.LoadInt32(&s.viewID)
 				var ce *orderpb.CommittedEntry
 
 				if s.assignWindow == 0 || s.numQuotaChanged == int64(len(s.quota[s.assignWindow-1])) {
+					log.Debugf("Deciding quota for window %v", s.assignWindow)
 					// reset num quota changed
 					s.numQuotaChanged = 0
 
@@ -340,8 +348,8 @@ func (s *OrderServer) processReport() {
 					}
 
 					// assign quota to replicas in reserve
-					for rid, quota := range s.replicasInReserve {
-						s.quota[s.assignWindow][rid] = quota
+					for rid, q := range s.replicasInReserve {
+						s.quota[s.assignWindow][rid] = q
 					}
 
 					// clear replicas in reserve
@@ -355,6 +363,7 @@ func (s *OrderServer) processReport() {
 					// increment window
 					s.assignWindow++
 
+					log.Debugf("Proposing committed quota for window %v as %v", s.assignWindow-1, s.quota[s.assignWindow-1])
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1}, FinalizeShards: nil}
 				} else {
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
