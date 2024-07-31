@@ -128,9 +128,14 @@ func (s *DiscoveryServer) subscribe() {
 		s.viewMu.Lock()
 		s.viewID = entry.ViewID
 		if entry.CommittedCut != nil {
-			for c := range entry.CommittedCut.Cut {
-				s.shards[c/s.numReplica] = true
+			if entry.CommittedCut.IsShardQuotaUpdated == true {
+				for c := range entry.CommittedCut.ShardQuotas {
+					s.shards[c/s.numReplica] = true
+				}
 			}
+			// for c := range entry.CommittedCut.Cut {
+			// 	s.shards[c/s.numReplica] = true
+			// }
 		}
 		if entry.FinalizeShards != nil {
 			for _, sid := range entry.FinalizeShards.ShardIDs {

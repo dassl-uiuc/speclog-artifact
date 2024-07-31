@@ -28,6 +28,7 @@ clear_server_logs() {
 clear_client_logs() {
     # mount storage and clear existing logs if any
     sudo ./run_script_on_clients.sh ./setup_disk.sh
+    sudo ./run_script_on_clients.sh ./client_tmp_clear.sh
 }
 
 cleanup_servers() {
