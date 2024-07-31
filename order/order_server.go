@@ -277,7 +277,8 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 // proposeCommit broadcasts entries in commitC to all subCs.
 func (s *OrderServer) processReport() {
 	lcs := make(map[int32]*orderpb.LocalCut) // all local cuts
-	// sleep initially to allow all replicas to connect
+	printTicker := time.NewTicker(5 * time.Second)
+	prevPrintCut := make(map[int32]int64)
 	ticker := time.NewTicker(s.batchingInterval)
 	for {
 		select {
@@ -428,6 +429,14 @@ func (s *OrderServer) processReport() {
 
 				s.startGSN += s.computeCutDiff(s.prevCut, ccut)
 				s.prevCut = ccut
+			}
+		case <-printTicker.C:
+			for rid, cut := range s.prevCut {
+				log.Printf("replica %v: %v [+%v]", rid, cut, cut-prevPrintCut[rid])
+			}
+			prevPrintCut = make(map[int32]int64)
+			for rid, cut := range s.prevCut {
+				prevPrintCut[rid] = cut
 			}
 		}
 	}
