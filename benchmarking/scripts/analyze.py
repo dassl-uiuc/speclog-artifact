@@ -71,8 +71,4 @@ for n in clients:
     avg_tput = get_avg_throughput(directory_path, 4096)
     mean, p50, p99 = get_latency_metrics(get_latencies(directory_path))
 
-    # timeout = check_timeouts(directory_path)
-    # if timeout: 
-    #     print("warning! timeouts detected in measurements")
-
     print(f"{n},{avg_tput},{mean},{p50},{p99}")

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/scalog/scalog/data/datapb"
@@ -32,6 +34,17 @@ const (
 	CLOSED  clientSubscriberState = 2
 )
 
+type Stats struct {
+	numHolesGenerated     int32
+	waitingForNextQuotaNs int64
+	numQuotas             int32
+}
+
+func (s *Stats) printStats() {
+	log.Printf("num holes generated: %v", s.numHolesGenerated)
+	log.Printf("avg time spent waiting for next quota in ms: %v", float64(s.waitingForNextQuotaNs)/float64(s.numQuotas)/1e6)
+}
+
 type DataServer struct {
 	// data s configurations
 	shardID          int32
@@ -41,8 +54,7 @@ type DataServer struct {
 	// s state
 	clientID                int32 // incremental counter to distinguish clients
 	viewID                  int32
-	localCut                []int64
-	localCutMu              sync.Mutex
+	localCut                atomic.Int64
 	prevCommittedCut        *orderpb.CommittedCut
 	nextExpectedLocalCutNum int64
 	nextExpectedWindowNum   int64
@@ -100,14 +112,19 @@ type DataServer struct {
 	diskWriteMu sync.RWMutex
 
 	// Channel used to determine if local cut should be send
-	addEntryToLocalCut    chan bool
-	entryCount            int64
 	quota                 int64
 	localCutNum           int64
 	numLocalCutsThreshold int64
 	waitForNewQuota       chan int64
 	windowNumber          int64
 	quotas                map[int64](map[int32]int64) // quotas for each window
+
+	nextCSNForHole int32
+	holeID         int32 // client id to generate holes
+	holeWg         sync.WaitGroup
+
+	// stats
+	stats Stats
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -122,10 +139,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 		orderAddr:        orderAddr,
 		dataAddr:         dataAddr,
 	}
-	s.localCut = make([]int64, numReplica)
-	for i := 0; i < int(numReplica); i++ {
-		s.localCut[i] = 0
-	}
+	s.localCut.Store(0)
 	// initialize basic data structures
 	s.committedEntryC = make(chan *orderpb.CommittedEntry, 4096)
 	s.ackSendC = make(map[int32]chan *datapb.Ack)
@@ -149,9 +163,9 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.timeOfEntry = make(map[int64]time.Time)
 	s.numOrders = 0
 	s.avgOrderingLatencyMicros = 0
+	s.stats = Stats{}
+	s.holeWg = sync.WaitGroup{}
 
-	s.addEntryToLocalCut = make(chan bool, 1)
-	s.entryCount = 0
 	s.quota = 4
 	s.localCutNum = -1
 	s.numLocalCutsThreshold = 10
@@ -159,6 +173,8 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.windowNumber = -1
 	s.nextExpectedLocalCutNum = 0
 	s.nextExpectedWindowNum = 0
+	s.nextCSNForHole = -1
+	s.holeID = s.generateClientIDForHole()
 	s.quotas = make(map[int64](map[int32]int64))
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
@@ -446,9 +462,6 @@ func (s *DataServer) processReplicate() {
 			c <- true
 		}
 		s.diskWriteMu.RUnlock()
-		s.localCutMu.Lock()
-		s.localCut[record.LocalReplicaID] = 0
-		s.localCutMu.Unlock()
 	}
 }
 
@@ -494,14 +507,22 @@ func (s *DataServer) processSelfReplicate() {
 		s.records[lsn] = record
 		s.recordsMu.Unlock()
 
-		s.localCutMu.Lock()
-		if !backendOnly {
-			s.localCut[record.LocalReplicaID] = lsn + 1
-		}
-		s.localCutMu.Unlock()
+		s.localCut.Add(1)
 
-		s.addEntryToLocalCut <- true
+		if record.ClientID == s.holeID {
+			s.holeWg.Done()
+		}
 	}
+}
+
+func (s *DataServer) generateClientIDForHole() int32 {
+	seed := rand.NewSource(time.Now().UnixNano())
+	return rand.New(seed).Int31()
+}
+
+func (s *DataServer) getNextClientSNForHole() int32 {
+	s.nextCSNForHole = s.nextCSNForHole + 1
+	return s.nextCSNForHole
 }
 
 func (s *DataServer) processAck() {
@@ -534,7 +555,7 @@ func (s *DataServer) registerToOrderingLayer() {
 		LocalReplicaID: s.replicaID,
 		Quota:          s.quota, // Initially 4
 	}
-	localCut.Cut = make([]int64, len(s.localCut))
+	localCut.Cut = make([]int64, s.numReplica)
 
 	maxRetries := 5
 	for i := 0; i < maxRetries; i++ {
@@ -559,98 +580,90 @@ func (s *DataServer) registerToOrderingLayer() {
 }
 
 func (s *DataServer) reportLocalCut() {
-
 	// register to ordering layer
+	// TODO(shreesha00): Add timeout here and retry here
 	s.registerToOrderingLayer()
 	s.quota = <-s.waitForNewQuota
-
-	prevLcs := &orderpb.LocalCuts{}
-	prevLcs.Cuts = make([]*orderpb.LocalCut, 1)
-	prevLcs.Cuts[0] = &orderpb.LocalCut{
-		ShardID:        s.shardID,
-		LocalReplicaID: s.replicaID,
-		WindowNum:      s.windowNumber,
-		LocalCutNum:    -1,
-	}
-	prevLcs.Cuts[0].Cut = make([]int64, len(s.localCut))
+	s.stats.numQuotas++
+	s.prevSentLocalCut = s.localCut.Load()
 
 	if s.quota == 0 {
 		log.Errorf("error: quota is 0")
 	}
 
 	tick := time.NewTicker(s.batchingInterval)
+	printTicker := time.NewTicker(5 * time.Second)
 	for {
 		select {
-		case <-s.addEntryToLocalCut:
-			s.entryCount++
-
-			if s.entryCount == s.quota {
-				lcs := &orderpb.LocalCuts{}
-				lcs.Cuts = make([]*orderpb.LocalCut, 1)
-				lcs.Cuts[0] = &orderpb.LocalCut{
-					ShardID:        s.shardID,
-					LocalReplicaID: s.replicaID,
-					WindowNum:      s.windowNumber,
+		case <-tick.C:
+			// start replication for some holes if I do not have enough records
+			currLocalCut := s.localCut.Load()
+			if currLocalCut < s.prevSentLocalCut+s.quota {
+				diff := s.prevSentLocalCut + s.quota - currLocalCut
+				s.holeWg.Add(int(diff))
+				for i := int64(0); i < diff; i++ {
+					holeRecord := &datapb.Record{
+						ClientID: s.holeID,
+						ClientSN: s.getNextClientSNForHole(),
+						Record:   "0xDEADBEEF",
+					}
+					s.appendC <- holeRecord
+					s.stats.numHolesGenerated++
+					// do not generate acks for hole records
 				}
-				lcs.Cuts[0].Cut = make([]int64, len(s.localCut))
-				lcs.Cuts[0].Cut[s.replicaID] = prevLcs.Cuts[0].Cut[s.replicaID] + s.quota
+				s.holeWg.Wait()
+			}
 
-				if measureOrderingInterval {
-					for _, c := range lcs.Cuts[0].Cut {
-						if c > 0 {
-							for j := s.prevSentLocalCut; j < c; j++ {
-								s.recordsMu.Lock()
-								s.timeOfEntry[j] = time.Now()
-								s.recordsMu.Unlock()
-							}
-							s.prevSentLocalCut = c
+			if s.localCut.Load() < s.prevSentLocalCut+s.quota {
+				log.Errorf("error: can never occur")
+			}
+
+			lcs := &orderpb.LocalCuts{}
+			lcs.Cuts = make([]*orderpb.LocalCut, 1)
+			lcs.Cuts[0] = &orderpb.LocalCut{
+				ShardID:        s.shardID,
+				LocalReplicaID: s.replicaID,
+				WindowNum:      s.windowNumber,
+			}
+			lcs.Cuts[0].Cut = make([]int64, s.numReplica)
+			lcs.Cuts[0].Cut[s.replicaID] = s.prevSentLocalCut + s.quota
+
+			if measureOrderingInterval {
+				for _, c := range lcs.Cuts[0].Cut {
+					if c > 0 {
+						for j := s.prevSentLocalCut; j < c; j++ {
+							s.recordsMu.Lock()
+							s.timeOfEntry[j] = time.Now()
+							s.recordsMu.Unlock()
 						}
+						s.prevSentLocalCut = c
 					}
 				}
-
-				s.localCutNum++
-				lcs.Cuts[0].LocalCutNum = s.localCutNum
-				lcs.Cuts[0].Quota = s.quota
-
-				log.Debugf("Data report: %v", lcs)
-				err := (*s.orderClient).Send(lcs)
-				if err != nil {
-					log.Errorf("%v", err)
-				}
-
-				// update prevLcs
-				copy(prevLcs.Cuts[0].Cut, lcs.Cuts[0].Cut)
-				prevLcs.Cuts[0].LocalCutNum = s.localCutNum
-				prevLcs.Cuts[0].Quota = s.quota
-				prevLcs.Cuts[0].WindowNum = s.windowNumber
-
-				if s.localCutNum == s.numLocalCutsThreshold-1 {
-					s.quota = <-s.waitForNewQuota
-					s.windowNumber++
-					s.localCutNum = -1
-				}
-				s.entryCount = 0
 			}
-		case <-tick.C:
-			if prevLcs.Cuts[0].LocalCutNum != -1 {
-				// send prev local cut to ordering layer
-				lcs := &orderpb.LocalCuts{}
-				lcs.Cuts = make([]*orderpb.LocalCut, 1)
-				lcs.Cuts[0] = &orderpb.LocalCut{
-					ShardID:        s.shardID,
-					LocalReplicaID: s.replicaID,
-				}
-				lcs.Cuts[0].Cut = make([]int64, len(prevLcs.Cuts[0].Cut))
-				copy(lcs.Cuts[0].Cut, prevLcs.Cuts[0].Cut)
-				lcs.Cuts[0].LocalCutNum = prevLcs.Cuts[0].LocalCutNum
-				lcs.Cuts[0].Quota = prevLcs.Cuts[0].Quota
-				lcs.Cuts[0].WindowNum = prevLcs.Cuts[0].WindowNum
-				log.Debugf("Data report: %v", lcs)
-				err := (*s.orderClient).Send(lcs)
-				if err != nil {
-					log.Errorf("%v", err)
-				}
+
+			s.localCutNum++
+			lcs.Cuts[0].LocalCutNum = s.localCutNum
+			lcs.Cuts[0].Quota = s.quota
+
+			log.Debugf("Data report: %v", lcs)
+			err := (*s.orderClient).Send(lcs)
+			if err != nil {
+				log.Errorf("%v", err)
 			}
+
+			// update prevSentLocalCut
+			s.prevSentLocalCut += s.quota
+
+			if s.localCutNum == s.numLocalCutsThreshold-1 {
+				startTime := time.Now()
+				s.quota = <-s.waitForNewQuota
+				s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
+				s.stats.numQuotas++
+				s.windowNumber++
+				s.localCutNum = -1
+			}
+		case <-printTicker.C:
+			s.stats.printStats()
 		}
 	}
 }
@@ -751,15 +764,19 @@ func (s *DataServer) processCommittedEntry() {
 									log.Errorf("error, not able to find records")
 									continue
 								}
-								ack := &datapb.Ack{
-									ClientID:       record.ClientID,
-									ClientSN:       record.ClientSN,
-									ShardID:        s.shardID,
-									LocalReplicaID: s.replicaID,
-									ViewID:         s.viewID,
-									GlobalSN:       startGSN + int64(j),
+
+								// reply back to clients only for non-holes
+								if record.ClientID != s.holeID {
+									ack := &datapb.Ack{
+										ClientID:       record.ClientID,
+										ClientSN:       record.ClientSN,
+										ShardID:        s.shardID,
+										LocalReplicaID: s.replicaID,
+										ViewID:         s.viewID,
+										GlobalSN:       startGSN + int64(j),
+									}
+									s.ackC <- ack
 								}
-								s.ackC <- ack
 
 								// send record on exposable records channel
 								record.GlobalSN = startGSN + int64(j)

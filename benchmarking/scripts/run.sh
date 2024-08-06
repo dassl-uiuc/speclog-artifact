@@ -182,7 +182,7 @@ if [ "$mode" -eq 0 ]; then # append experiment mode
                 fi
                 
                 # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "3m" $c $interval
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval
             done
 
             echo "Waiting for clients to terminate"

@@ -110,7 +110,7 @@ type OrderServer struct {
 }
 
 // fraction of the local cut window at which quota change decisions are made for a shard
-const quotaChangeFraction float64 = 0.75
+const quotaChangeFraction float64 = 0.5
 
 // TODO: Currently assuming batching interval is the same as the ordering interval
 // TODO: Currently assuming no change in number of shards
@@ -268,8 +268,13 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 
 	if lowestWindowNum > s.processWindow {
 		// TODO: delete old quota and unneccesary state
+		// if s.processWindow != -1 {
+		// 	delete(s.quota, s.processWindow)
+		// }
 		s.processWindow = lowestWindowNum
 	}
+
+	// log.Printf("process window: %v", s.processWindow)
 
 	return ccut
 }
@@ -320,11 +325,12 @@ func (s *OrderServer) processReport() {
 									s.quota[lc.WindowNum+1] = make(map[int32]int64)
 								}
 								if _, ok := s.quota[lc.WindowNum+1][id]; !ok {
-									// // compute new quota for shard if necessary
+									// compute new quota for shard if necessary
 									// defaultFreq := float64(1e9 / float64(s.batchingInterval.Nanoseconds()))
 									// currentFreq := float64(1e9 / s.avgDelta[id].Avg())
+									// log.Printf("current freq: %v, default freq: %v", currentFreq, defaultFreq)
 
-									// // check if frequency changed by more than 10%
+									// check if frequency changed by more than 10%
 									// if math.Abs(currentFreq-defaultFreq)/defaultFreq >= 0.1 {
 									// 	// decide new quota for the next window
 									// 	s.quota[lc.WindowNum+1][id] = max(int64(float64(lc.Quota)*currentFreq/defaultFreq), 1)
