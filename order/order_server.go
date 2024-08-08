@@ -73,6 +73,24 @@ func (s *OrderServer) getLowestLocalCutNum(lcs map[int32]*orderpb.LocalCut, wind
 	return lowestLocalCutNum
 }
 
+type Stats struct {
+	timeToComputeCommittedCut int64
+	numCommittedCuts          int64
+	timeToDecideQuota         int64
+	numQuotaDecisions         int64
+}
+
+func (s *Stats) printStats() {
+	if s.numCommittedCuts == 0 {
+		return
+	}
+	log.Printf("avg time to compute committed cut in us: %v", s.timeToComputeCommittedCut/s.numCommittedCuts/1000)
+	if s.numQuotaDecisions == 0 {
+		return
+	}
+	log.Printf("avg time to decide quota in us: %v", s.timeToDecideQuota/s.numQuotaDecisions/1000)
+}
+
 type OrderServer struct {
 	index            int32
 	numReplica       int32
@@ -107,6 +125,9 @@ type OrderServer struct {
 	replicasInReserve    map[int32]int64 // replicas in reserve for next window
 	replicasStandby      map[int32]int64 // replicas in standby for next window (all replicas from shard not yet registered)
 	processWindow        int64           // window number till which quota has been processed
+
+	// stats
+	stats Stats
 }
 
 // fraction of the local cut window at which quota change decisions are made for a shard
@@ -134,7 +155,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.lastCutTime = make(map[int32]time.Time)
 	s.avgDelta = make(map[int32]*movingaverage.MovingAverage)
 	s.quota = make(map[int64]map[int32]int64)
-	s.localCutChangeWindow = 10
+	s.localCutChangeWindow = 1e9
 	s.replicasInReserve = make(map[int32]int64)
 	s.replicasStandby = make(map[int32]int64)
 	s.assignWindow = 0
@@ -153,6 +174,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.rnCommitC = commitC
 	s.rnErrorC = errorC
 	s.rnSnapshotterReady = snapshotterReady
+	s.stats = Stats{}
 	return s
 }
 
@@ -224,7 +246,7 @@ func (s *OrderServer) adjustToMinimums(rid int32, lc *orderpb.LocalCut, windowNu
 
 func (s *OrderServer) isReadyToAssignQuota() bool {
 	if s.assignWindow == 0 {
-		return len(s.replicasInReserve) != 0
+		return len(s.replicasInReserve) == 4
 	}
 	return s.numQuotaChanged == int64(len(s.quota[s.assignWindow-1]))
 }
@@ -285,12 +307,12 @@ func (s *OrderServer) processReport() {
 	printTicker := time.NewTicker(5 * time.Second)
 	prevPrintCut := make(map[int32]int64)
 	ticker := time.NewTicker(s.batchingInterval)
+	var quotaStartTime time.Time
 	for {
 		select {
 		case e := <-s.forwardC:
 			// Received a LocalCuts message from one of the replica sets
 			// This branch has two tasks, store the local cuts and update the quota for the replica set if necessary
-			log.Debugf("processReport forwardC")
 			if s.isLeader { // store local cuts
 				for _, lc := range e.Cuts {
 					id := lc.ShardID*s.dataNumReplica + lc.LocalReplicaID
@@ -337,6 +359,10 @@ func (s *OrderServer) processReport() {
 									// } else {
 									s.quota[lc.WindowNum+1][id] = lc.Quota
 									// }
+
+									if s.numQuotaChanged == 0 {
+										quotaStartTime = time.Now()
+									}
 									s.numQuotaChanged++
 									log.Debugf("numQuotaChanged: %v", s.numQuotaChanged)
 								}
@@ -353,7 +379,6 @@ func (s *OrderServer) processReport() {
 		case lc := <-s.registerC:
 			// A new replicaset requested to register
 			// This branch marks the replicas quota and keeps it as a replica in reserve to be included in the next possible window
-			log.Debugf("processReport registerC")
 			if s.isLeader { // update quota for new replicas
 				id := lc.ShardID*s.dataNumReplica + lc.LocalReplicaID
 				s.replicasStandby[id] = lc.Quota
@@ -381,12 +406,19 @@ func (s *OrderServer) processReport() {
 		case <-ticker.C:
 			// TODO: check to make sure the key in lcs exist
 			// This thread is responsible for computing the committed cut and proposing it to the Raft node
-			// log.Debugf("processReport ticker")
 			if s.isLeader { // compute committedCut
+				start := time.Now()
 				ccut := s.computeCommittedCut(lcs)
+				s.stats.timeToComputeCommittedCut += time.Since(start).Nanoseconds()
+				s.stats.numCommittedCuts++
 				vid := atomic.LoadInt32(&s.viewID)
 
 				if s.isReadyToAssignQuota() {
+					if s.assignWindow != 0 {
+						s.stats.timeToDecideQuota += time.Since(quotaStartTime).Nanoseconds()
+						s.stats.numQuotaDecisions++
+					}
+
 					log.Debugf("Deciding quota for window %v", s.assignWindow)
 					// reset num quota changed
 					s.numQuotaChanged = 0
@@ -444,6 +476,7 @@ func (s *OrderServer) processReport() {
 			for rid, cut := range s.prevCut {
 				prevPrintCut[rid] = cut
 			}
+			s.stats.printStats()
 		}
 	}
 }

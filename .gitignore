@@ -30,3 +30,4 @@ coverage.txt
 
 # Benchmarking results
 benchmarking/results/*
+benchmarking/old

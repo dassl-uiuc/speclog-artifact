@@ -35,14 +35,41 @@ const (
 )
 
 type Stats struct {
-	numHolesGenerated     int32
+	numHolesGenerated int64
+
 	waitingForNextQuotaNs int64
-	numQuotas             int32
+	numQuotas             int64
+
+	timeToFillHolesPerCutNs int64
+	numHoleFilledCuts       int64
+
+	timeToComputeCommittedCutNs int64
+	numCommittedCuts            int64
+
+	totalCutsSent int64
+	numCuts       int64
+
+	totalReplicationTime int64
+	numRepl              int64
 }
 
 func (s *Stats) printStats() {
 	log.Printf("num holes generated: %v", s.numHolesGenerated)
-	log.Printf("avg time spent waiting for next quota in ms: %v", float64(s.waitingForNextQuotaNs)/float64(s.numQuotas)/1e6)
+	if s.numQuotas > 0 {
+		log.Printf("avg time spent waiting for next quota in ms: %v", float64(s.waitingForNextQuotaNs)/float64(s.numQuotas)/1e6)
+	}
+	if s.numHoleFilledCuts > 0 {
+		log.Printf("avg time to fill holes per cut in ms: %v", float64(s.timeToFillHolesPerCutNs)/float64(s.numHoleFilledCuts)/1e6)
+	}
+	if s.numCommittedCuts > 0 {
+		log.Printf("avg time to compute committed cut in us: %v", float64(s.timeToComputeCommittedCutNs)/float64(s.numCommittedCuts)/1e3)
+	}
+	if s.numCuts > 0 {
+		log.Printf("avg number of batches sent in each cut: %v", float64(s.totalCutsSent)/float64(s.numCuts))
+	}
+	if s.numRepl > 0 {
+		log.Printf("avg replication time in ms: %v", float64(s.totalReplicationTime)/float64(s.numRepl)/1e6)
+	}
 }
 
 type DataServer struct {
@@ -105,7 +132,9 @@ type DataServer struct {
 
 	// wait group to confirm the replication of records
 	replicateConfWg map[int64]*sync.WaitGroup
-	replicateConfMu sync.RWMutex
+	// for hole replication optimization, marker to delete wg after these many records have used the wg
+	replicateCountDown map[int64]int
+	replicateConfMu    sync.RWMutex
 
 	// written to disk
 	diskWriteC  map[int64]chan bool
@@ -125,6 +154,10 @@ type DataServer struct {
 
 	// stats
 	stats Stats
+
+	// to measure repl time
+	replStartTime map[int64]time.Time
+	replMu        sync.Mutex
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -165,10 +198,12 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.avgOrderingLatencyMicros = 0
 	s.stats = Stats{}
 	s.holeWg = sync.WaitGroup{}
+	s.replicateCountDown = make(map[int64]int)
+	s.replStartTime = make(map[int64]time.Time)
 
-	s.quota = 4
+	s.quota = 3
 	s.localCutNum = -1
-	s.numLocalCutsThreshold = 10
+	s.numLocalCutsThreshold = 1e9
 	s.waitForNewQuota = make(chan int64, 1)
 	s.windowNumber = -1
 	s.nextExpectedLocalCutNum = 0
@@ -437,14 +472,29 @@ func (s *DataServer) processAppend() {
 		s.replicateConfMu.Lock()
 		s.replicateConfWg[id] = &sync.WaitGroup{}
 		s.replicateConfWg[id].Add(int(s.numReplica - 1))
+		if record.ClientID == s.holeID {
+			s.replicateCountDown[id] = int(record.NumHoles)
+		}
 		s.replicateConfMu.Unlock()
+
+		s.replMu.Lock()
+		s.replStartTime[id] = time.Now()
+		s.replMu.Unlock()
+
 		for i, c := range s.replicateSendC {
 			if int32(i) != s.replicaID {
 				log.Debugf("Data forward to %v", i)
 				c <- record
 			}
 		}
-		s.selfReplicateC <- record
+		// if hole, use the same record and write it many times
+		if record.ClientID == s.holeID {
+			for i := int32(0); i < record.NumHoles; i++ {
+				s.selfReplicateC <- record
+			}
+		} else {
+			s.selfReplicateC <- record
+		}
 	}
 }
 
@@ -475,15 +525,34 @@ func (s *DataServer) processSelfReplicate() {
 		}
 
 		// wait for confirmation from all peers
-		s.replicateConfMu.RLock()
-		recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
-		wg := s.replicateConfWg[recordID]
-		s.replicateConfMu.RUnlock()
-		wg.Wait()
-		s.replicateConfMu.Lock()
-		s.replicateConfWg[recordID] = nil
-		delete(s.replicateConfWg, recordID)
-		s.replicateConfMu.Unlock()
+		if record.ClientID == s.holeID {
+			s.replicateConfMu.RLock()
+			recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
+			wg := s.replicateConfWg[recordID]
+			count := s.replicateCountDown[recordID]
+			s.replicateConfMu.RUnlock()
+			wg.Wait()
+			count -= 1
+			s.replicateConfMu.Lock()
+			if count > 0 {
+				s.replicateCountDown[recordID] = count
+			} else {
+				s.replicateConfWg[recordID] = nil
+				delete(s.replicateConfWg, recordID)
+				delete(s.replicateCountDown, recordID)
+			}
+			s.replicateConfMu.Unlock()
+		} else {
+			s.replicateConfMu.RLock()
+			recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
+			wg := s.replicateConfWg[recordID]
+			s.replicateConfMu.RUnlock()
+			wg.Wait()
+			s.replicateConfMu.Lock()
+			s.replicateConfWg[recordID] = nil
+			delete(s.replicateConfWg, recordID)
+			s.replicateConfMu.Unlock()
+		}
 
 		if backendOnly {
 			id := int64(record.ClientID)<<32 + int64(record.ClientSN)
@@ -512,6 +581,15 @@ func (s *DataServer) processSelfReplicate() {
 		if record.ClientID == s.holeID {
 			s.holeWg.Done()
 		}
+
+		s.replMu.Lock()
+		id := int64(record.ClientID)<<32 + int64(record.ClientSN)
+		if startTime, ok := s.replStartTime[id]; ok {
+			s.stats.totalReplicationTime += time.Since(startTime).Nanoseconds()
+			s.stats.numRepl++
+			delete(s.replStartTime, id)
+		}
+		s.replMu.Unlock()
 	}
 }
 
@@ -599,24 +677,34 @@ func (s *DataServer) reportLocalCut() {
 			// start replication for some holes if I do not have enough records
 			currLocalCut := s.localCut.Load()
 			if currLocalCut < s.prevSentLocalCut+s.quota {
+				startTime := time.Now()
 				diff := s.prevSentLocalCut + s.quota - currLocalCut
 				s.holeWg.Add(int(diff))
-				for i := int64(0); i < diff; i++ {
-					holeRecord := &datapb.Record{
-						ClientID: s.holeID,
-						ClientSN: s.getNextClientSNForHole(),
-						Record:   "0xDEADBEEF",
-					}
-					s.appendC <- holeRecord
-					s.stats.numHolesGenerated++
-					// do not generate acks for hole records
+				holeRecord := &datapb.Record{
+					ClientID: s.holeID,
+					ClientSN: s.getNextClientSNForHole(),
+					Record:   "0xDEADBEEF",
+					NumHoles: int32(diff),
 				}
+				s.appendC <- holeRecord
+				s.stats.numHolesGenerated += diff
 				s.holeWg.Wait()
+				s.stats.timeToFillHolesPerCutNs += time.Since(startTime).Nanoseconds()
+				s.stats.numHoleFilledCuts++
 			}
 
-			if s.localCut.Load() < s.prevSentLocalCut+s.quota {
+			currLocalCut = s.localCut.Load()
+			if currLocalCut < s.prevSentLocalCut+s.quota {
 				log.Errorf("error: can never occur")
 			}
+
+			cutsAvail := (currLocalCut - s.prevSentLocalCut) / s.quota
+			if cutsAvail+s.localCutNum >= s.numLocalCutsThreshold {
+				cutsAvail = s.numLocalCutsThreshold - s.localCutNum - 1
+			}
+
+			s.stats.totalCutsSent += cutsAvail
+			s.stats.numCuts += 1
 
 			lcs := &orderpb.LocalCuts{}
 			lcs.Cuts = make([]*orderpb.LocalCut, 1)
@@ -626,7 +714,7 @@ func (s *DataServer) reportLocalCut() {
 				WindowNum:      s.windowNumber,
 			}
 			lcs.Cuts[0].Cut = make([]int64, s.numReplica)
-			lcs.Cuts[0].Cut[s.replicaID] = s.prevSentLocalCut + s.quota
+			lcs.Cuts[0].Cut[s.replicaID] = s.prevSentLocalCut + cutsAvail*s.quota
 
 			if measureOrderingInterval {
 				for _, c := range lcs.Cuts[0].Cut {
@@ -641,7 +729,7 @@ func (s *DataServer) reportLocalCut() {
 				}
 			}
 
-			s.localCutNum++
+			s.localCutNum += cutsAvail
 			lcs.Cuts[0].LocalCutNum = s.localCutNum
 			lcs.Cuts[0].Quota = s.quota
 
@@ -652,7 +740,7 @@ func (s *DataServer) reportLocalCut() {
 			}
 
 			// update prevSentLocalCut
-			s.prevSentLocalCut += s.quota
+			s.prevSentLocalCut += cutsAvail * s.quota
 
 			if s.localCutNum == s.numLocalCutsThreshold-1 {
 				startTime := time.Now()
@@ -685,6 +773,7 @@ func (s *DataServer) processCommittedEntry() {
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
 			log.Debugf("Processing committed cut: %v", entry.CommittedCut)
+			startTime := time.Now()
 			// update quota if new quota is received
 			rid := s.shardID*s.numReplica + s.replicaID
 			if entry.CommittedCut.IsShardQuotaUpdated {
@@ -812,6 +901,9 @@ func (s *DataServer) processCommittedEntry() {
 			}
 			// replace previous committed cut
 			s.prevCommittedCut = entry.CommittedCut
+
+			s.stats.timeToComputeCommittedCutNs += time.Since(startTime).Nanoseconds()
+			s.stats.numCommittedCuts++
 		}
 		if entry.FinalizeShards != nil { //nolint
 			// TODO
