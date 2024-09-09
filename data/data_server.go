@@ -96,6 +96,9 @@ type DataServer struct {
 	// written to disk
 	diskWriteC  map[int64]chan bool
 	diskWriteMu sync.RWMutex
+
+	replStartTime map[int64]time.Time
+	replMu        sync.Mutex
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -137,6 +140,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.timeOfEntry = make(map[int64]time.Time)
 	s.numOrders = 0
 	s.avgOrderingLatencyMicros = 0
+	s.replStartTime = make(map[int64]time.Time)
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -399,6 +403,11 @@ func (s *DataServer) processAppend() {
 		s.replicateConfWg[id] = &sync.WaitGroup{}
 		s.replicateConfWg[id].Add(int(s.numReplica - 1))
 		s.replicateConfMu.Unlock()
+
+		s.replMu.Lock()
+		s.replStartTime[id] = time.Now()
+		s.replMu.Unlock()
+
 		for i, c := range s.replicateSendC {
 			if int32(i) != s.replicaID {
 				log.Debugf("Data forward to %v", i)
@@ -477,6 +486,10 @@ func (s *DataServer) processSelfReplicate() {
 			s.localCut[record.LocalReplicaID] = lsn + 1
 		}
 		s.localCutMu.Unlock()
+
+		s.replMu.Lock()
+		log.Debugf("replication latency: %v", time.Since(s.replStartTime[recordID]).Nanoseconds())
+		s.replMu.Unlock()
 	}
 }
 
@@ -504,6 +517,7 @@ func (s *DataServer) processAck() {
 
 func (s *DataServer) reportLocalCut() {
 	tick := time.NewTicker(s.batchingInterval)
+	prevCut := int64(0)
 	for range tick.C {
 		lcs := &orderpb.LocalCuts{}
 		lcs.Cuts = make([]*orderpb.LocalCut, 1)
@@ -529,7 +543,10 @@ func (s *DataServer) reportLocalCut() {
 			}
 		}
 
-		log.Debugf("Data report: %v", lcs)
+		log.Debugf("records sent: %v", lcs.Cuts[0].Cut[s.replicaID]-prevCut)
+		prevCut = lcs.Cuts[0].Cut[s.replicaID]
+
+		// log.Debugf("Data report: %v", lcs)
 		err := (*s.orderClient).Send(lcs)
 		if err != nil {
 			log.Errorf("%v", err)
@@ -551,8 +568,11 @@ func (s *DataServer) receiveCommittedCut() {
 }
 
 func (s *DataServer) processCommittedEntry() {
+	prevGCutTime := time.Now()
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
+			log.Debugf("time since last committed cut: %v", time.Since(prevGCutTime).Nanoseconds())
+			prevGCutTime = time.Now()
 			startReplicaID := s.shardID * s.numReplica
 			startGSN := entry.CommittedCut.StartGSN
 			// compute startGSN using the number of records stored
@@ -599,7 +619,7 @@ func (s *DataServer) processCommittedEntry() {
 							}
 							s.recordsMu.Unlock()
 							if measureOrderingInterval {
-								log.Printf("avg ordering latency: %v", s.avgOrderingLatencyMicros)
+								log.Debugf("avg ordering latency: %v", s.avgOrderingLatencyMicros)
 							}
 							if !ok {
 								log.Errorf("error, not able to find records")
@@ -631,6 +651,7 @@ func (s *DataServer) processCommittedEntry() {
 					startGSN += int64(diff)
 				}
 			}
+			log.Debugf("committed cut: %v", entry.CommittedCut)
 			// replace previous committed cut
 			s.prevCommittedCut = entry.CommittedCut
 		}

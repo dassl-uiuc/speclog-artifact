@@ -4,7 +4,6 @@ from scipy import stats as st
 from collections import Counter
 
 
-
 def parse_log_file(log_file):
     startGSN_values = []
     cuts = {}
@@ -27,15 +26,33 @@ def parse_log_file(log_file):
 
     return startGSN_values, cuts
 
-log_file = '../logs/order-0.log'  
+def get_metrics(log_file):
+    latencies = []
+    cuts = []
+    gctime = []
+    with open(log_file, 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            if "replication latency:" in line:
+                lat = line.split()[-1]
+                latencies.append(int(lat))
+            if "records sent:" in line:
+                cut = line.split()[-1]
+                cuts.append(int(cut))
+            if "time since last committed cut: " in line:
+                gc = line.split()[-1]
+                gctime.append(int(gc))
+
+    return np.array(latencies), np.array(cuts), np.array(gctime)
+
+
+log_file = '../logs/data-0-0.log'  
 startGSN_values, cuts = parse_log_file(log_file)
 
 data1 = cuts[0]
 data2 = cuts[1]
-data3 = cuts[2]
-data4 = cuts[3]
 
-differences = [np.diff(data1), np.diff(data2), np.diff(data3), np.diff(data4)]
+differences = [np.diff(data1), np.diff(data2)]
 
 for i, diff in enumerate(differences):
     print(f'Cut for {i} mean: {np.mean(diff)}')
@@ -49,3 +66,18 @@ for i, diff in enumerate(differences):
     print('---')
 
 
+latencies, cuts, gctime = get_metrics(log_file)
+
+print(f'mean latency ns: {np.mean(latencies)}')
+print(f'std latency ns: {np.std(latencies)}')
+print(f'p99 latency ns: {np.max(latencies)}')
+
+print(f'mean local cut: {np.mean(cuts)}')
+print(f'std local cut: {np.std(cuts)}')
+print(f'max local cut: {np.max(cuts)}')
+print(f'p99 local cut: {np.percentile(cuts, 99)}')
+
+print(f'mean gctime: {np.mean(gctime)}')
+print(f'std gctime: {np.std(gctime)}')
+print(f'max gctime: {np.max(gctime)}')
+print(f'p99 gctime: {np.percentile(gctime, 99)}')
