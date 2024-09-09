@@ -9,6 +9,11 @@ service Order {
 	rpc Finalize(FinalizeEntry) returns (Empty) {}
 }
 
+message Feedback {
+    int64 queueLength = 1;
+    int64 numHoles = 2;
+}
+
 message LocalCut {
 	int32 shardID = 1;
 	int32 localReplicaID = 2; // 0...(numReplicas-1)
@@ -16,6 +21,7 @@ message LocalCut {
     int64 quota = 4;
     int64 localCutNum = 5;
     int64 windowNum = 6; // local cut window number
+    Feedback feedback = 7;
 }
 
 message LocalCuts {

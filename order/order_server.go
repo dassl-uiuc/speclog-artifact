@@ -117,7 +117,9 @@ type OrderServer struct {
 
 	registerC            chan *orderpb.LocalCut // new replicas to be registered
 	lastCutTime          map[int32]time.Time
-	avgDelta             map[int32]*movingaverage.MovingAverage
+	queueLengthRate      map[int32]*movingaverage.MovingAverage
+	avgHoles             map[int32]*movingaverage.MovingAverage
+	prevQueueLength      map[int32]int64
 	quota                map[int64](map[int32]int64) // map from window number to quota for window
 	localCutChangeWindow int64
 	assignWindow         int64           // next window to assign quota
@@ -153,9 +155,11 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 
 	s.registerC = make(chan *orderpb.LocalCut, 4096)
 	s.lastCutTime = make(map[int32]time.Time)
-	s.avgDelta = make(map[int32]*movingaverage.MovingAverage)
+	s.queueLengthRate = make(map[int32]*movingaverage.MovingAverage)
+	s.avgHoles = make(map[int32]*movingaverage.MovingAverage)
+	s.prevQueueLength = make(map[int32]int64)
 	s.quota = make(map[int64]map[int32]int64)
-	s.localCutChangeWindow = 1e9
+	s.localCutChangeWindow = 100
 	s.replicasInReserve = make(map[int32]int64)
 	s.replicasStandby = make(map[int32]int64)
 	s.assignWindow = 0
@@ -176,11 +180,6 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.rnSnapshotterReady = snapshotterReady
 	s.stats = Stats{}
 	return s
-}
-
-// assuming isHigher(l1, w1, l2, w2) is true
-func (s *OrderServer) diffCut(l1, w1, l2, w2 int64) int64 {
-	return s.localCutChangeWindow*(w1-w2) + l1 - l2
 }
 
 func (s *OrderServer) Start() {
@@ -330,16 +329,12 @@ func (s *OrderServer) processReport() {
 						_, ok := lcs[id]
 						if !ok || isHigher(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum) {
 							log.Debugf("received cut for window num %v, local cut num %v from shard %v", lc.WindowNum, lc.LocalCutNum, id)
-							if _, ok := s.lastCutTime[id]; ok {
-								// dividing average by difference in local cut numbers in case some are missing
-								diffCut := s.diffCut(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum)
-								deltaAvg := float64(time.Since(s.lastCutTime[id]).Nanoseconds()) / float64(diffCut)
-								for count := 0; count < int(diffCut); count++ {
-									s.avgDelta[id].Add(deltaAvg)
-								}
-								log.Debugf("avg delta for shard %v is %v", id, s.avgDelta[id].Avg())
+							if _, ok := s.prevQueueLength[id]; !ok {
+								s.prevQueueLength[id] = 0
 							}
-							s.lastCutTime[id] = time.Now()
+							s.queueLengthRate[id].Add(float64(lc.Feedback.QueueLength - s.prevQueueLength[id]))
+							s.avgHoles[id].Add(float64(lc.Feedback.NumHoles))
+							s.prevQueueLength[id] = lc.Feedback.QueueLength
 
 							if lc.LocalCutNum >= int64(float64(s.localCutChangeWindow)*quotaChangeFraction) {
 								// check if quota has already been assigned for next window
@@ -347,15 +342,11 @@ func (s *OrderServer) processReport() {
 									s.quota[lc.WindowNum+1] = make(map[int32]int64)
 								}
 								if _, ok := s.quota[lc.WindowNum+1][id]; !ok {
-									// compute new quota for shard if necessary
-									// defaultFreq := float64(1e9 / float64(s.batchingInterval.Nanoseconds()))
-									// currentFreq := float64(1e9 / s.avgDelta[id].Avg())
-									// log.Printf("current freq: %v, default freq: %v", currentFreq, defaultFreq)
+									// growthRate := s.queueLengthRate[id].Avg()
+									// avgHoles := s.avgHoles[id].Avg()
 
-									// check if frequency changed by more than 10%
-									// if math.Abs(currentFreq-defaultFreq)/defaultFreq >= 0.1 {
-									// 	// decide new quota for the next window
-									// 	s.quota[lc.WindowNum+1][id] = max(int64(float64(lc.Quota)*currentFreq/defaultFreq), 1)
+									// if growthRate > 0.5 || growthRate < -0.5 || avgHoles > 0.5 {
+									// s.quota[lc.WindowNum+1][id] = max(1, int64(math.Ceil(growthRate+float64(lc.Quota)-avgHoles+float64(s.prevQueueLength[id])/float64(s.localCutChangeWindow))))
 									// } else {
 									s.quota[lc.WindowNum+1][id] = lc.Quota
 									// }
@@ -398,7 +389,8 @@ func (s *OrderServer) processReport() {
 						rid := lc.ShardID*s.dataNumReplica + i
 						s.replicasInReserve[rid] = s.replicasStandby[rid]
 						delete(s.replicasStandby, rid)
-						s.avgDelta[rid] = movingaverage.New(10)
+						s.queueLengthRate[rid] = movingaverage.New(10)
+						s.avgHoles[rid] = movingaverage.New(10)
 					}
 					log.Debugf("Shard %v to be added in next avl window", lc.ShardID)
 				}

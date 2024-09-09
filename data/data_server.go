@@ -41,7 +41,6 @@ type Stats struct {
 	numQuotas             int64
 
 	timeToFillHolesPerCutNs int64
-	numHoleFilledCuts       int64
 
 	timeToComputeCommittedCutNs int64
 	numCommittedCuts            int64
@@ -58,8 +57,8 @@ func (s *Stats) printStats() {
 	if s.numQuotas > 0 {
 		log.Printf("avg time spent waiting for next quota in ms: %v", float64(s.waitingForNextQuotaNs)/float64(s.numQuotas)/1e6)
 	}
-	if s.numHoleFilledCuts > 0 {
-		log.Printf("avg time to fill holes per cut in ms: %v", float64(s.timeToFillHolesPerCutNs)/float64(s.numHoleFilledCuts)/1e6)
+	if s.numCuts > 0 {
+		log.Printf("avg time to fill holes per cut in ms: %v", float64(s.timeToFillHolesPerCutNs)/float64(s.numCuts)/1e6)
 	}
 	if s.numCommittedCuts > 0 {
 		log.Printf("avg time to compute committed cut in us: %v", float64(s.timeToComputeCommittedCutNs)/float64(s.numCommittedCuts)/1e3)
@@ -148,9 +147,11 @@ type DataServer struct {
 	windowNumber          int64
 	quotas                map[int64](map[int32]int64) // quotas for each window
 
-	nextCSNForHole int32
-	holeID         int32 // client id to generate holes
-	holeWg         sync.WaitGroup
+	// hole filling
+	nextCSNForHole    int32
+	holeID            int32 // client id to generate holes
+	holeWg            sync.WaitGroup
+	recordsInPipeline atomic.Int64
 
 	// stats
 	stats Stats
@@ -203,7 +204,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 
 	s.quota = 3
 	s.localCutNum = -1
-	s.numLocalCutsThreshold = 1e9
+	s.numLocalCutsThreshold = 100
 	s.waitForNewQuota = make(chan int64, 1)
 	s.windowNumber = -1
 	s.nextExpectedLocalCutNum = 0
@@ -211,6 +212,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.nextCSNForHole = -1
 	s.holeID = s.generateClientIDForHole()
 	s.quotas = make(map[int64](map[int32]int64))
+	s.recordsInPipeline.Store(0)
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -477,6 +479,13 @@ func (s *DataServer) processAppend() {
 		}
 		s.replicateConfMu.Unlock()
 
+		// increment records in pipeline
+		if record.ClientID != s.holeID {
+			s.recordsInPipeline.Add(1)
+		} else {
+			s.recordsInPipeline.Add(int64(record.NumHoles))
+		}
+
 		s.replMu.Lock()
 		s.replStartTime[id] = time.Now()
 		s.replMu.Unlock()
@@ -577,6 +586,7 @@ func (s *DataServer) processSelfReplicate() {
 		s.recordsMu.Unlock()
 
 		s.localCut.Add(1)
+		s.recordsInPipeline.Add(-1)
 
 		if record.ClientID == s.holeID {
 			s.holeWg.Done()
@@ -675,6 +685,7 @@ func (s *DataServer) reportLocalCut() {
 		select {
 		case <-tick.C:
 			// start replication for some holes if I do not have enough records
+			numHoles := int64(0)
 			currLocalCut := s.localCut.Load()
 			if currLocalCut < s.prevSentLocalCut+s.quota {
 				startTime := time.Now()
@@ -689,8 +700,8 @@ func (s *DataServer) reportLocalCut() {
 				s.appendC <- holeRecord
 				s.stats.numHolesGenerated += diff
 				s.holeWg.Wait()
+				numHoles = diff
 				s.stats.timeToFillHolesPerCutNs += time.Since(startTime).Nanoseconds()
-				s.stats.numHoleFilledCuts++
 			}
 
 			currLocalCut = s.localCut.Load()
@@ -698,12 +709,7 @@ func (s *DataServer) reportLocalCut() {
 				log.Errorf("error: can never occur")
 			}
 
-			cutsAvail := (currLocalCut - s.prevSentLocalCut) / s.quota
-			if cutsAvail+s.localCutNum >= s.numLocalCutsThreshold {
-				cutsAvail = s.numLocalCutsThreshold - s.localCutNum - 1
-			}
-
-			s.stats.totalCutsSent += cutsAvail
+			s.stats.totalCutsSent += 1
 			s.stats.numCuts += 1
 
 			lcs := &orderpb.LocalCuts{}
@@ -714,7 +720,7 @@ func (s *DataServer) reportLocalCut() {
 				WindowNum:      s.windowNumber,
 			}
 			lcs.Cuts[0].Cut = make([]int64, s.numReplica)
-			lcs.Cuts[0].Cut[s.replicaID] = s.prevSentLocalCut + cutsAvail*s.quota
+			lcs.Cuts[0].Cut[s.replicaID] = s.prevSentLocalCut + s.quota
 
 			if measureOrderingInterval {
 				for _, c := range lcs.Cuts[0].Cut {
@@ -729,9 +735,12 @@ func (s *DataServer) reportLocalCut() {
 				}
 			}
 
-			s.localCutNum += cutsAvail
+			s.localCutNum += 1
 			lcs.Cuts[0].LocalCutNum = s.localCutNum
 			lcs.Cuts[0].Quota = s.quota
+			lcs.Cuts[0].Feedback = &orderpb.Feedback{}
+			lcs.Cuts[0].Feedback.QueueLength = currLocalCut - s.prevSentLocalCut - s.quota
+			lcs.Cuts[0].Feedback.NumHoles = numHoles
 
 			log.Debugf("Data report: %v", lcs)
 			err := (*s.orderClient).Send(lcs)
@@ -740,7 +749,7 @@ func (s *DataServer) reportLocalCut() {
 			}
 
 			// update prevSentLocalCut
-			s.prevSentLocalCut += cutsAvail * s.quota
+			s.prevSentLocalCut += s.quota
 
 			if s.localCutNum == s.numLocalCutsThreshold-1 {
 				startTime := time.Now()
