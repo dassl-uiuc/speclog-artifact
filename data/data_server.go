@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/scalog/scalog/data/datapb"
@@ -99,6 +100,8 @@ type DataServer struct {
 
 	replStartTime map[int64]time.Time
 	replMu        sync.Mutex
+
+	recordsInPipeline atomic.Int64
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -141,6 +144,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.numOrders = 0
 	s.avgOrderingLatencyMicros = 0
 	s.replStartTime = make(map[int64]time.Time)
+	s.recordsInPipeline.Store(0)
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -404,6 +408,8 @@ func (s *DataServer) processAppend() {
 		s.replicateConfWg[id].Add(int(s.numReplica - 1))
 		s.replicateConfMu.Unlock()
 
+		s.recordsInPipeline.Add(1)
+
 		s.replMu.Lock()
 		s.replStartTime[id] = time.Now()
 		s.replMu.Unlock()
@@ -486,6 +492,8 @@ func (s *DataServer) processSelfReplicate() {
 			s.localCut[record.LocalReplicaID] = lsn + 1
 		}
 		s.localCutMu.Unlock()
+
+		s.recordsInPipeline.Add(-1)
 
 		s.replMu.Lock()
 		log.Debugf("replication latency: %v", time.Since(s.replStartTime[recordID]).Nanoseconds())

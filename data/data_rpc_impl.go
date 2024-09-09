@@ -38,6 +38,7 @@ func (s *DataServer) Append(stream datapb.Data_AppendServer) error {
 }
 
 func (s *DataServer) AppendOne(ctx context.Context, record *datapb.Record) (*datapb.Ack, error) {
+	log.Debugf("queue length: %v", s.recordsInPipeline.Load())
 	s.CreateAck(record.ClientID, record.ClientSN)
 	s.appendC <- record
 	ack := s.WaitForAck(record.ClientID, record.ClientSN)

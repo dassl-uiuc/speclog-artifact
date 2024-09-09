@@ -30,6 +30,7 @@ def get_metrics(log_file):
     latencies = []
     cuts = []
     gctime = []
+    queuelen = []
     with open(log_file, 'r') as f:
         lines = f.readlines()
         for line in lines:
@@ -42,11 +43,14 @@ def get_metrics(log_file):
             if "time since last committed cut: " in line:
                 gc = line.split()[-1]
                 gctime.append(int(gc))
+            if "queue length: " in line:
+                ql = line.split()[-1]
+                queuelen.append(int(ql))
 
-    return np.array(latencies), np.array(cuts), np.array(gctime)
+    return np.array(latencies), np.array(cuts), np.array(queuelen), np.array(gctime)
 
 
-log_file = '../logs/data-0-0.log'  
+log_file = '../speclog_40K_100c/data-0-0.log'  
 startGSN_values, cuts = parse_log_file(log_file)
 
 data1 = cuts[0]
@@ -66,7 +70,7 @@ for i, diff in enumerate(differences):
     print('---')
 
 
-latencies, cuts, gctime = get_metrics(log_file)
+latencies, cuts, queuelen, gctime = get_metrics(log_file)
 
 print(f'mean latency ns: {np.mean(latencies)}')
 print(f'std latency ns: {np.std(latencies)}')
@@ -81,3 +85,8 @@ print(f'mean gctime: {np.mean(gctime)}')
 print(f'std gctime: {np.std(gctime)}')
 print(f'max gctime: {np.max(gctime)}')
 print(f'p99 gctime: {np.percentile(gctime, 99)}')
+
+print(f'mean queuelen: {np.mean(queuelen)}')
+print(f'std queuelen: {np.std(queuelen)}')
+print(f'max queuelen: {np.max(queuelen)}')
+print(f'p99 queuelen: {np.percentile(queuelen, 99)}')
