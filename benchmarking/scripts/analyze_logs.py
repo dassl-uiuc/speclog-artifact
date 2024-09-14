@@ -55,6 +55,11 @@ startGSN_values, cuts = parse_log_file(log_file)
 
 data1 = cuts[0]
 data2 = cuts[1]
+# filter initial zeroes from difference
+first_non_zero = next((i for i, x in enumerate(data1) if x), None)
+data1 = data1[first_non_zero:]
+first_non_zero = next((i for i, x in enumerate(data2) if x), None)
+data2 = data2[first_non_zero:]
 
 differences = [np.diff(data1), np.diff(data2)]
 

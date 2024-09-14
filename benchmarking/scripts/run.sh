@@ -11,9 +11,9 @@ order=("node0" "node1" "node2")
 data_0=("node3" "node4")
 # data_1=("node5" "node6")
 
-client_nodes=("node7" "node8")
+client_nodes=("node7")
 
-batching_intervals=("0.1ms")
+batching_intervals=("1ms")
 
 modify_batching_intervals() {
     sed -i "s|order-batching-interval: .*|order-batching-interval: $1|" "${benchmark_dir}/../.scalog.yaml"
@@ -145,7 +145,8 @@ get_disk_stats() {
 
 mode="$1"
 if [ "$mode" -eq 0 ]; then # append experiment mode
-    clients=("100")
+    # clients=("130")
+    clients=("80")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
