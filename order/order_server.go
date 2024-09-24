@@ -245,7 +245,7 @@ func (s *OrderServer) adjustToMinimums(rid int32, lc *orderpb.LocalCut, windowNu
 
 func (s *OrderServer) isReadyToAssignQuota() bool {
 	if s.assignWindow == 0 {
-		return len(s.replicasInReserve) == 4
+		return len(s.replicasInReserve) == 2
 	}
 	return s.numQuotaChanged == int64(len(s.quota[s.assignWindow-1]))
 }

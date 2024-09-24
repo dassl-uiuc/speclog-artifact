@@ -50,10 +50,15 @@ type Stats struct {
 
 	totalReplicationTime int64
 	numRepl              int64
+
+	avgLocalCutInterreportNs int64
+
+	prevNumHoles int64
 }
 
 func (s *Stats) printStats() {
-	log.Printf("num holes generated: %v", s.numHolesGenerated)
+	log.Printf("num holes generated: %v [+%v]", s.numHolesGenerated, s.numHolesGenerated-s.prevNumHoles)
+	s.prevNumHoles = s.numHolesGenerated
 	if s.numQuotas > 0 {
 		log.Printf("avg time spent waiting for next quota in ms: %v", float64(s.waitingForNextQuotaNs)/float64(s.numQuotas)/1e6)
 	}
@@ -68,6 +73,9 @@ func (s *Stats) printStats() {
 	}
 	if s.numRepl > 0 {
 		log.Printf("avg replication time in ms: %v", float64(s.totalReplicationTime)/float64(s.numRepl)/1e6)
+	}
+	if s.numCuts > 0 {
+		log.Printf("avg time between local cut reports in ms: %v", float64(s.avgLocalCutInterreportNs)/float64(s.numCuts)/1e6)
 	}
 }
 
@@ -681,6 +689,7 @@ func (s *DataServer) reportLocalCut() {
 
 	tick := time.NewTicker(s.batchingInterval)
 	printTicker := time.NewTicker(5 * time.Second)
+	var prevLocalCutTime time.Time
 	for {
 		select {
 		case <-tick.C:
@@ -744,6 +753,13 @@ func (s *DataServer) reportLocalCut() {
 
 			log.Debugf("Data report: %v", lcs)
 			err := (*s.orderClient).Send(lcs)
+			if prevLocalCutTime.IsZero() {
+				prevLocalCutTime = time.Now()
+			} else {
+				s.stats.avgLocalCutInterreportNs += time.Since(prevLocalCutTime).Nanoseconds()
+				prevLocalCutTime = time.Now()
+			}
+
 			if err != nil {
 				log.Errorf("%v", err)
 			}
