@@ -8,3 +8,4 @@
 # sudo mount /dev/sda4 /users/sgbhat3/scalog-storage
 sudo chown -R sgbhat3 /data
 sudo rm -rf /data/*
+sudo chown -R sgbhat3 ~
