@@ -13,11 +13,11 @@ interval="$5"
 
 # output directory for the test output
 output_dir="../results/${interval}/append_bench_${total_clients}"
-sudo mkdir -p $output_dir
+mkdir -p $output_dir
 
 for ((i=1; i<=$client_number; i++)); do
     request_size="4096"
-    cmd="sudo /usr/local/go/bin/go run append_bench.go $time_limit $request_size ${output_dir}/<hp${client_id}>_${time_limit}_${request_size}_${i}.csv"
+    cmd="/usr/local/go/bin/go run append_bench.go $time_limit $request_size ${output_dir}/<hp${client_id}>_${time_limit}_${request_size}_${i}.csv"
     $cmd &
 done
 

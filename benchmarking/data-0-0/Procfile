@@ -1,3 +1,3 @@
 # Use goreman to run `go get github.com/mattn/goreman`
 
-data-0-0: sudo ../../scalog data --config=../../.scalog.yaml --sid=0 --rid=0
+data-0-0: ../../scalog data --config=../../.scalog.yaml --sid=0 --rid=0
