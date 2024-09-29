@@ -58,7 +58,7 @@ def get_avg_throughput(directory, num_bytes_per_op):
     return None
 
 #clients = [2, 4, 6, 8, 16, 20, 32, 64, 128, 256, 512, 600, 700, 800, 900, 1000, 1200, 1300]
-clients = [80, 90, 100, 120, 130]
+clients = [80]
 throughput = []
 latency = []
 
