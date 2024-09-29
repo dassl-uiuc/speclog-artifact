@@ -11,7 +11,7 @@ def find_last_hole_num(file_path, pattern):
     
     for line in reversed(lines):
         if re.search(pattern, line):
-            return line.split()[-1]
+            return line.split()[-2]
     
     return None
 

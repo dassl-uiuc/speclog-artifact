@@ -24,6 +24,14 @@ func NewDefaultShardingPolicy(numReplica int32) *DefaultShardingPolicy {
 	return s
 }
 
+func (p *DefaultShardingPolicy) GetShardID() int32 {
+	return p.shardID
+}
+
+func (p *DefaultShardingPolicy) GetReplicaID() int32 {
+	return p.replicaID
+}
+
 func (p *DefaultShardingPolicy) Shard(view *view.View, record string) (int32, int32) {
 	if view == nil {
 		return -1, -1

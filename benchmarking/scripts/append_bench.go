@@ -90,6 +90,8 @@ func main() {
 		}
 	}
 	endTime := time.Now()
+	shardId, replicaId := cli.GetShardingPolicy()
+	log.Printf("filename: %v, shardId: %v, replicaId: %v", fileName, shardId, replicaId)
 
 	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
 }

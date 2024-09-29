@@ -13,7 +13,7 @@ data_0=("node3" "node4")
 
 client_nodes=("node7" "node8")
 
-batching_intervals=("0.5ms")
+batching_intervals=("1ms")
 
 modify_batching_intervals() {
     sed -i "s|order-batching-interval: .*|order-batching-interval: $1|" "${benchmark_dir}/../.scalog.yaml"
@@ -58,6 +58,10 @@ collect_logs() {
     # do 
     #     scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
     # done 
+    for svr in ${client_nodes[@]};
+    do 
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+    done
     wait
 }
 

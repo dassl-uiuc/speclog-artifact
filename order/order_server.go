@@ -46,6 +46,10 @@ func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	return lowestWindowNum
 }
 
+func (s *OrderServer) diff(l1, w1, l2, w2 int64) int64 {
+	return l1 + s.localCutChangeWindow*w1 - l2 - s.localCutChangeWindow*w2
+}
+
 // iterates over all the replicas in the corresponding window number
 // returns the lowest local cut number over all replicas in that window (if any replica hasn't reached window yet, returns math.MaxInt64)
 func (s *OrderServer) getLowestLocalCutNum(lcs map[int32]*orderpb.LocalCut, windowNum int64) int64 {
@@ -78,6 +82,7 @@ type Stats struct {
 	numCommittedCuts          int64
 	timeToDecideQuota         int64
 	numQuotaDecisions         int64
+	diffCut                   float64
 }
 
 func (s *Stats) printStats() {
@@ -85,6 +90,7 @@ func (s *Stats) printStats() {
 		return
 	}
 	log.Printf("avg time to compute committed cut in us: %v", s.timeToComputeCommittedCut/s.numCommittedCuts/1000)
+	log.Printf("avg lag in Cuts: %v", s.diffCut/float64(s.numCommittedCuts))
 	if s.numQuotaDecisions == 0 {
 		return
 	}
@@ -250,6 +256,38 @@ func (s *OrderServer) isReadyToAssignQuota() bool {
 	return s.numQuotaChanged == int64(len(s.quota[s.assignWindow-1]))
 }
 
+// this function finds the amount of lag in the cuts across all replicas
+// the lag is the difference between the cut number of a replica and the highest cut number across all replicas
+// where, cut number = windowNumber * localCutChangeWindow + localCutNumber
+func (s *OrderServer) getLags(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
+	lags := make(map[int32]int64)
+	highestCut := int64(0)
+	for _, lc := range lcs {
+		cutNum := lc.WindowNum*s.localCutChangeWindow + lc.LocalCutNum
+		if cutNum > highestCut {
+			highestCut = cutNum
+		}
+	}
+	for rid, lc := range lcs {
+		cutNum := lc.WindowNum*s.localCutChangeWindow + lc.LocalCutNum
+		lags[rid] = highestCut - cutNum
+	}
+	return lags
+}
+
+// logs the avg lag in cuts and returns true if there is a significant lag in the cuts
+// significance is currently defined as a maximum lag of 10% of the localCutChangeWindow or more
+func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
+	maxLag := float64(0)
+	for _, lag := range lags {
+		if float64(lag) > maxLag {
+			maxLag = float64(lag)
+		}
+	}
+	s.stats.diffCut += float64(maxLag)
+	return float64(maxLag) >= float64(0.1)*float64(s.localCutChangeWindow)
+}
+
 func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
 	// find lowest numbered window across all replicas
 	lowestWindowNum := getLowestWindowNum(lcs)
@@ -305,6 +343,11 @@ func (s *OrderServer) processReport() {
 	lcs := make(map[int32]*orderpb.LocalCut) // all local cuts
 	printTicker := time.NewTicker(5 * time.Second)
 	prevPrintCut := make(map[int32]int64)
+
+	// if I send a lag signal, I should not send another one until the lag is resolved
+	// wait for 5 windows before sending another lag signal
+	lastLagSent := int64(0)
+	numCommittedCuts := int64(0)
 	ticker := time.NewTicker(s.batchingInterval)
 	var quotaStartTime time.Time
 	for {
@@ -399,11 +442,14 @@ func (s *OrderServer) processReport() {
 			// TODO: check to make sure the key in lcs exist
 			// This thread is responsible for computing the committed cut and proposing it to the Raft node
 			if s.isLeader { // compute committedCut
+				numCommittedCuts++
 				start := time.Now()
 				ccut := s.computeCommittedCut(lcs)
+				lags := s.getLags(lcs)
 				s.stats.timeToComputeCommittedCut += time.Since(start).Nanoseconds()
 				s.stats.numCommittedCuts++
 				vid := atomic.LoadInt32(&s.viewID)
+				var ce *orderpb.CommittedEntry
 
 				if s.isReadyToAssignQuota() {
 					if s.assignWindow != 0 {
@@ -450,13 +496,21 @@ func (s *OrderServer) processReport() {
 					s.assignWindow++
 
 					log.Debugf("Proposing committed quota for window %v as %v", s.assignWindow-1, s.quota[s.assignWindow-1])
-					ce := &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1}, FinalizeShards: nil}
-					s.proposeC <- ce
+					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1}, FinalizeShards: nil}
 				} else {
-					ce := &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
-					s.proposeC <- ce
+					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
 				}
 
+				if s.isSignificantLag(lags) {
+					if lastLagSent == 0 || numCommittedCuts-lastLagSent > 5 {
+						log.Printf("significant lag in cuts: %v", lags)
+						ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
+						ce.CommittedCut.AdjustmentSignal.Lag = lags
+						lastLagSent = numCommittedCuts
+					}
+				}
+
+				s.proposeC <- ce
 				s.startGSN += s.computeCutDiff(s.prevCut, ccut)
 				s.prevCut = ccut
 			}

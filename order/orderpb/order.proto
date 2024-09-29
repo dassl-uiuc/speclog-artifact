@@ -14,6 +14,10 @@ message Feedback {
     int64 numHoles = 2;
 }
 
+message Control {
+    map<int32, int64> lag = 1;
+}
+
 message LocalCut {
 	int32 shardID = 1;
 	int32 localReplicaID = 2; // 0...(numReplicas-1)
@@ -35,7 +39,8 @@ message CommittedCut {
 	map<int32, int64> cut = 2;
     map<int32, int64> shardQuotas = 3;
 	bool isShardQuotaUpdated = 4;
-    int64 windowNum = 5; // to be used only if quota is updated, represents the window number for which this quota is to be used
+    Control adjustmentSignal = 5;
+    int64 windowNum = 6; // to be used only if quota is updated, represents the window number for which this quota is to be used
 }
 
 message CommittedEntry {

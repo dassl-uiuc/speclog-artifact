@@ -58,14 +58,14 @@ def get_avg_throughput(directory, num_bytes_per_op):
     return None
 
 #clients = [2, 4, 6, 8, 16, 20, 32, 64, 128, 256, 512, 600, 700, 800, 900, 1000, 1200, 1300]
-clients = [100]
+clients = [80]
 throughput = []
 latency = []
 
 print(f"#clients,avg tput(ops/sec),avg latency(ms/op),p50 latency(ms/op),p99 latency(ms/op)")
 for n in clients:
     # Specify the directory path
-    directory_path = "../results/0.1ms/append_bench_" + str(n)
+    directory_path = "../results/1ms/append_bench_" + str(n)
 
     # Calculate and print the average throughput
     avg_tput = get_avg_throughput(directory_path, 4096)

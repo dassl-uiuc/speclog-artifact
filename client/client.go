@@ -20,6 +20,8 @@ import (
 
 type ShardingPolicy interface {
 	Shard(view *view.View, record string) (int32, int32)
+	GetShardID() int32
+	GetReplicaID() int32
 }
 
 // ShardingPolicy determines which records are appended to which shards.
@@ -353,6 +355,10 @@ func (c *Client) respondToClient() {
 		delete(c.committedRecords, c.nextGSN)
 		c.nextGSN++
 	}
+}
+
+func (c *Client) GetShardingPolicy() (int32, int32) {
+	return c.shardingPolicy.GetShardID(), c.shardingPolicy.GetReplicaID()
 }
 
 func (c *Client) SetShardingPolicy(p ShardingPolicy) {
