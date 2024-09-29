@@ -20,6 +20,7 @@ import (
 
 type ShardingPolicy interface {
 	Shard(view *view.View, record string) (int32, int32)
+	AssignSpecificShard(view *view.View, record string, appenderId int32) (int32, int32)
 }
 
 // ShardingPolicy determines which records are appended to which shards.
@@ -276,6 +277,28 @@ func (c *Client) AppendOne(record string) (int64, int32, error) {
 	return ack.GlobalSN, ack.ShardID, nil
 }
 
+func (c *Client) AppendToAssignedShard(appenderId int32, record string) (int64, int32, error) {
+	r := &datapb.Record{
+		ClientID: c.clientID,
+		ClientSN: c.getNextClientSN(),
+		Record:   record,
+	}
+
+	shard, replica := c.shardingPolicy.AssignSpecificShard(c.view, record, appenderId)
+	// log.Infof("shard: %v, replica: %v\n", shard, replica)
+	conn, err := c.getDataServerConn(shard, replica)
+	if err != nil {
+		return 0, 0, err
+	}
+	opts := []grpc.CallOption{}
+	dataClient := datapb.NewDataClient(conn)
+	ack, err := dataClient.AppendOne(context.TODO(), r, opts...)
+	if err != nil {
+		return 0, 0, err
+	}
+	return ack.GlobalSN, ack.ShardID, nil
+}
+
 func (c *Client) Read(gsn int64, shard, replica int32) (string, error) {
 	globalSN := &datapb.GlobalSN{GSN: gsn}
 	conn, err := c.getDataServerConn(shard, replica)
@@ -289,6 +312,56 @@ func (c *Client) Read(gsn int64, shard, replica int32) (string, error) {
 		return "", err
 	}
 	return record.Record, nil
+}
+
+func (c *Client) SubscribeToAssignedShard(gsn int64, readerId int32) (chan CommittedRecord, error) {
+	c.committedRecordsMu.Lock()
+	c.nextGSN = gsn
+	c.committedRecordsMu.Unlock()
+
+	if readerId >= c.numReplica*int32(len(c.view.LiveShards)) {
+		return nil, fmt.Errorf("readerId %v is out of range", readerId)
+	}
+
+	shard := readerId / c.numReplica
+	replica := readerId % c.numReplica
+
+	go c.SubscribeToAssignedShardServer(shard, replica)
+
+	return c.subC, nil
+}
+
+func (c *Client) SubscribeToAssignedShardServer(shard, replica int32) {
+	conn, err := c.getDataServerConn(shard, replica)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	opts := []grpc.CallOption{}
+	dataClient := datapb.NewDataClient(conn)
+	globalSN := &datapb.GlobalSN{GSN: c.nextGSN}
+	stream, err := dataClient.Subscribe(context.Background(), globalSN, opts...)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	for {
+		record, err := stream.Recv()
+		if err == io.EOF {
+			log.Infof("Receive subscribe stream closed.")
+			return
+		}
+		if err != nil {
+			log.Errorf("%v", err)
+			return
+		}
+
+		commitedRecord := CommittedRecord{
+			GSN:    record.GlobalSN,
+			Record: record.Record,
+		}
+		c.subC <- commitedRecord
+	}
 }
 
 func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, error) {
