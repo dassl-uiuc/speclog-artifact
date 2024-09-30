@@ -56,7 +56,7 @@ collect_logs() {
     done 
     # for svr in ${data_1[@]};
     # do 
-    #     scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        # scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
     # done 
     for svr in ${client_nodes[@]};
     do 
@@ -150,7 +150,7 @@ get_disk_stats() {
 
 mode="$1"
 if [ "$mode" -eq 0 ]; then # append experiment mode
-    clients=("100")
+    clients=("80")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals

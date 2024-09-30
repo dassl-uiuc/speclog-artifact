@@ -90,7 +90,7 @@ func (s *Stats) printStats() {
 		return
 	}
 	log.Printf("avg time to compute committed cut in us: %v", s.timeToComputeCommittedCut/s.numCommittedCuts/1000)
-	log.Printf("avg lag in Cuts: %v", s.diffCut/float64(s.numCommittedCuts))
+	log.Printf("avg lag in cuts: %v", s.diffCut/float64(s.numCommittedCuts))
 	if s.numQuotaDecisions == 0 {
 		return
 	}
@@ -502,8 +502,8 @@ func (s *OrderServer) processReport() {
 				}
 
 				if s.isSignificantLag(lags) {
-					if lastLagSent == 0 || numCommittedCuts-lastLagSent > 5 {
-						log.Printf("significant lag in cuts: %v", lags)
+					if lastLagSent == 0 || numCommittedCuts-lastLagSent > s.localCutChangeWindow {
+						// log.Printf("significant lag in cuts: %v", lags)
 						ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
 						ce.CommittedCut.AdjustmentSignal.Lag = lags
 						lastLagSent = numCommittedCuts
