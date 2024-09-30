@@ -754,6 +754,10 @@ func (s *DataServer) reportLocalCut() {
 						numEntries += int64(s.quota)
 						lcs.Cuts[i-1].Cut[s.replicaID] = s.prevSentLocalCut + numEntries
 
+						if i == lag {
+							lcs.Cuts[i-1].Feedback.FixedLag = true
+						}
+
 						if s.localCutNum == s.numLocalCutsThreshold-1 {
 							startTime := time.Now()
 							s.quota = <-s.waitForNewQuota
@@ -851,7 +855,6 @@ func (s *DataServer) reportLocalCut() {
 				s.localCutNum += 1
 				lcs.Cuts[0].LocalCutNum = s.localCutNum
 				lcs.Cuts[0].Quota = s.quota
-				lcs.Cuts[0].Feedback = &orderpb.Feedback{}
 				// TODO: maybe only do this if no holes have been filled in the early wakeup stage?
 				lcs.Cuts[0].Feedback.QueueLength = currLocalCut - s.prevSentLocalCut - s.quota
 

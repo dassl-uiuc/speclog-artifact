@@ -338,6 +338,15 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 	return ccut
 }
 
+func (s *OrderServer) isLastLagFixed(lastLag map[int32]int64) bool {
+	for _, lag := range lastLag {
+		if lag != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // proposeCommit broadcasts entries in commitC to all subCs.
 func (s *OrderServer) processReport() {
 	lcs := make(map[int32]*orderpb.LocalCut) // all local cuts
@@ -346,7 +355,7 @@ func (s *OrderServer) processReport() {
 
 	// if I send a lag signal, I should not send another one until the lag is resolved
 	// wait for 5 windows before sending another lag signal
-	lastLagSent := int64(0)
+	var lastLag map[int32]int64
 	numCommittedCuts := int64(0)
 	ticker := time.NewTicker(s.batchingInterval)
 	var quotaStartTime time.Time
@@ -369,38 +378,40 @@ func (s *OrderServer) processReport() {
 					}
 					if valid {
 						// check if this is a higher local cut
-						_, ok := lcs[id]
-						if !ok || isHigher(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum) {
-							log.Debugf("received cut for window num %v, local cut num %v from shard %v", lc.WindowNum, lc.LocalCutNum, id)
-							if _, ok := s.prevQueueLength[id]; !ok {
-								s.prevQueueLength[id] = 0
+						log.Debugf("received cut for window num %v, local cut num %v from shard %v", lc.WindowNum, lc.LocalCutNum, id)
+						if _, ok := s.prevQueueLength[id]; !ok {
+							s.prevQueueLength[id] = 0
+						}
+						s.queueLengthRate[id].Add(float64(lc.Feedback.QueueLength - s.prevQueueLength[id]))
+						s.avgHoles[id].Add(float64(lc.Feedback.NumHoles))
+						s.prevQueueLength[id] = lc.Feedback.QueueLength
+
+						if lc.LocalCutNum >= int64(float64(s.localCutChangeWindow)*quotaChangeFraction) {
+							// check if quota has already been assigned for next window
+							if _, ok := s.quota[lc.WindowNum+1]; !ok {
+								s.quota[lc.WindowNum+1] = make(map[int32]int64)
 							}
-							s.queueLengthRate[id].Add(float64(lc.Feedback.QueueLength - s.prevQueueLength[id]))
-							s.avgHoles[id].Add(float64(lc.Feedback.NumHoles))
-							s.prevQueueLength[id] = lc.Feedback.QueueLength
+							if _, ok := s.quota[lc.WindowNum+1][id]; !ok {
+								// growthRate := s.queueLengthRate[id].Avg()
+								// avgHoles := s.avgHoles[id].Avg()
 
-							if lc.LocalCutNum >= int64(float64(s.localCutChangeWindow)*quotaChangeFraction) {
-								// check if quota has already been assigned for next window
-								if _, ok := s.quota[lc.WindowNum+1]; !ok {
-									s.quota[lc.WindowNum+1] = make(map[int32]int64)
+								// if growthRate > 0.5 || growthRate < -0.5 || avgHoles > 0.5 {
+								// s.quota[lc.WindowNum+1][id] = max(1, int64(math.Ceil(growthRate+float64(lc.Quota)-avgHoles+float64(s.prevQueueLength[id])/float64(s.localCutChangeWindow))))
+								// } else {
+								s.quota[lc.WindowNum+1][id] = lc.Quota
+								// }
+
+								if s.numQuotaChanged == 0 {
+									quotaStartTime = time.Now()
 								}
-								if _, ok := s.quota[lc.WindowNum+1][id]; !ok {
-									// growthRate := s.queueLengthRate[id].Avg()
-									// avgHoles := s.avgHoles[id].Avg()
-
-									// if growthRate > 0.5 || growthRate < -0.5 || avgHoles > 0.5 {
-									// s.quota[lc.WindowNum+1][id] = max(1, int64(math.Ceil(growthRate+float64(lc.Quota)-avgHoles+float64(s.prevQueueLength[id])/float64(s.localCutChangeWindow))))
-									// } else {
-									s.quota[lc.WindowNum+1][id] = lc.Quota
-									// }
-
-									if s.numQuotaChanged == 0 {
-										quotaStartTime = time.Now()
-									}
-									s.numQuotaChanged++
-									log.Debugf("numQuotaChanged: %v", s.numQuotaChanged)
-								}
+								s.numQuotaChanged++
+								log.Debugf("numQuotaChanged: %v", s.numQuotaChanged)
 							}
+						}
+
+						// when replica fixes lag, mark last lag as zero
+						if lc.Feedback.FixedLag {
+							lastLag[id] = 0
 						}
 
 						lcs[id] = lc
@@ -502,11 +513,11 @@ func (s *OrderServer) processReport() {
 				}
 
 				if s.isSignificantLag(lags) {
-					if lastLagSent == 0 || numCommittedCuts-lastLagSent > s.localCutChangeWindow {
-						// log.Printf("significant lag in cuts: %v", lags)
+					// log.Printf("significant lag in cuts: %v", lags)
+					if lastLag == nil || s.isLastLagFixed(lastLag) {
 						ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
 						ce.CommittedCut.AdjustmentSignal.Lag = lags
-						lastLagSent = numCommittedCuts
+						lastLag = lags
 					}
 				}
 
