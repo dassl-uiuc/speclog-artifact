@@ -18,7 +18,6 @@ import (
 )
 
 const backendOnly = false
-const measureOrderingInterval = false
 
 type clientSubscriber struct {
 	state    clientSubscriberState
@@ -46,6 +45,8 @@ type Stats struct {
 	timeToComputeCommittedCutNs int64
 	numCommittedCuts            int64
 
+	totalQueueLen int64
+
 	totalCutsSent int64
 	numCuts       int64
 
@@ -64,7 +65,7 @@ func (s *Stats) printStats() {
 		log.Printf("avg time spent waiting for next quota in ms: %v", float64(s.waitingForNextQuotaNs)/float64(s.numQuotas)/1e6)
 	}
 	if s.lagFixes > 0 {
-		log.Printf("avg time to fill holes synchronously per lag fix: %v", float64(s.timeToFillHolesPerLFNs)/float64(s.lagFixes)/1e6)
+		log.Printf("avg time to fill holes synchronously per lag fix in ms: %v", float64(s.timeToFillHolesPerLFNs)/float64(s.lagFixes)/1e6)
 		log.Printf("num lag fixes: %v", s.lagFixes)
 	}
 	if s.numCommittedCuts > 0 {
@@ -78,6 +79,7 @@ func (s *Stats) printStats() {
 	}
 	if s.numCuts > 0 {
 		log.Printf("avg time between local cut reports in ms: %v", float64(s.avgLocalCutInterreportNs)/float64(s.numCuts)/1e6)
+		log.Printf("avg queue length per cut: %v", float64(s.totalQueueLen)/float64(s.numCuts))
 	}
 }
 
@@ -117,6 +119,7 @@ type DataServer struct {
 	newClientSubscribersChan chan *clientSubscriber
 	liveSubscribeC           chan int64
 	subWg                    sync.WaitGroup
+	localCutChan             chan int64
 
 	prevSentLocalCut  int64
 	localCglobalCSync chan bool
@@ -135,9 +138,7 @@ type DataServer struct {
 	records   map[int64]*datapb.Record
 	recordsMu sync.RWMutex
 
-	timeOfEntry              map[int64]time.Time
-	avgOrderingLatencyMicros float64
-	numOrders                int64
+	timeOfEntry map[int64]time.Time
 
 	// wait group to confirm the replication of records
 	replicateConfWg map[int64]*sync.WaitGroup
@@ -206,12 +207,11 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.subWg = sync.WaitGroup{}
 	s.committedRecords = make(map[int64]*datapb.Record)
 	s.timeOfEntry = make(map[int64]time.Time)
-	s.numOrders = 0
-	s.avgOrderingLatencyMicros = 0
 	s.stats = Stats{}
 	s.holeWg = sync.WaitGroup{}
 	s.replicateCountDown = make(map[int64]int)
 	s.replStartTime = make(map[int64]time.Time)
+	s.localCutChan = make(chan int64, 4096)
 
 	s.quota = 10
 	s.localCutNum = -1
@@ -590,7 +590,7 @@ func (s *DataServer) processSelfReplicate() {
 		s.records[lsn] = record
 		s.recordsMu.Unlock()
 
-		s.localCut.Add(1)
+		s.localCutChan <- s.localCut.Add(1)
 		s.recordsInPipeline.Add(-1)
 
 		if record.ClientID == s.holeID {
@@ -678,28 +678,23 @@ func (s *DataServer) reportLocalCut() {
 	s.registerToOrderingLayer()
 	s.quota = <-s.waitForNewQuota
 	s.stats.numQuotas++
-	s.prevSentLocalCut = s.localCut.Load()
+
+	s.prevSentLocalCut = 0
 
 	if s.quota == 0 {
 		log.Errorf("error: quota is 0")
 	}
 
-	// early wakeup, tick at 1/2 the interval to decide if we need holes
-	tick := time.NewTicker(s.batchingInterval / 2)
-	log.Printf("starting a timer for %v", s.batchingInterval/2)
-	printTicker := time.NewTicker(5 * time.Second)
 	var prevLocalCutTime time.Time
-	tickNum := int64(0)
-	var lcs *orderpb.LocalCuts
+	// timer to start filling holes in the worst case
+	holeTimer := time.NewTimer(2 * s.batchingInterval)
+	printTicker := time.NewTicker(5 * time.Second)
 	for {
 		select {
-		case <-tick.C:
-			tickNum++
-			if tickNum%2 == 1 {
-				// early wakeup, tick at 1/2 the interval to decide if we need holes
-
+		case lcNum := <-s.localCutChan:
+			if lcNum == s.prevSentLocalCut+s.quota {
 				// create lcs
-				lcs = &orderpb.LocalCuts{}
+				lcs := &orderpb.LocalCuts{}
 				lcs.Cuts = make([]*orderpb.LocalCut, 1)
 				lcs.Cuts[0] = &orderpb.LocalCut{
 					ShardID:        s.shardID,
@@ -710,153 +705,17 @@ func (s *DataServer) reportLocalCut() {
 				lcs.Cuts[0].Feedback = &orderpb.Feedback{}
 				lcs.Cuts[0].Cut[s.replicaID] = s.prevSentLocalCut + s.quota
 
-				// start replication for some holes if I do not have enough records
-				pipeline := s.recordsInPipeline.Load()
-				currLocalCut := s.localCut.Load()
-				if currLocalCut+pipeline < s.prevSentLocalCut+s.quota {
-					diff := s.prevSentLocalCut + s.quota - currLocalCut - pipeline
-					s.holeWg.Add(int(diff))
-					holeRecord := &datapb.Record{
-						ClientID: s.holeID,
-						ClientSN: s.getNextClientSNForHole(),
-						Record:   "",
-						NumHoles: int32(diff),
-					}
-					s.recordsInPipeline.Add(int64(diff))
-					s.appendC <- holeRecord
-					s.stats.numHolesGenerated += diff
-					lcs.Cuts[0].Feedback.NumHoles = diff
-				}
-			} else {
-				// handle control singal from ordering layer to adjust lag
-				select {
-				case lag := <-s.fixLag:
-					// need to send @lag number of local cuts, fill with holes
-					log.Printf("fixing lag by sending %v local cuts", lag)
-
-					// figure out how many entries to fill
-					lcs = &orderpb.LocalCuts{}
-					lcs.Cuts = make([]*orderpb.LocalCut, lag)
-					numEntries := int64(0)
-
-					for i := int64(1); i <= lag; i++ {
-						s.localCutNum += 1
-						lcs.Cuts[i-1] = &orderpb.LocalCut{
-							ShardID:        s.shardID,
-							LocalReplicaID: s.replicaID,
-							WindowNum:      s.windowNumber,
-							LocalCutNum:    s.localCutNum,
-							Quota:          s.quota,
-							Feedback:       &orderpb.Feedback{},
-							// note: as a choice, we do not send any feedback to the ordering layer for these cuts as we are simply adjusting for lag, we will send feedback for the next cut
-							Cut: make([]int64, s.numReplica),
-						}
-						numEntries += int64(s.quota)
-						lcs.Cuts[i-1].Cut[s.replicaID] = s.prevSentLocalCut + numEntries
-
-						if i == lag {
-							lcs.Cuts[i-1].Feedback.FixedLag = true
-						}
-
-						if s.localCutNum == s.numLocalCutsThreshold-1 {
-							startTime := time.Now()
-							s.quota = <-s.waitForNewQuota
-							s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
-							s.stats.numQuotas++
-							s.windowNumber++
-							s.localCutNum = -1
-						}
-					}
-
-					// get current local cut
-					pipeline := s.recordsInPipeline.Load()
-					currLocalCut := s.localCut.Load()
-
-					// start replication for some holes if I do not have enough records
-					if currLocalCut+pipeline < s.prevSentLocalCut+int64(numEntries) {
-						startTime := time.Now()
-						diff := s.prevSentLocalCut + int64(numEntries) - currLocalCut - pipeline
-						s.holeWg.Add(int(diff))
-						holeRecord := &datapb.Record{
-							ClientID: s.holeID,
-							ClientSN: s.getNextClientSNForHole(),
-							Record:   "",
-							NumHoles: int32(diff),
-						}
-						s.recordsInPipeline.Add(int64(diff))
-						s.appendC <- holeRecord
-						s.stats.numHolesGenerated += diff
-						s.holeWg.Wait()
-						s.stats.timeToFillHolesPerLFNs += time.Since(startTime).Nanoseconds()
-						s.stats.lagFixes += 1
-					} else {
-						once := false
-						for s.localCut.Load() < s.prevSentLocalCut+int64(numEntries) {
-							// wait until I get enough records
-							// very very unlikely to happen
-							if !once {
-								log.Printf("holy moly, how do I have so many records ready?")
-								once = true
-							}
-						}
-					}
-
-					s.stats.totalCutsSent += lag
-					s.stats.numCuts += 1
-
-					log.Debugf("Data report: %v", lcs)
-					err := (*s.orderClient).Send(lcs)
-					if prevLocalCutTime.IsZero() {
-						prevLocalCutTime = time.Now()
-					} else {
-						s.stats.avgLocalCutInterreportNs += time.Since(prevLocalCutTime).Nanoseconds()
-						prevLocalCutTime = time.Now()
-					}
-
-					if err != nil {
-						log.Errorf("%v", err)
-					}
-
-					// update prevSentLocalCut
-					s.prevSentLocalCut += numEntries
-
-					// continue to the next iteration
-					continue
-				default:
-					break
-				}
-
-				// regular case.
-				// I have already replicated holes if needed, simply wait
-				for s.localCut.Load() < s.prevSentLocalCut+s.quota {
-					// wait until I get enough records
-				}
-
-				currLocalCut := s.localCut.Load()
-
 				s.stats.totalCutsSent += 1
 				s.stats.numCuts += 1
-
-				lcs.Cuts[0].Cut[s.replicaID] = s.prevSentLocalCut + s.quota
-
-				if measureOrderingInterval {
-					for _, c := range lcs.Cuts[0].Cut {
-						if c > 0 {
-							for j := s.prevSentLocalCut; j < c; j++ {
-								s.recordsMu.Lock()
-								s.timeOfEntry[j] = time.Now()
-								s.recordsMu.Unlock()
-							}
-							s.prevSentLocalCut = c
-						}
-					}
-				}
 
 				s.localCutNum += 1
 				lcs.Cuts[0].LocalCutNum = s.localCutNum
 				lcs.Cuts[0].Quota = s.quota
+
+				currLocalCut := s.localCut.Load()
 				// TODO: maybe only do this if no holes have been filled in the early wakeup stage?
 				lcs.Cuts[0].Feedback.QueueLength = currLocalCut - s.prevSentLocalCut - s.quota
+				s.stats.totalQueueLen += currLocalCut - s.prevSentLocalCut - s.quota
 
 				log.Debugf("Data report: %v", lcs)
 				err := (*s.orderClient).Send(lcs)
@@ -882,7 +741,122 @@ func (s *DataServer) reportLocalCut() {
 					s.windowNumber++
 					s.localCutNum = -1
 				}
+
+				// reset hole timer
+				if !holeTimer.Stop() {
+					<-holeTimer.C
+				}
+				holeTimer.Reset(2 * s.batchingInterval)
 			}
+		case lag := <-s.fixLag:
+			// need to send @lag number of local cuts, fill with holes
+			log.Printf("fixing lag by sending %v local cuts", lag)
+
+			// figure out how many entries to fill
+			lcs := &orderpb.LocalCuts{}
+			lcs.Cuts = make([]*orderpb.LocalCut, lag)
+			numEntries := int64(0)
+
+			for i := int64(1); i <= lag; i++ {
+				s.localCutNum += 1
+				lcs.Cuts[i-1] = &orderpb.LocalCut{
+					ShardID:        s.shardID,
+					LocalReplicaID: s.replicaID,
+					WindowNum:      s.windowNumber,
+					LocalCutNum:    s.localCutNum,
+					Quota:          s.quota,
+					Feedback:       &orderpb.Feedback{},
+					// note: as a choice, we do not send any feedback to the ordering layer for these cuts as we are simply adjusting for lag, we will send feedback for the next cut
+					Cut: make([]int64, s.numReplica),
+				}
+				numEntries += int64(s.quota)
+				lcs.Cuts[i-1].Cut[s.replicaID] = s.prevSentLocalCut + numEntries
+
+				if i == lag {
+					lcs.Cuts[i-1].Feedback.FixedLag = true
+				}
+
+				if s.localCutNum == s.numLocalCutsThreshold-1 {
+					startTime := time.Now()
+					s.quota = <-s.waitForNewQuota
+					s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
+					s.stats.numQuotas++
+					s.windowNumber++
+					s.localCutNum = -1
+				}
+			}
+
+			// get current local cut
+			pipeline := s.recordsInPipeline.Load()
+			currLocalCut := s.localCut.Load()
+
+			// start replication for some holes if I do not have enough records
+			if currLocalCut+pipeline < s.prevSentLocalCut+int64(numEntries) {
+				startTime := time.Now()
+				diff := s.prevSentLocalCut + int64(numEntries) - currLocalCut - pipeline
+				s.holeWg.Add(int(diff))
+				holeRecord := &datapb.Record{
+					ClientID: s.holeID,
+					ClientSN: s.getNextClientSNForHole(),
+					Record:   "",
+					NumHoles: int32(diff),
+				}
+				s.recordsInPipeline.Add(int64(diff))
+				s.appendC <- holeRecord
+				s.stats.numHolesGenerated += diff
+				s.holeWg.Wait()
+				s.stats.timeToFillHolesPerLFNs += time.Since(startTime).Nanoseconds()
+				s.stats.lagFixes += 1
+			} else {
+				for s.localCut.Load() < s.prevSentLocalCut+int64(numEntries) {
+					// wait until pipeline is flushed
+				}
+			}
+
+			s.stats.totalCutsSent += lag
+			s.stats.numCuts += 1
+
+			log.Debugf("Data report: %v", lcs)
+			err := (*s.orderClient).Send(lcs)
+			if prevLocalCutTime.IsZero() {
+				prevLocalCutTime = time.Now()
+			} else {
+				s.stats.avgLocalCutInterreportNs += time.Since(prevLocalCutTime).Nanoseconds()
+				prevLocalCutTime = time.Now()
+			}
+
+			if err != nil {
+				log.Errorf("%v", err)
+			}
+
+			// update prevSentLocalCut
+			s.prevSentLocalCut += numEntries
+
+			// reset hole timer
+			if !holeTimer.Stop() {
+				<-holeTimer.C
+			}
+			holeTimer.Reset(2 * s.batchingInterval)
+		case <-holeTimer.C:
+			// start replication for some holes if I do not have enough records
+			pipeline := s.recordsInPipeline.Load()
+			currLocalCut := s.localCut.Load()
+			if currLocalCut+pipeline < s.prevSentLocalCut+s.quota {
+				diff := s.prevSentLocalCut + s.quota - currLocalCut - pipeline
+				s.holeWg.Add(int(diff))
+				holeRecord := &datapb.Record{
+					ClientID: s.holeID,
+					ClientSN: s.getNextClientSNForHole(),
+					Record:   "",
+					NumHoles: int32(diff),
+				}
+				s.recordsInPipeline.Add(int64(diff))
+				s.appendC <- holeRecord
+				s.stats.numHolesGenerated += diff
+			}
+			// wait for these to naturally hit case 0
+			// reset timer
+			holeTimer.Reset(2 * s.batchingInterval)
 		case <-printTicker.C:
 			s.stats.printStats()
 		}
@@ -975,17 +949,8 @@ func (s *DataServer) processCommittedEntry() {
 								record, ok := s.records[start+int64(j)]
 								if ok {
 									delete(s.records, start+int64(j))
-									if measureOrderingInterval {
-										elapsed := time.Since(s.timeOfEntry[start+int64(j)])
-										s.avgOrderingLatencyMicros = (s.avgOrderingLatencyMicros*float64(s.numOrders) + float64(elapsed.Microseconds())) / float64(s.numOrders+1)
-										s.numOrders++
-										delete(s.timeOfEntry, start+int64(j))
-									}
 								}
 								s.recordsMu.Unlock()
-								if measureOrderingInterval {
-									log.Printf("avg ordering latency: %v", s.avgOrderingLatencyMicros)
-								}
 								if !ok {
 									log.Errorf("error, not able to find records")
 									continue

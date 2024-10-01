@@ -133,6 +133,8 @@ type OrderServer struct {
 	replicasInReserve    map[int32]int64 // replicas in reserve for next window
 	replicasStandby      map[int32]int64 // replicas in standby for next window (all replicas from shard not yet registered)
 	processWindow        int64           // window number till which quota has been processed
+	prevCutTime          map[int32]time.Time
+	avgCutPeriod         map[int32]*movingaverage.MovingAverage
 
 	// stats
 	stats Stats
@@ -162,6 +164,8 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.registerC = make(chan *orderpb.LocalCut, 4096)
 	s.lastCutTime = make(map[int32]time.Time)
 	s.queueLengthRate = make(map[int32]*movingaverage.MovingAverage)
+	s.prevCutTime = make(map[int32]time.Time)
+	s.avgCutPeriod = make(map[int32]*movingaverage.MovingAverage)
 	s.avgHoles = make(map[int32]*movingaverage.MovingAverage)
 	s.prevQueueLength = make(map[int32]int64)
 	s.quota = make(map[int64]map[int32]int64)
@@ -381,7 +385,11 @@ func (s *OrderServer) processReport() {
 						log.Debugf("received cut for window num %v, local cut num %v from shard %v", lc.WindowNum, lc.LocalCutNum, id)
 						if _, ok := s.prevQueueLength[id]; !ok {
 							s.prevQueueLength[id] = 0
+							s.avgCutPeriod[id] = movingaverage.New(1000)
+						} else {
+							s.avgCutPeriod[id].Add(float64(time.Since(s.prevCutTime[id]).Nanoseconds()))
 						}
+						s.prevCutTime[id] = time.Now()
 						s.queueLengthRate[id].Add(float64(lc.Feedback.QueueLength - s.prevQueueLength[id]))
 						s.avgHoles[id].Add(float64(lc.Feedback.NumHoles))
 						s.prevQueueLength[id] = lc.Feedback.QueueLength
@@ -534,6 +542,9 @@ func (s *OrderServer) processReport() {
 				prevPrintCut[rid] = cut
 			}
 			s.stats.printStats()
+			for rid, avg := range s.avgCutPeriod {
+				log.Printf("replica %v: avg cut period in ms %v", rid, avg.Avg()/1000000)
+			}
 		}
 	}
 }

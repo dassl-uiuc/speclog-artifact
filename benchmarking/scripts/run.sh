@@ -56,7 +56,7 @@ collect_logs() {
     done 
     # for svr in ${data_1[@]};
     # do 
-        # scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+    #     scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
     # done 
     for svr in ${client_nodes[@]};
     do 
