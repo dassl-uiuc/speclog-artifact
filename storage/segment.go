@@ -6,12 +6,15 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 )
 
 const (
 	LogMetaDataLength   = 4
 	MetaDataEntryLength = 8
+	HolePrefix          = "0xDEADBEEF"
 )
 
 type Segment struct {
@@ -25,14 +28,15 @@ type Segment struct {
 	lsnMap  map[int32]int32
 	gsnMap  map[int32]int32
 	mapMu   sync.RWMutex
+	segLen  int32
 
 	t []byte // metadata: reuse this across the lifetime of the segment
 	b []byte // record: reuse this across the lifetime of the segment
 }
 
-func NewSegment(path string, baseLSN int64) (*Segment, error) {
+func NewSegment(path string, baseLSN int64, segLen int32) (*Segment, error) {
 	var err error
-	s := &Segment{path: path, closed: false, baseLSN: baseLSN, nextSSN: 0, logPos: 0}
+	s := &Segment{path: path, closed: false, baseLSN: baseLSN, nextSSN: 0, logPos: 0, segLen: segLen}
 	s.lsnMap = make(map[int32]int32)
 	s.gsnMap = make(map[int32]int32)
 	s.t = make([]byte, LogMetaDataLength)
@@ -82,6 +86,15 @@ func (s *Segment) loadLog() error {
 		if err != nil {
 			return err
 		}
+		defer file.Close()
+		l, err := file.Read(b)
+		if err != nil {
+			return fmt.Errorf("Read base gsn error: %v", err)
+		}
+		if l != MetaDataEntryLength {
+			return fmt.Errorf("Read base gsn error: expect length %v, get %v", MetaDataEntryLength, l)
+		}
+		s.baseGSN = int64(binary.LittleEndian.Uint64(b[:8]))
 		for {
 			l, err := file.Read(b)
 			if err == io.EOF {
@@ -94,8 +107,8 @@ func (s *Segment) loadLog() error {
 				return fmt.Errorf("Read length error: expect %v get %v", MetaDataEntryLength, l)
 			}
 			gsn := int32(binary.LittleEndian.Uint32(b[:4]))
-			ssn := int32(binary.LittleEndian.Uint32(b[4:]))
-			s.gsnMap[gsn] = ssn
+			pos := int32(binary.LittleEndian.Uint32(b[4:]))
+			s.gsnMap[gsn] = pos
 		}
 
 	}
@@ -127,26 +140,53 @@ func (s *Segment) loadLog() error {
 		if l != int(ll) {
 			return fmt.Errorf("Read log file %v error: expect length %v, get %v", s.baseLSN, ll, l)
 		}
-		s.lsnMap[s.nextSSN] = s.logPos
+		if strings.HasPrefix(string(s.b[:ll]), HolePrefix) {
+			numHoles, err := strconv.ParseInt(string(s.b[len(HolePrefix):ll]), 10, 32)
+			if err != nil {
+				return fmt.Errorf("parse hole num error: %v", err)
+			}
+			for i := int32(0); i < int32(numHoles); i++ {
+				s.lsnMap[s.nextSSN] = s.logPos
+				s.nextSSN++
+			}
+		} else {
+			s.lsnMap[s.nextSSN] = s.logPos
+			s.nextSSN++
+		}
 		s.logPos += 4 + int32(ll)
-		s.nextSSN++
 	}
 	return nil
 }
 
-func (s *Segment) Write(record string) (int32, error) {
+func (s *Segment) Write(record string, holeSkip int32) (int32, error) {
 	s.mapMu.Lock()
 	defer s.mapMu.Unlock()
 	if s.closed {
 		return 0, fmt.Errorf("Segment closed")
 	}
+	if s.nextSSN >= s.segLen {
+		return 0, fmt.Errorf("Segment full")
+	}
 	var err error
 	ssn := s.nextSSN
-	s.lsnMap[ssn] = s.logPos
+	if holeSkip == 0 {
+		s.lsnMap[ssn] = s.logPos
+		s.nextSSN++
+	} else {
+		var i int32
+		for i = int32(0); i < holeSkip; i++ {
+			if s.nextSSN >= s.segLen {
+				break // don't assign above the segment length
+			}
+			s.lsnMap[ssn+i] = s.logPos
+			s.nextSSN++
+		}
+		record += strconv.Itoa(int(i))
+	}
 	// each record is structured as length+record
 	l := int32(len(record))
 	s.logPos += LogMetaDataLength + l
-	s.nextSSN++
+
 	binary.LittleEndian.PutUint32(s.t, uint32(l))
 	_, err = s.logFile.Write(s.t)
 	if err != nil {
@@ -173,13 +213,13 @@ func (s *Segment) Assign(ssn, length int32, gsn int64) error {
 		if pos, ok := s.lsnMap[ssn+i]; ok {
 			s.gsnMap[gsnOffset+i] = pos
 		} else {
-			return fmt.Errorf("No date in ssn=%v", ssn+i)
+			return fmt.Errorf("no data in ssn=%v", ssn+i)
 		}
 	}
 	return nil
 }
 
-func writeMapToDisk(f string, m map[int32]int32) error {
+func writeMapToDisk(f string, m map[int32]int32, base int64) error {
 	file, err := os.Create(f)
 	if err != nil {
 		return err
@@ -195,10 +235,15 @@ func writeMapToDisk(f string, m map[int32]int32) error {
 	sort.Ints(keys)
 	// write the map to file
 	b := make([]byte, MetaDataEntryLength)
+	binary.LittleEndian.PutUint64(b[0:8], uint64(base))
+	_, err = file.Write(b)
+	if err != nil {
+		return err
+	}
 	for _, k := range keys {
 		binary.LittleEndian.PutUint32(b[0:4], uint32(k))
 		binary.LittleEndian.PutUint32(b[4:8], uint32(m[int32(k)]))
-		_, err := file.Write(b)
+		_, err = file.Write(b)
 		if err != nil {
 			return err
 		}
@@ -219,11 +264,11 @@ func (s *Segment) Close() error {
 	if err != nil {
 		return err
 	}
-	err = writeMapToDisk(fmt.Sprintf("%v/%v.ssn", s.path, s.baseLSN), s.lsnMap)
+	err = writeMapToDisk(fmt.Sprintf("%v/%v.ssn", s.path, s.baseLSN), s.lsnMap, s.baseLSN)
 	if err != nil {
 		return err
 	}
-	err = writeMapToDisk(fmt.Sprintf("%v/%v.gsn", s.path, s.baseLSN), s.gsnMap)
+	err = writeMapToDisk(fmt.Sprintf("%v/%v.gsn", s.path, s.baseLSN), s.gsnMap, s.baseGSN)
 	if err != nil {
 		return err
 	}
