@@ -646,7 +646,7 @@ func (s *DataServer) registerToOrderingLayer() {
 	localCut := &orderpb.LocalCut{
 		ShardID:        s.shardID,
 		LocalReplicaID: s.replicaID,
-		Quota:          s.quota, // Initially 4
+		Quota:          s.quota, // Initially 10
 	}
 	localCut.Cut = make([]int64, s.numReplica)
 
@@ -696,7 +696,9 @@ func (s *DataServer) reportLocalCut() {
 		case lcNum := <-s.localCutChan:
 			if lcNum == s.prevSentLocalCut+s.quota {
 				// create lcs
-				lcs = &orderpb.LocalCuts{}
+				lcs = &orderpb.LocalCuts{
+					FixingLag: false,
+				}
 				lcs.Cuts = make([]*orderpb.LocalCut, 1)
 				lcs.Cuts[0] = &orderpb.LocalCut{
 					ShardID:        s.shardID,
@@ -715,8 +717,6 @@ func (s *DataServer) reportLocalCut() {
 				lcs.Cuts[0].Quota = s.quota
 
 				currLocalCut := s.localCut.Load()
-				// TODO: maybe only do this if no holes have been filled in the early wakeup stage?
-				lcs.Cuts[0].Feedback.QueueLength = currLocalCut - s.prevSentLocalCut - s.quota
 				s.stats.totalQueueLen += currLocalCut - s.prevSentLocalCut - s.quota
 
 				// // wait until the ordering interval hits
@@ -767,7 +767,9 @@ func (s *DataServer) reportLocalCut() {
 			log.Printf("fixing lag by sending %v local cuts", lag)
 
 			// figure out how many entries to fill
-			lcs = &orderpb.LocalCuts{}
+			lcs = &orderpb.LocalCuts{
+				FixingLag: true,
+			}
 			lcs.Cuts = make([]*orderpb.LocalCut, lag)
 			numEntries := int64(0)
 

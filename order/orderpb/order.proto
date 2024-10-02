@@ -10,9 +10,7 @@ service Order {
 }
 
 message Feedback {
-    int64 queueLength = 1;
-    int64 numHoles = 2;
-    bool fixedLag = 3;
+    bool fixedLag = 1;
 }
 
 message Control {
@@ -31,6 +29,7 @@ message LocalCut {
 
 message LocalCuts {
 	repeated LocalCut cuts = 1;
+	bool fixingLag = 2;
 }
 
 message CommittedCut {
