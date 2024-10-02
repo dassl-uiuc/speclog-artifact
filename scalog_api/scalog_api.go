@@ -86,7 +86,7 @@ func CreateClient() *Scalog {
 	var err error
 
 	// read configuration file
-	viper.SetConfigFile("../../../.scalog.yaml")
+	viper.SetConfigFile("/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
 	viper.AutomaticEnv()
 	err = viper.ReadInConfig()
 	if err != nil {

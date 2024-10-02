@@ -1,7 +1,7 @@
 #!/bin/bash
-PASSLESS_ENTRY="/users/sgbhat3/.ssh/id_rsa"
+PASSLESS_ENTRY="/users/tshong/.ssh/id_rsa"
 
-benchmark_dir="/proj/rasl-PG0/sgbhat3/speclog/benchmarking"
+benchmark_dir="/proj/rasl-PG0/tshong/speclog/benchmarking"
 LOGDIR="/data"
 
 # index into remote_nodes/ips for order nodes
@@ -9,9 +9,15 @@ order=("node0" "node1" "node2")
 
 # index into remote_nodes/ips for data shards
 data_0=("node3" "node4")
-# data_1=("node5" "node6")
+data_1=("node5" "node6")
 
 client_nodes=("node7")
+
+intrusion_detection_client_nodes=("node7")
+intrusion_detection_generator_client_nodes=("node8")
+intrusion_detection_dir="/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection"
+intrusion_detection_measure_latency = "true"
+intrusion_detection_measure_throughput = "false"
 
 batching_intervals=("1ms")
 
@@ -47,15 +53,15 @@ drop_server_caches() {
 collect_logs() {
     for svr in ${order[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY tshong@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
     for svr in ${data_0[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY tshong@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
     for svr in ${data_1[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY tshong@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
     wait
 }
@@ -77,11 +83,11 @@ start_data_nodes() {
         ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[$i]} "sh -c \"cd $benchmark_dir/data-0-$i; nohup sudo ./run_goreman.sh > ${LOGDIR}/data-0-$i.log 2>&1 &\""
     done
 
-    # for ((i=0; i<=1; i++))
-    # do
-    #     echo "Starting data-1-${i} on ${data_1[$i]}"
-    #     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "sh -c \"cd $benchmark_dir/data-1-$i; nohup sudo ./run_goreman.sh > ${LOGDIR}/data-1-$i.log 2>&1 &\""
-    # done
+    for ((i=0; i<=1; i++))
+    do
+        echo "Starting data-1-${i} on ${data_1[$i]}"
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "sh -c \"cd $benchmark_dir/data-1-$i; nohup sudo ./run_goreman.sh > ${LOGDIR}/data-1-$i.log 2>&1 &\""
+    done
 }
 
 start_discovery() {
@@ -97,11 +103,11 @@ check_data_log() {
         ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[$i]} "grep error ${LOGDIR}/data-0-$i.log"
     done
 
-    # for ((i=0; i<=1; i++))
-    # do
-    #     echo "Checking data node data-1-$i..."
-    #     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "grep error ${LOGDIR}/data-1-$i.log"
-    # done
+    for ((i=0; i<=1; i++))
+    do
+        echo "Checking data node data-1-$i..."
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "grep error ${LOGDIR}/data-1-$i.log"
+    done
 }
 
 
@@ -136,12 +142,21 @@ get_disk_stats() {
     done
 }
 
+start_intrusion_detection_clients() {
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_client.sh $1 $2 > ${LOGDIR}/client_$1.log 2>&1" &
+}
+
+start_intrusion_detection_generator_clients() {
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_generator_client.sh $1 $2 > ${LOGDIR}/client_$1.log 2>&1" &
+}
+
 # mode 
 #   0 -> append experiment mode
 #   1 -> read experiment mode
 #   2 -> setup servers
 #   3 -> kill server and client, read server logs for errors
 #   4 -> clear server and client logs
+#   6 -> intrusion detection experiment mode
 
 mode="$1"
 if [ "$mode" -eq 0 ]; then # append experiment mode
@@ -273,6 +288,109 @@ elif [ "$mode" -eq 4 ]; then
     cleanup_clients
     cleanup_servers
     collect_logs
+elif [ "$mode" -eq 6 ]; then
+    append_clients=("4")
+    read_clients=("4")
+    for interval in "${batching_intervals[@]}";
+    do
+        # modify intervals
+        modify_batching_intervals $interval
+
+        for i in "${!append_clients[@]}"; 
+        do
+            num_append_clients="${append_clients[$i]}"
+            num_read_clients="${read_clients[$i]}"
+
+            cleanup_clients
+            cleanup_servers
+            clear_server_logs
+            clear_client_logs
+
+            start_order_nodes
+            start_data_nodes 
+            start_discovery
+            monitor_disk_stats
+
+            # wait for 10 secs
+            sleep 10
+
+            sudo rm "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/read_throughput.txt"
+            sudo rm "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/e2e_latencies.txt"
+            sudo rm "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/append_throughput.txt"
+
+            if [ "$intrusion_detection_measure_latency" = "true" ]; then
+                # Spawn reader clients
+                num_reader_client_nodes=${#intrusion_detection_client_nodes[@]}
+
+                for (( i=0; i<num_reader_client_nodes; i++))
+                do
+                    # start_fraud_detection_clients <num_of_clients_to_run>
+                    start_intrusion_detection_clients "${intrusion_detection_client_nodes[$i]}" $num_read_clients
+                done
+
+                # Spawn append clients
+                num_append_client_nodes=${#intrusion_detection_generator_client_nodes[@]}
+                high_num=$((($num_append_clients + $num_append_client_nodes - 1)/$num_append_client_nodes))
+                low_num=$(($num_append_clients / $num_append_client_nodes))
+                mod=$(($num_append_clients % $num_append_client_nodes))
+
+                for (( i=0; i<num_append_client_nodes; i++))
+                do
+                    if [ "$i" -lt "$mod" ]; then
+                        # If there's a remainder, assign one additional job to the first 'mod' clients
+                        num_jobs_for_client=$((low_num + 1))
+                    else
+                        num_jobs_for_client=$low_num
+                    fi
+                    
+                    # start_append_clients <num_of_clients_to_run>
+                    start_intrusion_detection_generator_clients "${intrusion_detection_generator_client_nodes[$i]}" $num_jobs_for_client
+                done
+            elif [ "$intrusion_detection_measure_throughput" = "true" ]; then
+                # Spawn append clients
+                num_append_client_nodes=${#intrusion_detection_generator_client_nodes[@]}
+                high_num=$((($num_append_clients + $num_append_client_nodes - 1)/$num_append_client_nodes))
+                low_num=$(($num_append_clients / $num_append_client_nodes))
+                mod=$(($num_append_clients % $num_append_client_nodes))
+
+                for (( i=0; i<num_append_client_nodes; i++))
+                do
+                    if [ "$i" -lt "$mod" ]; then
+                        # If there's a remainder, assign one additional job to the first 'mod' clients
+                        num_jobs_for_client=$((low_num + 1))
+                    else
+                        num_jobs_for_client=$low_num
+                    fi
+                    
+                    # start_append_clients <num_of_clients_to_run>
+                    start_intrusion_detection_generator_clients "${intrusion_detection_generator_client_nodes[$i]}" $num_jobs_for_client
+                done
+
+                # Spawn reader clients
+                num_reader_client_nodes=${#intrusion_detection_client_nodes[@]}
+
+                for (( i=0; i<num_reader_client_nodes; i++))
+                do
+                    # start_fraud_detection_clients <num_of_clients_to_run>
+                    start_intrusion_detection_clients "${intrusion_detection_client_nodes[$i]}" $num_read_clients
+                done
+            fi
+
+
+            echo "Waiting for clients to terminate"
+            wait
+
+            cleanup_clients
+            cleanup_servers
+
+            # check for errors in log files
+            check_data_log
+            collect_logs
+            
+            # move iostat dump to results folder
+            get_disk_stats "results/$interval/append_bench_$c/"
+        done
+    done
 else # cleanup logs
     clear_server_logs
     clear_client_logs

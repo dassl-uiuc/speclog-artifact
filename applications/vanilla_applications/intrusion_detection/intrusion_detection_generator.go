@@ -8,13 +8,16 @@ import (
 	"strconv"
 	"encoding/json"
 	"log"
+	"sync"
 )
 
 var runTime = int64(125)
 var appendThroughputFilePath = "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/append_throughput.txt"
 var measureThroughput = true
 
-func Ping(appenderId int32) {
+func Ping(appenderId int32, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	scalogApi := scalog_api.CreateClient()
 
 	recordsProduced := 0
@@ -68,5 +71,13 @@ func main() {
 		return
 	}
 
-	Ping(int32(appenderId))
+	var wg sync.WaitGroup
+	numThreads := 10
+	for i := 0; i < numThreads; i++ {
+		wg.Add(1)
+		go Ping(int32(appenderId), &wg)
+	}
+	wg.Wait()
+
+	// Ping(int32(appenderId))
 }

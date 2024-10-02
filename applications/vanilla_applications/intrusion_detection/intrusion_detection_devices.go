@@ -49,7 +49,7 @@ func IntrusionDetectionProcessing(readerId int32) {
 					return
 				}
 
-				HandleIntrusion()
+				// HandleIntrusion()
 
 				// Calculate end-to-end latency
 				e2eLatencies[recordsReceived] = time.Now().UnixNano() - int64(record["timestamp"].(float64))
