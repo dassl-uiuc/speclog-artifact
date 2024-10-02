@@ -688,13 +688,15 @@ func (s *DataServer) reportLocalCut() {
 	var prevLocalCutTime time.Time
 	// timer to start filling holes in the worst case
 	holeTimer := time.NewTimer(2 * s.batchingInterval)
+	// orderingIntervalTicker := time.NewTicker(s.batchingInterval)
 	printTicker := time.NewTicker(5 * time.Second)
+	var lcs *orderpb.LocalCuts
 	for {
 		select {
 		case lcNum := <-s.localCutChan:
 			if lcNum == s.prevSentLocalCut+s.quota {
 				// create lcs
-				lcs := &orderpb.LocalCuts{}
+				lcs = &orderpb.LocalCuts{}
 				lcs.Cuts = make([]*orderpb.LocalCut, 1)
 				lcs.Cuts[0] = &orderpb.LocalCut{
 					ShardID:        s.shardID,
@@ -716,6 +718,9 @@ func (s *DataServer) reportLocalCut() {
 				// TODO: maybe only do this if no holes have been filled in the early wakeup stage?
 				lcs.Cuts[0].Feedback.QueueLength = currLocalCut - s.prevSentLocalCut - s.quota
 				s.stats.totalQueueLen += currLocalCut - s.prevSentLocalCut - s.quota
+
+				// // wait until the ordering interval hits
+				// <-orderingIntervalTicker.C
 
 				log.Debugf("Data report: %v", lcs)
 				err := (*s.orderClient).Send(lcs)
@@ -747,13 +752,22 @@ func (s *DataServer) reportLocalCut() {
 					<-holeTimer.C
 				}
 				holeTimer.Reset(2 * s.batchingInterval)
+			} else {
+				// try to consume ordering tick
+				// select {
+				// case <-orderingIntervalTicker.C:
+				// 	// do nothing, simply consume the tick
+				// default:
+				// 	break
+				// }
 			}
+
 		case lag := <-s.fixLag:
 			// need to send @lag number of local cuts, fill with holes
 			log.Printf("fixing lag by sending %v local cuts", lag)
 
 			// figure out how many entries to fill
-			lcs := &orderpb.LocalCuts{}
+			lcs = &orderpb.LocalCuts{}
 			lcs.Cuts = make([]*orderpb.LocalCut, lag)
 			numEntries := int64(0)
 
@@ -837,6 +851,9 @@ func (s *DataServer) reportLocalCut() {
 				<-holeTimer.C
 			}
 			holeTimer.Reset(2 * s.batchingInterval)
+
+			// orderingIntervalTicker.Stop()
+			// orderingIntervalTicker = time.NewTicker(s.batchingInterval)
 		case <-holeTimer.C:
 			// start replication for some holes if I do not have enough records
 			pipeline := s.recordsInPipeline.Load()

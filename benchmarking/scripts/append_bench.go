@@ -33,6 +33,10 @@ func main() {
 		log.Errorf("number of bytes should be integer")
 	}
 	fileName := os.Args[3]
+	shardingHint, err := strconv.Atoi(os.Args[4])
+	if err != nil {
+		log.Errorf("sharding hint should be integer")
+	}
 	// read configuration file
 	viper.SetConfigFile("../../.scalog.yaml")
 	viper.AutomaticEnv()
@@ -49,7 +53,7 @@ func main() {
 	dataPort := uint16(viper.GetInt("data-port"))
 	dataAddr := address.NewGeneralDataAddr("data-%v-%v-ip", numReplica, dataPort)
 
-	cli, err := client.NewClient(dataAddr, discAddr, numReplica)
+	cli, err := client.NewClientWithShardingHint(dataAddr, discAddr, numReplica, int64(shardingHint))
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		return
