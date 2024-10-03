@@ -20,6 +20,8 @@ import (
 
 type ShardingPolicy interface {
 	Shard(view *view.View, record string) (int32, int32)
+	GetShardID() int32
+	GetReplicaID() int32
 }
 
 // ShardingPolicy determines which records are appended to which shards.
@@ -48,6 +50,7 @@ type Client struct {
 	committedRecords   map[int64]CommittedRecord
 	committedRecordsMu sync.RWMutex
 	shardingPolicy     ShardingPolicy
+	shardingHint       int64
 
 	discAddr   address.DiscAddr
 	discConn   *grpc.ClientConn
@@ -59,6 +62,34 @@ type Client struct {
 	dataConnMu         sync.Mutex
 	dataAppendClient   map[int32]datapb.Data_AppendClient
 	dataAppendClientMu sync.Mutex
+}
+
+func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32, shardingHint int64) (*Client, error) {
+	c := &Client{
+		clientID:     generateClientID(),
+		numReplica:   numReplica,
+		nextCSN:      -1,
+		nextGSN:      0,
+		viewID:       0,
+		dataAddr:     dataAddr,
+		discAddr:     discAddr,
+		shardingHint: shardingHint,
+	}
+	c.shardingPolicy = NewShardingPolicyWithHint(numReplica, shardingHint)
+	c.viewC = make(chan *discpb.View, 4096)
+	c.appendC = make(chan *datapb.Record, 4096)
+	c.ackC = make(chan *datapb.Ack, 4096)
+	c.subC = make(chan CommittedRecord, 4096)
+	c.dataConn = make(map[int32]*grpc.ClientConn)
+	c.dataAppendClient = make(map[int32]datapb.Data_AppendClient)
+	c.view = view.NewView()
+	c.committedRecords = make(map[int64]CommittedRecord)
+	err := c.UpdateDiscovery()
+	if err != nil {
+		return nil, err
+	}
+	go c.subscribeView()
+	return c, nil
 }
 
 func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32) (*Client, error) {
@@ -357,4 +388,8 @@ func (c *Client) respondToClient() {
 
 func (c *Client) SetShardingPolicy(p ShardingPolicy) {
 	c.shardingPolicy = p
+}
+
+func (c *Client) GetShardingPolicy() (int32, int32) {
+	return c.shardingPolicy.GetShardID(), c.shardingPolicy.GetReplicaID()
 }

@@ -53,10 +53,14 @@ collect_logs() {
     do 
         scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
-    for svr in ${data_1[@]};
+    # for svr in ${data_1[@]};
+    # do 
+    #     scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+    # done 
+    for svr in ${client_nodes[@]};
     do 
         scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
-    done 
+    done
     wait
 }
 
@@ -106,7 +110,7 @@ check_data_log() {
 
 
 start_append_clients() {
-    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; ./run_append_client.sh $2 $3 $1 $4 $5 > ${LOGDIR}/client_$1.log 2>&1" &
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; ./run_append_client.sh $2 $3 $1 $4 $5 $6 > ${LOGDIR}/client_$1.log 2>&1" &
 }
 
 start_random_read_clients() {
@@ -172,6 +176,8 @@ if [ "$mode" -eq 0 ]; then # append experiment mode
             low_num=$(($c / $num_client_nodes))
             mod=$(($c % $num_client_nodes))
 
+            jobs=0
+
             for (( i=0; i<num_client_nodes; i++))
             do
                 if [ "$i" -lt "$mod" ]; then
@@ -182,7 +188,9 @@ if [ "$mode" -eq 0 ]; then # append experiment mode
                 fi
                 
                 # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs
+
+                jobs=$(($jobs + $num_jobs_for_client))
             done
 
             echo "Waiting for clients to terminate"
