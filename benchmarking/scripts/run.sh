@@ -9,7 +9,7 @@ order=("node0" "node1" "node2")
 
 # index into remote_nodes/ips for data shards
 data_0=("node3" "node4")
-# data_1=("node5" "node6")
+data_1=("node5" "node6")
 
 client_nodes=("node7" "node8")
 
@@ -54,10 +54,10 @@ collect_logs() {
     do 
         scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
-    # for svr in ${data_1[@]};
-    # do 
-    #     scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
-    # done 
+    for svr in ${data_1[@]};
+    do 
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+    done 
     for svr in ${client_nodes[@]};
     do 
         scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
@@ -82,11 +82,11 @@ start_data_nodes() {
         ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[$i]} "sh -c \"cd $benchmark_dir/data-0-$i; nohup ./run_goreman.sh > ${LOGDIR}/data-0-$i.log 2>&1 &\""
     done
 
-    # for ((i=0; i<=1; i++))
-    # do
-    #     echo "Starting data-1-${i} on ${data_1[$i]}"
-    #     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "sh -c \"cd $benchmark_dir/data-1-$i; nohup ./run_goreman.sh > ${LOGDIR}/data-1-$i.log 2>&1 &\""
-    # done
+    for ((i=0; i<=1; i++))
+    do
+        echo "Starting data-1-${i} on ${data_1[$i]}"
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "sh -c \"cd $benchmark_dir/data-1-$i; nohup ./run_goreman.sh > ${LOGDIR}/data-1-$i.log 2>&1 &\""
+    done
 }
 
 start_discovery() {
@@ -102,11 +102,11 @@ check_data_log() {
         ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[$i]} "grep error ${LOGDIR}/data-0-$i.log"
     done
 
-    # for ((i=0; i<=1; i++))
-    # do
-    #     echo "Checking data node data-1-$i..."
-    #     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "grep error ${LOGDIR}/data-1-$i.log"
-    # done
+    for ((i=0; i<=1; i++))
+    do
+        echo "Checking data node data-1-$i..."
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "grep error ${LOGDIR}/data-1-$i.log"
+    done
 }
 
 
@@ -150,7 +150,7 @@ get_disk_stats() {
 
 mode="$1"
 if [ "$mode" -eq 0 ]; then # append experiment mode
-    clients=("80")
+    clients=("160")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals

@@ -236,7 +236,7 @@ func (s *OrderServer) adjustToMinimums(rid int32, lc *orderpb.LocalCut, windowNu
 
 func (s *OrderServer) isReadyToAssignQuota() bool {
 	if s.assignWindow == 0 {
-		return len(s.replicasInReserve) == 2
+		return len(s.replicasInReserve) == 4
 	}
 	return s.numQuotaChanged == int64(len(s.quota[s.assignWindow-1]))
 }
@@ -387,8 +387,8 @@ func (s *OrderServer) processReport() {
 								defaultFreq := float64(1e9 / float64(s.batchingInterval.Nanoseconds()))
 								currentFreq := float64(1e9 / s.avgDelta[id].Avg())
 
-								// check if frequency changed by more than 10%
-								if math.Abs(currentFreq-defaultFreq)/defaultFreq >= 0.1 {
+								// check if frequency changed by more than 20%
+								if math.Abs(currentFreq-defaultFreq)/defaultFreq >= 0.2 {
 									// decide new quota for the next window
 									newQuota := int64(float64(lc.Quota) * currentFreq / defaultFreq)
 									if newQuota < 1 {

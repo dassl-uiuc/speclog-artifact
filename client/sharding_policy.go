@@ -1,6 +1,7 @@
 package client
 
 import (
+	"log"
 	"math/rand"
 	"time"
 
@@ -44,10 +45,12 @@ func (p *ShardingPolicyWithHint) Shard(view *view.View, record string) (int32, i
 	if numLiveShards < 1 {
 		return -1, -1
 	}
-	rs := int32(p.shardingHint % int64(numLiveShards))
-	rr := int32(p.shardingHint % int64(p.numReplica))
+	replicaId := p.shardingHint % (int64(p.numReplica) * int64(numLiveShards))
+	rs := int32(replicaId / int64(p.numReplica))
+	rr := int32(replicaId % int64(p.numReplica))
 	p.shardID = view.LiveShards[rs]
 	p.replicaID = rr
+	log.Printf("sharding hint: %v, shardID: %v, replicaID: %v", p.shardingHint, p.shardID, p.replicaID)
 	return p.shardID, p.replicaID
 }
 
