@@ -19,7 +19,7 @@ func NewPartition(path string, segLen int32) (*Partition, error) {
 	var err error
 	p := &Partition{path: path, nextLSN: 0, activebaseLSN: 0}
 	p.segments = make([]*Segment, 0)
-	p.activeSegment, err = NewSegment(path, p.activebaseLSN)
+	p.activeSegment, err = NewSegment(path, p.activebaseLSN, segLen)
 	if err != nil {
 		return nil, err
 	}
@@ -27,18 +27,40 @@ func NewPartition(path string, segLen int32) (*Partition, error) {
 	return p, nil
 }
 
-func (p *Partition) Write(record string) (int64, error) {
+func (p *Partition) Write(record string, holeSkip int32) (int64, error) {
 	p.segmentsMu.Lock()
 	defer p.segmentsMu.Unlock()
 	lsn := p.nextLSN
-	p.nextLSN++
-	if p.activeSegment.nextSSN >= p.segLen {
-		err := p.CreateSegment()
-		if err != nil {
-			return 0, err
+	var err error
+	if holeSkip == 0 {
+		p.nextLSN++
+		if p.activeSegment.nextSSN >= p.segLen {
+			err := p.CreateSegment()
+			if err != nil {
+				return 0, err
+			}
+		}
+		_, err = p.activeSegment.Write(record, holeSkip)
+	} else {
+		p.nextLSN += int64(holeSkip)
+		if p.activeSegment.nextSSN+holeSkip > p.segLen { // holes exceed the current segment
+			holeLeft := p.activeSegment.nextSSN + holeSkip - p.segLen
+			if p.activeSegment.nextSSN < p.segLen {
+				_, err = p.activeSegment.Write(record, holeSkip)
+				if err != nil {
+					return lsn, err
+				}
+			}
+			err = p.CreateSegment()
+			if err != nil {
+				return 0, err
+			}
+			_, err = p.activeSegment.Write(record, holeLeft)
+		} else {
+			_, err = p.activeSegment.Write(record, holeSkip)
 		}
 	}
-	_, err := p.activeSegment.Write(record)
+
 	return lsn, err
 }
 
@@ -118,7 +140,7 @@ func (p *Partition) CreateSegment() error {
 	var err error
 	p.activebaseLSN += int64(p.segLen)
 	p.segments = append(p.segments, p.activeSegment)
-	p.activeSegment, err = NewSegment(p.path, p.activebaseLSN)
+	p.activeSegment, err = NewSegment(p.path, p.activebaseLSN, p.segLen)
 	return err
 }
 
@@ -152,7 +174,7 @@ func (p *Partition) Assign(lsn int64, length int32, gsn int64) error {
 		if i < len(p.segments) {
 			ssn := int32(lsn - p.segments[i].baseLSN)
 			consumed := min(length, p.segLen-ssn)
-			err := p.segments[i].Assign(ssn, consumed, gsn)
+			err := p.segments[i].Assign(ssn, consumed, gsn) //todo: what if seg closed?
 			if err != nil {
 				return err
 			}
@@ -166,4 +188,16 @@ func (p *Partition) Assign(lsn int64, length int32, gsn int64) error {
 	}
 
 	return nil
+}
+
+func (p *Partition) Close() error {
+	p.segmentsMu.Lock()
+	defer p.segmentsMu.Unlock()
+	for _, s := range p.segments {
+		err := s.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return p.activeSegment.Close()
 }

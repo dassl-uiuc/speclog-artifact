@@ -272,6 +272,7 @@ func (s *Segment) Close() error {
 	if err != nil {
 		return err
 	}
+	s.closed = true
 	return nil
 }
 
