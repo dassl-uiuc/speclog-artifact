@@ -659,7 +659,7 @@ func (s *DataServer) processCommittedEntry() {
 					startGSN += int64(diff)
 				}
 			}
-			log.Printf("committed cut: %v", entry.CommittedCut)
+			log.Debugf("committed cut: %v", entry.CommittedCut)
 			// replace previous committed cut
 			s.prevCommittedCut = entry.CommittedCut
 		}
