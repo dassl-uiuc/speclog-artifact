@@ -88,19 +88,9 @@ func (s *DataServer) Replicate(stream datapb.Data_ReplicateServer) error {
 		s.diskWriteMu.Unlock()
 
 		// this replicated record is a hole
-		// we need to fill as many holes as requested and then respond back with one ack
-		if record.NumHoles > 0 {
-			for i := int32(0); i < record.NumHoles; i++ {
-				s.replicateC <- record
-			}
-			// wait for the disk writes to finish
-			for i := int32(0); i < record.NumHoles; i++ {
-				<-c
-			}
-		} else {
-			s.replicateC <- record
-			<-c
-		}
+		// only write one record for multiple holes
+		s.replicateC <- record
+		<-c
 
 		ack := &datapb.Ack{
 			ClientID:       record.ClientID,
