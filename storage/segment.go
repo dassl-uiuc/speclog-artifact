@@ -170,17 +170,14 @@ func (s *Segment) Write(record string, holeSkip int32) (int32, error) {
 	var err error
 	ssn := s.nextSSN
 	if holeSkip == 0 {
-		fmt.Printf("%s: write record at ssn %d, pos %d\n", s.path, ssn, s.logPos)
 		s.lsnMap[ssn] = s.logPos
 		s.nextSSN++
 	} else {
-		fmt.Printf("%s: write %d holes\n", s.path, holeSkip)
 		var i int32
 		for i = int32(0); i < holeSkip; i++ {
 			if s.nextSSN >= s.segLen {
 				break // don't assign above the segment length
 			}
-			fmt.Printf("%s: ssn %d, pos %d\n", s.path, ssn+i, s.logPos)
 			s.lsnMap[ssn+i] = s.logPos
 			s.nextSSN++
 		}
@@ -216,10 +213,7 @@ func (s *Segment) Assign(ssn, length int32, gsn int64) error {
 		if pos, ok := s.lsnMap[ssn+i]; ok {
 			s.gsnMap[gsnOffset+i] = pos
 		} else {
-			fmt.Printf("%s: no data in ssn=%v\n", s.path, ssn+i)
-			fmt.Printf("%s: lsnMap:\n%v\n", s.path, s.lsnMap)
-			os.Exit(1)
-			// return fmt.Errorf("no data in ssn=%v", ssn+i)
+			return fmt.Errorf("no data in ssn=%v", ssn+i)
 		}
 	}
 	return nil

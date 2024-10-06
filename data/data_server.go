@@ -510,11 +510,7 @@ func (s *DataServer) processAppend() {
 func (s *DataServer) processReplicate() {
 	for record := range s.replicateC {
 		var err error
-		if record.ClientID == s.holeID {
-			_, err = s.storage.WriteToPartition(record.LocalReplicaID, record.Record, record.NumHoles)
-		} else {
-			_, err = s.storage.WriteToPartition(record.LocalReplicaID, record.Record, 0)
-		}
+		_, err = s.storage.WriteToPartition(record.LocalReplicaID, record.Record, record.NumHoles)
 		if err != nil {
 			log.Fatalf("Write to storage failed: %v", err)
 		}
@@ -534,11 +530,7 @@ func (s *DataServer) processSelfReplicate() {
 		// log.Debugf("Data %v,%v process", s.shardID, s.replicaID)
 		var lsn int64
 		var err error
-		if record.ClientID == s.holeID {
-			lsn, err = s.storage.WriteToPartition(record.LocalReplicaID, record.Record, record.NumHoles)
-		} else {
-			lsn, err = s.storage.WriteToPartition(record.LocalReplicaID, record.Record, 0)
-		}
+		lsn, err = s.storage.WriteToPartition(record.LocalReplicaID, record.Record, record.NumHoles)
 		if err != nil {
 			log.Fatalf("Write to storage failed: %v", err)
 		}
@@ -592,8 +584,12 @@ func (s *DataServer) processSelfReplicate() {
 		}
 
 		s.recordsMu.Lock()
-		for i := int64(0); i < int64(record.NumHoles); i++ {
-			s.records[lsn+i] = record
+		if record.NumHoles == 0 {
+			s.records[lsn] = record
+		} else {
+			for i := int64(0); i < int64(record.NumHoles); i++ {
+				s.records[lsn+i] = record
+			}
 		}
 		s.recordsMu.Unlock()
 
@@ -964,7 +960,6 @@ func (s *DataServer) processCommittedEntry() {
 					}
 					if diff > 0 {
 						diff := int32(s.quotas[s.nextExpectedWindowNum][rid])
-						log.Printf("partition-%d: %d->%d, %d\n", i, start, startGSN, diff)
 						err := s.storage.Assign(i, start, diff, startGSN)
 						if err != nil {
 							log.Errorf("Assign GSN to storage error: %v", err)
