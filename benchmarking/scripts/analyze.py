@@ -71,4 +71,4 @@ for n in clients:
     avg_tput = get_avg_throughput(directory_path, 4096)
     mean, p50, p99 = get_latency_metrics(get_latencies(directory_path))
 
-    print(f"{n},{avg_tput},{mean},{p50},{p99}")
+    print(f"{n:<8},{avg_tput:<17.3f},{mean:<18.3f},{p50:<18.3f},{p99:<18.3f}")

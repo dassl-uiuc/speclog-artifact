@@ -593,8 +593,13 @@ func (s *DataServer) processSelfReplicate() {
 		}
 		s.recordsMu.Unlock()
 
-		s.localCutChan <- s.localCut.Add(int64(record.NumHoles))
-		s.recordsInPipeline.Add(-int64(record.NumHoles))
+		if record.ClientID == s.holeID {
+			s.localCutChan <- s.localCut.Add(int64(record.NumHoles))
+			s.recordsInPipeline.Add(-int64(record.NumHoles))
+		} else {
+			s.localCutChan <- s.localCut.Add(1)
+			s.recordsInPipeline.Add(-1)
+		}
 
 		if record.ClientID == s.holeID {
 			s.holeWg.Done()
