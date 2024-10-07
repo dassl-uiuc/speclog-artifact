@@ -817,7 +817,7 @@ func (s *DataServer) reportLocalCut() {
 			// start replication for some holes if I do not have enough records
 			if currLocalCut+pipeline < s.prevSentLocalCut+int64(numEntries) {
 				startTime := time.Now()
-				diff := s.prevSentLocalCut + s.quota - currLocalCut - pipeline
+				diff := s.prevSentLocalCut + int64(numEntries) - currLocalCut - pipeline
 				s.holeWg.Add(int(1)) //?
 				holeRecord := &datapb.Record{
 					ClientID: s.holeID,
@@ -870,11 +870,11 @@ func (s *DataServer) reportLocalCut() {
 			currLocalCut := s.localCut.Load()
 			if currLocalCut+pipeline < s.prevSentLocalCut+s.quota {
 				diff := s.prevSentLocalCut + s.quota - currLocalCut - pipeline
-				s.holeWg.Add(int(diff))
+				s.holeWg.Add(int(1))
 				holeRecord := &datapb.Record{
 					ClientID: s.holeID,
 					ClientSN: s.getNextClientSNForHole(),
-					Record:   "",
+					Record:   storage.HolePrefix,
 					NumHoles: int32(diff),
 				}
 				s.recordsInPipeline.Add(int64(diff))
