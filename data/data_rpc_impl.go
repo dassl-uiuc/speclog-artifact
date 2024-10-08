@@ -31,9 +31,9 @@ func (s *DataServer) Append(stream datapb.Data_AppendServer) error {
 				go s.respondToClient(cid, done, stream)
 				initialized = true
 			}
-			s.CreateAck(record.ClientID, record.ClientSN)
+			// s.CreateAck(record.ClientID, record.ClientSN)
 			s.appendC <- record
-			_ = s.WaitForAck(record.ClientID, record.ClientSN)
+			// _ = s.WaitForAck(record.ClientID, record.ClientSN)
 		}
 	}
 }

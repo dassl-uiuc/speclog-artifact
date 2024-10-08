@@ -61,6 +61,7 @@ type Client struct {
 	dataAppendClientMu sync.Mutex
 
 	outstandingRequestsLimit int32
+	outstandingRequests      int32
 }
 
 func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32) (*Client, error) {
@@ -238,6 +239,9 @@ func (c *Client) ProcessAppend() {
 			log.Errorf("Failed to receive ack: %v", err)
 			continue
 		}
+
+		atomic.AddInt32(&c.outstandingRequests, -1)
+		// fmt.Println("outstandingRequests: ", c.outstandingRequests)
 	}
 }
 
@@ -258,6 +262,9 @@ func (c *Client) Append(record string) (int64, int32, error) {
 		ClientSN: c.getNextClientSN(),
 		Record:   record,
 	}
+
+	atomic.AddInt32(&c.outstandingRequests, 1)
+
 	c.appendC <- r
 	return 0, 0, nil
 }
