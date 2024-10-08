@@ -26,14 +26,16 @@ func (s *DataServer) Append(stream datapb.Data_AppendServer) error {
 				log.Errorf("Receive append error: %v", err)
 				return err
 			}
+			ackSendC := make(chan *datapb.Ack, 4096)
+			s.ackSendCMu.Lock()
+			s.ackSendC[record.ClientID] = ackSendC
+			s.ackSendCMu.Unlock()
 			if !initialized {
 				cid := record.ClientID
 				go s.respondToClient(cid, done, stream)
 				initialized = true
 			}
-			// s.CreateAck(record.ClientID, record.ClientSN)
 			s.appendC <- record
-			// _ = s.WaitForAck(record.ClientID, record.ClientSN)
 		}
 	}
 }
@@ -47,10 +49,7 @@ func (s *DataServer) AppendOne(ctx context.Context, record *datapb.Record) (*dat
 }
 
 func (s *DataServer) respondToClient(cid int32, done chan struct{}, stream datapb.Data_AppendServer) {
-	ackSendC := make(chan *datapb.Ack, 4096)
-	s.ackSendCMu.Lock()
-	s.ackSendC[cid] = ackSendC
-	s.ackSendCMu.Unlock()
+	ackSendC := s.ackSendC[cid]
 	defer func() {
 		s.ackSendCMu.Lock()
 		delete(s.ackSendC, cid)

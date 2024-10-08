@@ -240,8 +240,7 @@ func (c *Client) ProcessAppend() {
 			continue
 		}
 
-		atomic.AddInt32(&c.outstandingRequests, -1)
-		// fmt.Println("outstandingRequests: ", c.outstandingRequests)
+		// atomic.AddInt32(&c.outstandingRequests, -1)
 	}
 }
 
@@ -263,7 +262,7 @@ func (c *Client) Append(record string) (int64, int32, error) {
 		Record:   record,
 	}
 
-	atomic.AddInt32(&c.outstandingRequests, 1)
+	// atomic.AddInt32(&c.outstandingRequests, 1)
 
 	c.appendC <- r
 	return 0, 0, nil
