@@ -26,12 +26,12 @@ func (s *DataServer) Append(stream datapb.Data_AppendServer) error {
 				log.Errorf("Receive append error: %v", err)
 				return err
 			}
-			ackSendC := make(chan *datapb.Ack, 4096)
-			s.ackSendCMu.Lock()
-			s.ackSendC[record.ClientID] = ackSendC
-			s.ackSendCMu.Unlock()
 			if !initialized {
 				cid := record.ClientID
+				ackSendC := make(chan *datapb.Ack, 4096)
+				s.ackSendCMu.Lock()
+				s.ackSendC[cid] = ackSendC
+				s.ackSendCMu.Unlock()
 				go s.respondToClient(cid, done, stream)
 				initialized = true
 			}
