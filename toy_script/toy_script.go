@@ -31,13 +31,18 @@ func Produce(wg *sync.WaitGroup) {
 
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
+	startThroughputTime := time.Now().UnixNano()
 	for (time.Now().Unix() - startTimeInSeconds < (produceRunTime)) {
 		data := fmt.Sprintf("test_%d", recordsProduced)
 		_ = scalog_client.Append(data)
 		recordsProduced++
 		// fmt.Println("Records produced: ", recordsProduced)
 	}
+	endThroughputTime := time.Now().UnixNano()
 
+	// Print throughput in num ops / s
+	throughput := float64(recordsProduced) / (float64(endThroughputTime - startThroughputTime) / 1e9)
+	fmt.Printf("Throughput: %v ops/s\n", throughput)
 	fmt.Printf("Produced %v records\n", recordsProduced)
 }
 
