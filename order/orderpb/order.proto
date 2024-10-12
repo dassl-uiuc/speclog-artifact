@@ -11,6 +11,8 @@ service Order {
 
 message Feedback {
     bool fixedLag = 1;
+    int64 numHoles = 2;
+    int64 queueLength = 3;
 }
 
 message Control {

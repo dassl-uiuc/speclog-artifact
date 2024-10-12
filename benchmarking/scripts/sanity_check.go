@@ -21,6 +21,7 @@ const readType = "subscribe"
 
 var wg sync.WaitGroup
 var timeAppend map[int64]time.Time
+var timeAppendMu sync.Mutex
 var timeConsume map[int64]time.Time
 var e2eLatencyMicros float64
 var numRecords int64
@@ -33,10 +34,13 @@ func appendThread(client *client.Client, id int) {
 	appendLatencyAvgMicros := float64(0)
 	for {
 		str := util.GenerateRandomString(4096)
-		timeAppend[int64(numRecords)] = time.Now()
+		startTime := time.Now()
 		gsn, _, err := client.AppendOne(str)
-		elapsed := time.Since(timeAppend[int64(numRecords)])
+		elapsed := time.Since(startTime)
 		appendLatencyAvgMicros += float64(elapsed.Microseconds())
+		timeAppendMu.Lock()
+		timeAppend[gsn] = startTime
+		timeAppendMu.Unlock()
 		if gsn%1000 == 0 {
 			fmt.Println("Client ", id, " appended ", numRecords, " records")
 		}
@@ -62,9 +66,14 @@ func subscribeThread(client *client.Client, id int) {
 		log.Errorf("%v", err)
 	}
 	consumed := 0
+	prevGsn := int64(-1)
 	for {
 		select {
 		case r := <-stream:
+			if r.GSN != prevGsn+1 {
+				log.Errorf("Out of order record: %v", r.GSN)
+			}
+			prevGsn = r.GSN
 			timeConsume[r.GSN] = time.Now()
 			consumed++
 			continue
@@ -105,9 +114,9 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 	}
 
-	wg.Add(2)
-	for i := 0; i < 1; i++ {
-		c, err := client.NewClient(dataAddr, discAddr, numReplica)
+	wg.Add(5)
+	for i := 0; i < 4; i++ {
+		c, err := client.NewClientWithShardingHint(dataAddr, discAddr, numReplica, int64(i))
 		if err != nil {
 			log.Fatalf("%v", err)
 		}
@@ -125,9 +134,13 @@ func main() {
 	wg.Wait()
 
 	// calculate e2e latency
-	for i := int64(0); i < int64(len(timeConsume)); i++ {
-		e2eLatencyMicros += float64(timeConsume[i].Sub(timeAppend[i]).Microseconds())
+	for gsn, appendTime := range timeAppend {
+		consumeTime, ok := timeConsume[gsn]
+		if !ok {
+			continue
+		}
+		e2eLatencyMicros += float64(consumeTime.Sub(appendTime).Microseconds())
 	}
-	e2eLatencyMicros /= float64(len(timeConsume))
+	e2eLatencyMicros /= float64(len(timeAppend))
 	fmt.Println("Average e2e latency: ", e2eLatencyMicros, " microseconds")
 }
