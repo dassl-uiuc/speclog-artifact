@@ -102,7 +102,6 @@ type OrderServer struct {
 
 	registerC            chan *orderpb.LocalCut // new replicas to be registered
 	lastCutTime          map[int32]time.Time
-	queueLengthRate      map[int32]*movingaverage.MovingAverage
 	avgHoles             map[int32]*movingaverage.MovingAverage
 	avgDelta             map[int32]*movingaverage.MovingAverage
 	prevQueueLength      map[int32]int64
@@ -114,7 +113,6 @@ type OrderServer struct {
 	replicasStandby      map[int32]int64 // replicas in standby for next window (all replicas from shard not yet registered)
 	processWindow        int64           // window number till which quota has been processed
 	prevCutTime          map[int32]time.Time
-	avgCutPeriod         map[int32]*movingaverage.MovingAverage
 
 	// stats
 	stats Stats
@@ -143,9 +141,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 
 	s.registerC = make(chan *orderpb.LocalCut, 4096)
 	s.lastCutTime = make(map[int32]time.Time)
-	s.queueLengthRate = make(map[int32]*movingaverage.MovingAverage)
 	s.prevCutTime = make(map[int32]time.Time)
-	s.avgCutPeriod = make(map[int32]*movingaverage.MovingAverage)
 	s.avgHoles = make(map[int32]*movingaverage.MovingAverage)
 	s.avgDelta = make(map[int32]*movingaverage.MovingAverage)
 	s.prevQueueLength = make(map[int32]int64)
@@ -332,6 +328,21 @@ func (s *OrderServer) isLastLagFixed(lastLag map[int32]int64) bool {
 	return true
 }
 
+func (s *OrderServer) getNewQuota(rid int32, lc *orderpb.LocalCut) int64 {
+	// the general idea here is to have very low tolerance for a higher period and moderate to high tolerance to a lower avg cut period
+	// defaultFreq := float64(1e9 / s.batchingInterval.Nanoseconds())
+	// currentFreq := float64(1e9 / s.avgDelta[rid].Avg())
+
+	// if (currentFreq-defaultFreq)/defaultFreq >= 0.1 || (defaultFreq-currentFreq)/defaultFreq >= 0.2 {
+	// 	newQuota := int64(math.Ceil(float64(lc.Quota) * currentFreq / defaultFreq))
+	// 	if newQuota < 1 {
+	// 		newQuota = 1
+	// 	}
+	// 	return newQuota
+	// }
+	return lc.Quota
+}
+
 // proposeCommit broadcasts entries in commitC to all subCs.
 func (s *OrderServer) processReport() {
 	lcs := make(map[int32]*orderpb.LocalCut) // all local cuts
@@ -362,17 +373,11 @@ func (s *OrderServer) processReport() {
 						}
 					}
 					if valid {
-						// check if this is a higher local cut
 						if !e.FixingLag {
-							s.avgCutPeriod[id].Add(float64(time.Since(s.lastCutTime[id]).Nanoseconds()))
-						}
-
-						if _, ok := s.lastCutTime[id]; ok && !e.FixingLag {
 							// dividing average by difference in local cut numbers in case some are missing
-							s.avgDelta[id].Add(float64(time.Since(s.lastCutTime[id]).Nanoseconds()) / float64(s.diff(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum)))
-						}
-
-						if !e.FixingLag {
+							if _, ok := s.lastCutTime[id]; ok && !e.FixingLag {
+								s.avgDelta[id].Add(float64(time.Since(s.lastCutTime[id]).Nanoseconds()) / float64(s.diff(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum)))
+							}
 							s.lastCutTime[id] = time.Now()
 						}
 
@@ -383,22 +388,7 @@ func (s *OrderServer) processReport() {
 							}
 
 							if _, ok := s.quota[lc.WindowNum+1][id]; !ok {
-								// compute new quota for shard if necessary
-								defaultFreq := float64(1e9 / float64(s.batchingInterval.Nanoseconds()))
-								currentFreq := float64(1e9 / s.avgDelta[id].Avg())
-
-								// check if frequency changed by more than 20%
-								if math.Abs(currentFreq-defaultFreq)/defaultFreq >= 0.2 {
-									// decide new quota for the next window
-									newQuota := int64(float64(lc.Quota) * currentFreq / defaultFreq)
-									if newQuota < 1 {
-										newQuota = 1
-									}
-									log.Debugf("changing quota for shard %v from %v to %v for window %v", id, lc.Quota, newQuota, lc.WindowNum+1)
-									s.quota[lc.WindowNum+1][id] = newQuota
-								} else {
-									s.quota[lc.WindowNum+1][id] = lc.Quota
-								}
+								s.quota[lc.WindowNum+1][id] = s.getNewQuota(id, lc)
 								s.numQuotaChanged++
 							}
 						}
@@ -421,7 +411,6 @@ func (s *OrderServer) processReport() {
 			if s.isLeader { // update quota for new replicas
 				id := lc.ShardID*s.dataNumReplica + lc.LocalReplicaID
 				s.replicasStandby[id] = lc.Quota
-				s.avgDelta[id] = movingaverage.New(int(s.localCutChangeWindow))
 				log.Debugf("Replica %v registered with quota %v", id, lc.Quota)
 
 				// check if all replicas from that shard have registered
@@ -438,9 +427,8 @@ func (s *OrderServer) processReport() {
 						rid := lc.ShardID*s.dataNumReplica + i
 						s.replicasInReserve[rid] = s.replicasStandby[rid]
 						delete(s.replicasStandby, rid)
-						s.queueLengthRate[rid] = movingaverage.New(10)
-						s.avgHoles[rid] = movingaverage.New(10)
-						s.avgCutPeriod[rid] = movingaverage.New(1000)
+						s.avgHoles[rid] = movingaverage.New(int(s.localCutChangeWindow))
+						s.avgDelta[rid] = movingaverage.New(int(s.localCutChangeWindow))
 					}
 					log.Debugf("Shard %v to be added in next avl window", lc.ShardID)
 				}
@@ -503,6 +491,7 @@ func (s *OrderServer) processReport() {
 					s.assignWindow++
 
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1}, FinalizeShards: nil}
+					log.Printf("quota: %v", s.quota[s.assignWindow-1])
 				} else {
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
 				}
@@ -529,8 +518,8 @@ func (s *OrderServer) processReport() {
 				prevPrintCut[rid] = cut
 			}
 			s.stats.printStats()
-			for rid, avg := range s.avgCutPeriod {
-				log.Printf("replica %v: avg cut period in ms %v", rid, avg.Avg()/1000000)
+			for rid, _ := range s.avgDelta {
+				log.Printf("replica %v: avg delta in ms %v", rid, s.avgDelta[rid].Avg()/1000000)
 			}
 		}
 	}

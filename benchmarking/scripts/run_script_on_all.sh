@@ -11,7 +11,7 @@ fi
 local_script="$1"
 
 # Iterate over remote nodes and execute the script
-for ((i=0; i<12; i++)); do
+for ((i=0; i<16; i++)); do
     echo "Executing script on node$i..."
     ssh -o StrictHostKeyChecking=no -i ${PASSLESS_ENTRY} sgbhat3@node$i "sudo bash -s" < "$local_script" &
 done

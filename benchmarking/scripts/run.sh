@@ -202,7 +202,11 @@ if [ "$mode" -eq 0 ]; then # append experiment mode
             # check for errors in log files
             check_data_log
             collect_logs
-            
+
+            # move logs to a different folder
+            mkdir -p "$benchmark_dir/results/logs/$interval/append_bench_${c}"
+            mv $benchmark_dir/logs/* "$benchmark_dir/results/logs/$interval/append_bench_${c}"
+
             # move iostat dump to results folder
             get_disk_stats "results/$interval/append_bench_$c/"
         done
