@@ -12,7 +12,7 @@ func TestNewStorage(t *testing.T) {
 	if p == nil {
 		t.Errorf("Get nil segment on creating")
 	}
-	l, err := p.Write(record)
+	l, err := p.Write(record, 0)
 	check(t, err)
 	if l != 0 {
 		t.Errorf("Write error: expect ssn %v, get %v", len(record), l)

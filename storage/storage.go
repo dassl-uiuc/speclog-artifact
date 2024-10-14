@@ -29,13 +29,13 @@ func NewStorage(path string, partitionID, numPartitions, segLen int32) (*Storage
 	return s, nil
 }
 
-func (s *Storage) Write(record string) (int64, error) {
-	lsn, err := s.WriteToPartition(s.partitionID, record)
+func (s *Storage) Write(record string, holeSkip int32) (int64, error) {
+	lsn, err := s.WriteToPartition(s.partitionID, record, holeSkip)
 	return lsn, err
 }
 
-func (s *Storage) WriteToPartition(id int32, record string) (int64, error) {
-	lsn, err := s.partitions[id].Write(record)
+func (s *Storage) WriteToPartition(id int32, record string, holeSkip int32) (int64, error) {
+	lsn, err := s.partitions[id].Write(record, holeSkip)
 	return lsn, err
 }
 

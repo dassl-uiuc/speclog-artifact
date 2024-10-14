@@ -513,21 +513,16 @@ func (s *DataServer) processAppend() {
 				c <- record
 			}
 		}
-		// if hole, use the same record and write it many times
-		if record.ClientID == s.holeID {
-			for i := int32(0); i < record.NumHoles; i++ {
-				s.selfReplicateC <- record
-			}
-		} else {
-			s.selfReplicateC <- record
-		}
+		// only write one record even if there are multiple holes
+		s.selfReplicateC <- record
 	}
 }
 
 // processReplicate writes my peers records to local storage
 func (s *DataServer) processReplicate() {
 	for record := range s.replicateC {
-		_, err := s.storage.WriteToPartition(record.LocalReplicaID, record.Record)
+		var err error
+		_, err = s.storage.WriteToPartition(record.LocalReplicaID, record.Record, record.NumHoles)
 		if err != nil {
 			log.Fatalf("Write to storage failed: %v", err)
 		}
@@ -617,7 +612,9 @@ func (s *DataServer) processSpeculativeSubscribes() {
 func (s *DataServer) processSelfReplicate() {
 	for record := range s.selfReplicateC {
 		// log.Debugf("Data %v,%v process", s.shardID, s.replicaID)
-		lsn, err := s.storage.WriteToPartition(record.LocalReplicaID, record.Record)
+		var lsn int64
+		var err error
+		lsn, err = s.storage.WriteToPartition(record.LocalReplicaID, record.Record, record.NumHoles)
 		if err != nil {
 			log.Fatalf("Write to storage failed: %v", err)
 		}
@@ -630,7 +627,7 @@ func (s *DataServer) processSelfReplicate() {
 			count := s.replicateCountDown[recordID]
 			s.replicateConfMu.RUnlock()
 			wg.Wait()
-			count -= 1
+			count -= int(record.NumHoles)
 			s.replicateConfMu.Lock()
 			if count > 0 {
 				s.replicateCountDown[recordID] = count
@@ -671,11 +668,22 @@ func (s *DataServer) processSelfReplicate() {
 		}
 
 		s.recordsMu.Lock()
-		s.records[lsn] = record
+		if record.NumHoles == 0 {
+			s.records[lsn] = record
+		} else {
+			for i := int64(0); i < int64(record.NumHoles); i++ {
+				s.records[lsn+i] = record
+			}
+		}
 		s.recordsMu.Unlock()
 
-		s.localCutChan <- s.localCut.Add(1)
-		s.recordsInPipeline.Add(-1)
+		if record.ClientID == s.holeID {
+			s.localCutChan <- s.localCut.Add(int64(record.NumHoles))
+			s.recordsInPipeline.Add(-int64(record.NumHoles))
+		} else {
+			s.localCutChan <- s.localCut.Add(1)
+			s.recordsInPipeline.Add(-1)
+		}
 
 		if record.ClientID == s.holeID {
 			s.holeWg.Done()
@@ -905,11 +913,11 @@ func (s *DataServer) reportLocalCut() {
 			if currLocalCut+pipeline < s.prevSentLocalCut+int64(numEntries) {
 				startTime := time.Now()
 				diff := s.prevSentLocalCut + int64(numEntries) - currLocalCut - pipeline
-				s.holeWg.Add(int(diff))
+				s.holeWg.Add(int(1)) //?
 				holeRecord := &datapb.Record{
 					ClientID: s.holeID,
 					ClientSN: s.getNextClientSNForHole(),
-					Record:   "",
+					Record:   storage.HolePrefix,
 					NumHoles: int32(diff),
 				}
 				s.recordsInPipeline.Add(int64(diff))
@@ -957,12 +965,12 @@ func (s *DataServer) reportLocalCut() {
 			currLocalCut := s.localCut.Load()
 			if currLocalCut+pipeline < s.prevSentLocalCut+s.quota {
 				diff := s.prevSentLocalCut + s.quota - currLocalCut - pipeline
-				s.holeWg.Add(int(diff))
+				s.holeWg.Add(int(1))
 				numHolesFilled = diff
 				holeRecord := &datapb.Record{
 					ClientID: s.holeID,
 					ClientSN: s.getNextClientSNForHole(),
-					Record:   "",
+					Record:   storage.HolePrefix,
 					NumHoles: int32(diff),
 				}
 				s.recordsInPipeline.Add(int64(diff))
