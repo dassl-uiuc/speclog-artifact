@@ -32,7 +32,9 @@ func main() {
 	if err != nil {
 		log.Errorf("number of bytes should be integer")
 	}
-	fileName := os.Args[3]
+	appendMode := os.Args[3]
+	fileName := os.Args[4]
+
 	// read configuration file
 	viper.SetConfigFile("../../.scalog.yaml")
 	viper.AutomaticEnv()
@@ -55,6 +57,10 @@ func main() {
 		return
 	}
 
+	if appendMode == "append" {
+		go cli.ProcessAppend()
+	}
+
 	var GSNs []int64
 	var shardIds []int32
 	var dataGenTimes []time.Duration
@@ -68,7 +74,15 @@ func main() {
 		record := util.GenerateRandomString(numberOfBytes)
 		dataGenEndTime := time.Now()
 		runStartTime := time.Now()
-		gsn, shard, err := cli.AppendOne(record)
+
+		var gsn int64
+		var shard int32
+		if appendMode == "append" {
+			gsn, shard, err = cli.Append(record)
+		} else if appendMode == "appendOne" {
+			gsn, shard, err = cli.AppendOne(record)
+		}
+
 		runEndTime := time.Now()
 
 		if err != nil {
@@ -90,6 +104,10 @@ func main() {
 		}
 	}
 	endTime := time.Now()
+
+	if appendMode == "append" {
+		time.Sleep(60 * time.Second)
+	}
 
 	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
 }
