@@ -23,6 +23,103 @@ type tuple struct {
 	err   error
 }
 
+func appendOne(cli *client.Client, timeLimit time.Duration, numberOfBytes int, fileName string) {
+	var GSNs []int64
+	var shardIds []int32
+	var dataGenTimes []time.Duration
+	var runTimes []time.Duration
+	var numberOfRequest int
+
+	startTime := time.Now()
+	numberOfRequest = 0
+	for stay, timeout := true, time.After(timeLimit); stay; {
+		dataGenStartTime := time.Now()
+		record := util.GenerateRandomString(numberOfBytes)
+		dataGenEndTime := time.Now()
+		runStartTime := time.Now()
+
+		var gsn int64
+		var shard int32
+		gsn, shard, err := cli.AppendOne(record)
+		runEndTime := time.Now()
+
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			goto end
+		}
+
+		GSNs = append(GSNs, gsn)
+		shardIds = append(shardIds, shard)
+		dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
+		runTimes = append(runTimes, runEndTime.Sub(runStartTime))
+		numberOfRequest++
+
+	end:
+		select {
+		case <-timeout:
+			stay = false
+		default:
+		}
+	}
+	endTime := time.Now()
+
+	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
+}
+
+func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int, rate int, fileName string) {
+	go cli.ProcessAppend()
+
+	var GSNs []int64
+	var shardIds []int32
+	var dataGenTimes []time.Duration
+	var runTimes []time.Duration
+	var numberOfRequest int
+
+	startTime := time.Now()
+	numberOfRequest = 0
+
+	ticker := time.NewTicker(time.Second / time.Duration(rate))
+	defer ticker.Stop()
+
+	for stay, timeout := true, time.After(timeLimit); stay; {
+		select {
+		case <-ticker.C:
+			dataGenStartTime := time.Now()
+			record := util.GenerateRandomString(numberOfBytes)
+			dataGenEndTime := time.Now()
+			runStartTime := time.Now()
+
+			var gsn int64
+			var shard int32
+			gsn, shard, err := cli.Append(record)
+			runEndTime := time.Now()
+
+			if err != nil {
+				_, _ = fmt.Fprintln(os.Stderr, err)
+				goto end
+			}
+
+			GSNs = append(GSNs, gsn)
+			shardIds = append(shardIds, shard)
+			dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
+			runTimes = append(runTimes, runEndTime.Sub(runStartTime))
+			numberOfRequest++
+		}
+
+	end:
+		select {
+		case <-timeout:
+			stay = false
+		default:
+		}
+	}
+	endTime := time.Now()
+
+	time.Sleep(60 * time.Second)
+
+	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
+}
+
 func main() {
 	timeLimit, err := time.ParseDuration(os.Args[1])
 	if err != nil {
@@ -33,7 +130,11 @@ func main() {
 		log.Errorf("number of bytes should be integer")
 	}
 	appendMode := os.Args[3]
-	fileName := os.Args[4]
+	rate, err := strconv.Atoi(os.Args[4])
+	if err != nil {
+		log.Errorf("rate should be integer")
+	}
+	fileName := os.Args[5]
 
 	// read configuration file
 	viper.SetConfigFile("../../.scalog.yaml")
@@ -57,57 +158,12 @@ func main() {
 		return
 	}
 
-	if appendMode == "append" {
-		go cli.ProcessAppend()
+	if appendMode == "appendOne" {
+		appendOne(cli, timeLimit, numberOfBytes, fileName)
+	} else if appendMode == "append" {
+		appendStream(cli, timeLimit, numberOfBytes, rate, fileName)
+	} else {
+		log.Errorf("invalid append mode")
+		return
 	}
-
-	var GSNs []int64
-	var shardIds []int32
-	var dataGenTimes []time.Duration
-	var runTimes []time.Duration
-	var numberOfRequest int
-
-	startTime := time.Now()
-	numberOfRequest = 0
-	for stay, timeout := true, time.After(timeLimit); stay; {
-		dataGenStartTime := time.Now()
-		record := util.GenerateRandomString(numberOfBytes)
-		dataGenEndTime := time.Now()
-		runStartTime := time.Now()
-
-		var gsn int64
-		var shard int32
-		if appendMode == "append" {
-			gsn, shard, err = cli.Append(record)
-		} else if appendMode == "appendOne" {
-			gsn, shard, err = cli.AppendOne(record)
-		}
-
-		runEndTime := time.Now()
-
-		if err != nil {
-			_, _ = fmt.Fprintln(os.Stderr, err)
-			goto end
-		}
-
-		GSNs = append(GSNs, gsn)
-		shardIds = append(shardIds, shard)
-		dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
-		runTimes = append(runTimes, runEndTime.Sub(runStartTime))
-		numberOfRequest++
-
-	end:
-		select {
-		case <-timeout:
-			stay = false
-		default:
-		}
-	}
-	endTime := time.Now()
-
-	if appendMode == "append" {
-		time.Sleep(60 * time.Second)
-	}
-
-	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
 }

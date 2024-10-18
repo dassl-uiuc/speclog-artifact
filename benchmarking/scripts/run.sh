@@ -109,7 +109,7 @@ check_data_log() {
 }
 
 start_append_clients() {
-    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; ./run_append_client.sh $2 $3 $1 $4 $5 $6 > ${LOGDIR}/client_$1.log 2>&1" &
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; ./run_append_client.sh $2 $3 $1 $4 $5 $6 $7 > ${LOGDIR}/client_$1.log 2>&1" &
 }
 
 start_random_read_clients() {
@@ -185,8 +185,8 @@ if [ "$mode" -eq 0 ]; then # append one experiment mode
                     num_jobs_for_client=$low_num
                 fi
                 
-                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval "appendOne"
+                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <append_mode> <rate>
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval "appendOne" "0"
             done
 
             echo "Waiting for clients to terminate"
@@ -240,8 +240,8 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
                     num_jobs_for_client=$low_num
                 fi
                 
-                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval "append"
+                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <append_mode> <rate>
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval "append" "250"
             done
 
             echo "Waiting for clients to terminate"
