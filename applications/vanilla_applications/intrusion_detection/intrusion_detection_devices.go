@@ -8,15 +8,15 @@ import (
 	"strconv"
 	"encoding/json"
 	"log"
+	"github.com/spf13/viper"
 )
 
 var e2eLatenciesFilePath = "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/e2e_latencies.txt"
 var readThroughputFilePath = "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/read_throughput.txt"
-var runTime = int64(120)
-var measureLatency = false
-var measureThroughput = true
+var intrusionDetectionConfigFilePath = "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/intrusion_detection_config.yaml"
 var processingTime = int64(2000)
 
+// TODO: Add computation here
 func HandleIntrusion() {
 	// fmt.Println("Handling intrusion")
 	processingStartTime := time.Now().UnixMicro()
@@ -26,6 +26,15 @@ func HandleIntrusion() {
 }
 
 func IntrusionDetectionProcessing(readerId int32) {
+	// read configuration file
+	viper.SetConfigFile(intrusionDetectionConfigFilePath)
+	viper.AutomaticEnv()
+	err := viper.ReadInConfig()
+	if err != nil {
+		fmt.Println("read config file error: %v", err)
+	}
+	runTime := int64(viper.GetInt("consume-run-time"))
+
 	scalogApi := scalog_api.CreateClient()
 
 	scalogApi.SubscribeToAssignedShard(readerId)
@@ -55,8 +64,6 @@ func IntrusionDetectionProcessing(readerId int32) {
 				e2eLatencies[recordsReceived] = time.Now().UnixNano() - int64(record["timestamp"].(float64))
 
 				recordsReceived++
-
-				// fmt.Println("Received record from reader ", readerId, ": ", record)
 			}
 
 			prevOffset = offset
@@ -66,36 +73,34 @@ func IntrusionDetectionProcessing(readerId int32) {
 	endThroughputTimer := time.Now().UnixNano()
 	fmt.Println("Received ", recordsReceived, " records")
 
-	if measureLatency {
-		totalE2ELatency := int64(0)
-		for i := 0; i < recordsReceived; i++ {
-			totalE2ELatency += e2eLatencies[i]
-		}
-		avgE2ELatency := float64(totalE2ELatency) / float64(recordsReceived) / 1000
+	// Calculate latency
+	totalE2ELatency := int64(0)
+	for i := 0; i < recordsReceived; i++ {
+		totalE2ELatency += e2eLatencies[i]
+	}
+	avgE2ELatency := float64(totalE2ELatency) / float64(recordsReceived) / 1000
 
-		file, err := os.OpenFile(e2eLatenciesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer file.Close()
+	file, err := os.OpenFile(e2eLatenciesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
 
-		if _, err := file.WriteString(fmt.Sprintf("%f\n", avgE2ELatency)); err != nil {
-			log.Fatal(err)
-		}
+	if _, err := file.WriteString(fmt.Sprintf("%f\n", avgE2ELatency)); err != nil {
+		log.Fatal(err)
 	}
 
-	if measureThroughput {
-		throughput := float64(recordsReceived) / float64((endThroughputTimer - startThroughputTimer) / 1000000000)
-		file, err := os.OpenFile(readThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer file.Close()
+	// Calculate throughput
+	throughput := float64(recordsReceived) / float64((endThroughputTimer - startThroughputTimer) / 1000000000)
+	file, err = os.OpenFile(readThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
 
-		// write the throughput value
-		if _, err := file.WriteString(fmt.Sprintf("%f\n", throughput)); err != nil {
-			log.Fatal(err)
-		}
+	// write the throughput value
+	if _, err := file.WriteString(fmt.Sprintf("%f\n", throughput)); err != nil {
+		log.Fatal(err)
 	}
 
 	// Purpose is to wait for producers to finish appending and write their stats to files

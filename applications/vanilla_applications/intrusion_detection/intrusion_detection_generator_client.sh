@@ -13,10 +13,10 @@ client_number="$2"
 output_dir="../results/${interval}/intrusion_detection_append_${total_clients}"
 sudo mkdir -p $output_dir
 
-  for ((i=0; i<$client_number; i++)); do
-      cmd="sudo /usr/local/go/bin/go run $intrusion_detection_dir/intrusion_detection_generator.go $i" 
-      $cmd &
-  done
+for ((i=0; i<$client_number; i++)); do
+    cmd="sudo /usr/local/go/bin/go run $intrusion_detection_dir/intrusion_detection_generator.go $i" 
+    $cmd &
+done
 
 echo "Waiting for background processes to finish..."
 wait

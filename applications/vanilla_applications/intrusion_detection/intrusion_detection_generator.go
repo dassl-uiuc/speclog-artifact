@@ -8,15 +8,24 @@ import (
 	"strconv"
 	"encoding/json"
 	"log"
-	"sync"
+	// "sync"
+	"github.com/spf13/viper"
 )
 
-var runTime = int64(125)
 var appendThroughputFilePath = "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/append_throughput.txt"
-var measureThroughput = true
+var intrusionDetectionConfigFilePath = "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/intrusion_detection_config.yaml"
 
-func Ping(appenderId int32, wg *sync.WaitGroup) {
-	defer wg.Done()
+func Ping(appenderId int32) {
+	// read configuration file
+	viper.SetConfigFile(intrusionDetectionConfigFilePath)
+	viper.AutomaticEnv()
+	err := viper.ReadInConfig()
+	if err != nil {
+		fmt.Println("read config file error: %v", err)
+	}
+	runTime := int64(viper.GetInt("produce-run-time"))
+
+	// defer wg.Done()
 
 	scalogApi := scalog_api.CreateClient()
 
@@ -39,19 +48,18 @@ func Ping(appenderId int32, wg *sync.WaitGroup) {
 		recordsProduced++
 	}
 
-	if measureThroughput {
-		endThroughputTimer := time.Now().UnixNano()
-		throughput := float64(recordsProduced) / float64((endThroughputTimer - startThroughputTimer) / 1000000000)
-		file, err := os.OpenFile(appendThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer file.Close()
+	// Calculate throughput
+	endThroughputTimer := time.Now().UnixNano()
+	throughput := float64(recordsProduced) / float64((endThroughputTimer - startThroughputTimer) / 1000000000)
+	file, err := os.OpenFile(appendThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
 
-		// write the throughput value
-		if _, err := file.WriteString(fmt.Sprintf("%f\n", throughput)); err != nil {
-			log.Fatal(err)
-		}
+	// write the throughput value
+	if _, err := file.WriteString(fmt.Sprintf("%f\n", throughput)); err != nil {
+		log.Fatal(err)
 	}
 
 	fmt.Println("Produced ", recordsProduced, " records")
@@ -71,13 +79,13 @@ func main() {
 		return
 	}
 
-	var wg sync.WaitGroup
-	numThreads := 10
-	for i := 0; i < numThreads; i++ {
-		wg.Add(1)
-		go Ping(int32(appenderId), &wg)
-	}
-	wg.Wait()
+	// var wg sync.WaitGroup
+	// numThreads := 10
+	// for i := 0; i < numThreads; i++ {
+	// 	wg.Add(1)
+	// 	go Ping(int32(appenderId), &wg)
+	// }
+	// wg.Wait()
 
-	// Ping(int32(appenderId))
+	Ping(int32(appenderId))
 }

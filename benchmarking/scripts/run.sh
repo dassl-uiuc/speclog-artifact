@@ -16,8 +16,6 @@ client_nodes=("node7")
 intrusion_detection_client_nodes=("node7")
 intrusion_detection_generator_client_nodes=("node8")
 intrusion_detection_dir="/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection"
-intrusion_detection_measure_latency = "true"
-intrusion_detection_measure_throughput = "false"
 
 batching_intervals=("1ms")
 
@@ -314,68 +312,38 @@ elif [ "$mode" -eq 6 ]; then
             # wait for 10 secs
             sleep 10
 
+            sudo mkdir "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics"
             sudo rm "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/read_throughput.txt"
             sudo rm "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/e2e_latencies.txt"
             sudo rm "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/append_throughput.txt"
 
-            if [ "$intrusion_detection_measure_latency" = "true" ]; then
-                # Spawn reader clients
-                num_reader_client_nodes=${#intrusion_detection_client_nodes[@]}
+            # Spawn reader clients
+            num_reader_client_nodes=${#intrusion_detection_client_nodes[@]}
 
-                for (( i=0; i<num_reader_client_nodes; i++))
-                do
-                    # start_fraud_detection_clients <num_of_clients_to_run>
-                    start_intrusion_detection_clients "${intrusion_detection_client_nodes[$i]}" $num_read_clients
-                done
+            for (( i=0; i<num_reader_client_nodes; i++))
+            do
+                # start_fraud_detection_clients <num_of_clients_to_run>
+                start_intrusion_detection_clients "${intrusion_detection_client_nodes[$i]}" $num_read_clients
+            done
 
-                # Spawn append clients
-                num_append_client_nodes=${#intrusion_detection_generator_client_nodes[@]}
-                high_num=$((($num_append_clients + $num_append_client_nodes - 1)/$num_append_client_nodes))
-                low_num=$(($num_append_clients / $num_append_client_nodes))
-                mod=$(($num_append_clients % $num_append_client_nodes))
+            # Spawn append clients
+            num_append_client_nodes=${#intrusion_detection_generator_client_nodes[@]}
+            high_num=$((($num_append_clients + $num_append_client_nodes - 1)/$num_append_client_nodes))
+            low_num=$(($num_append_clients / $num_append_client_nodes))
+            mod=$(($num_append_clients % $num_append_client_nodes))
 
-                for (( i=0; i<num_append_client_nodes; i++))
-                do
-                    if [ "$i" -lt "$mod" ]; then
-                        # If there's a remainder, assign one additional job to the first 'mod' clients
-                        num_jobs_for_client=$((low_num + 1))
-                    else
-                        num_jobs_for_client=$low_num
-                    fi
-                    
-                    # start_append_clients <num_of_clients_to_run>
-                    start_intrusion_detection_generator_clients "${intrusion_detection_generator_client_nodes[$i]}" $num_jobs_for_client
-                done
-            elif [ "$intrusion_detection_measure_throughput" = "true" ]; then
-                # Spawn append clients
-                num_append_client_nodes=${#intrusion_detection_generator_client_nodes[@]}
-                high_num=$((($num_append_clients + $num_append_client_nodes - 1)/$num_append_client_nodes))
-                low_num=$(($num_append_clients / $num_append_client_nodes))
-                mod=$(($num_append_clients % $num_append_client_nodes))
-
-                for (( i=0; i<num_append_client_nodes; i++))
-                do
-                    if [ "$i" -lt "$mod" ]; then
-                        # If there's a remainder, assign one additional job to the first 'mod' clients
-                        num_jobs_for_client=$((low_num + 1))
-                    else
-                        num_jobs_for_client=$low_num
-                    fi
-                    
-                    # start_append_clients <num_of_clients_to_run>
-                    start_intrusion_detection_generator_clients "${intrusion_detection_generator_client_nodes[$i]}" $num_jobs_for_client
-                done
-
-                # Spawn reader clients
-                num_reader_client_nodes=${#intrusion_detection_client_nodes[@]}
-
-                for (( i=0; i<num_reader_client_nodes; i++))
-                do
-                    # start_fraud_detection_clients <num_of_clients_to_run>
-                    start_intrusion_detection_clients "${intrusion_detection_client_nodes[$i]}" $num_read_clients
-                done
-            fi
-
+            for (( i=0; i<num_append_client_nodes; i++))
+            do
+                if [ "$i" -lt "$mod" ]; then
+                    # If there's a remainder, assign one additional job to the first 'mod' clients
+                    num_jobs_for_client=$((low_num + 1))
+                else
+                    num_jobs_for_client=$low_num
+                fi
+                
+                # start_append_clients <num_of_clients_to_run>
+                start_intrusion_detection_generator_clients "${intrusion_detection_generator_client_nodes[$i]}" $num_jobs_for_client
+            done
 
             echo "Waiting for clients to terminate"
             wait
@@ -386,9 +354,6 @@ elif [ "$mode" -eq 6 ]; then
             # check for errors in log files
             check_data_log
             collect_logs
-            
-            # move iostat dump to results folder
-            get_disk_stats "results/$interval/append_bench_$c/"
         done
     done
 else # cleanup logs
