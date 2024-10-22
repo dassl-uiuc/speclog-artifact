@@ -11,6 +11,8 @@ import (
 	log "github.com/scalog/scalog/logger"
 	"github.com/scalog/scalog/pkg/address"
 	"github.com/spf13/viper"
+	"context"
+	rateLimiter "golang.org/x/time/rate"
 )
 
 const NumberOfRequest = 10
@@ -80,33 +82,32 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 	startTime := time.Now()
 	numberOfRequest = 0
 
-	ticker := time.NewTicker(time.Second / time.Duration(rate))
-	defer ticker.Stop()
+	limiter := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 1)
 
 	for stay, timeout := true, time.After(timeLimit); stay; {
-		select {
-		case <-ticker.C:
-			dataGenStartTime := time.Now()
-			record := util.GenerateRandomString(numberOfBytes)
-			dataGenEndTime := time.Now()
-
-			runStartTime := time.Now()
-			runStartTimes = append(runStartTimes, runStartTime)
-
-			var gsn int64
-			var shard int32
-			gsn, shard, err := cli.Append(record)
-
-			if err != nil {
-				_, _ = fmt.Fprintln(os.Stderr, err)
-				goto end
-			}
-
-			GSNs = append(GSNs, gsn)
-			shardIds = append(shardIds, shard)
-			dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
-			numberOfRequest++
+		err := limiter.Wait(context.Background())
+		if err != nil {
+			log.Errorf("rate limiter error: %v", err)
+			return
 		}
+
+		dataGenStartTime := time.Now()
+		record := util.GenerateRandomString(numberOfBytes)
+		dataGenEndTime := time.Now()
+
+		var gsn int64
+		var shard int32
+		gsn, shard, err = cli.Append(record)
+
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			goto end
+		}
+
+		GSNs = append(GSNs, gsn)
+		shardIds = append(shardIds, shard)
+		dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
+		numberOfRequest++
 
 	end:
 		select {
@@ -119,6 +120,7 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 
 	time.Sleep(60 * time.Second)
 
+	runStartTimes = cli.GetRunStartTimes()
 	runEndTimes = cli.GetRunEndTimes()
 	if len(runEndTimes) != len(runStartTimes) {
 		log.Errorf("runEndTimes and runStartTimes have different length")
@@ -128,7 +130,6 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 	for i := 0; i < len(runEndTimes); i++ {
 		runTimes = append(runTimes, runEndTimes[i].Sub(runStartTimes[i]))
 	}
-	fmt.Println("run times lenght: ", len(runTimes))
 
 	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
 }

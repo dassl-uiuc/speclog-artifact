@@ -63,6 +63,7 @@ type Client struct {
 	outstandingRequestsLimit int32
 	outstandingRequests      int32
 
+	runStartTimes []time.Time
 	runEndTimes []time.Time
 }
 
@@ -76,7 +77,7 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 		dataAddr:   dataAddr,
 		discAddr:   discAddr,
 	}
-	c.outstandingRequestsLimit = 4096
+	c.outstandingRequestsLimit = 64
 	c.shardingPolicy = NewDefaultShardingPolicy(numReplica)
 	c.viewC = make(chan *discpb.View, 4096)
 	c.appendC = make(chan *datapb.Record, c.outstandingRequestsLimit)
@@ -223,8 +224,15 @@ func (c *Client) GetRunEndTimes() []time.Time {
 	return c.runEndTimes
 }
 
+func (c *Client) GetRunStartTimes() []time.Time {
+	return c.runStartTimes
+}
+
 func (c *Client) ProcessAppend() {
 	for r := range c.appendC {
+		runStartTime := time.Now()
+		c.runStartTimes = append(c.runStartTimes, runStartTime)
+
 		shard, replica := c.shardingPolicy.Shard(c.view, r.Record)
 		// log.Infof("shard: %v, replica: %v\n", shard, replica)
 		client, err := c.getDataAppendClient(shard, replica)
