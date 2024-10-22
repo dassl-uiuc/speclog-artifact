@@ -62,6 +62,8 @@ type Client struct {
 
 	outstandingRequestsLimit int32
 	outstandingRequests      int32
+
+	runEndTimes []time.Time
 }
 
 func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32) (*Client, error) {
@@ -217,6 +219,10 @@ func (c *Client) processView() {
 	}
 }
 
+func (c *Client) GetRunEndTimes() []time.Time {
+	return c.runEndTimes
+}
+
 func (c *Client) ProcessAppend() {
 	for r := range c.appendC {
 		shard, replica := c.shardingPolicy.Shard(c.view, r.Record)
@@ -239,6 +245,9 @@ func (c *Client) ProcessAppend() {
 			log.Errorf("Failed to receive ack: %v", err)
 			continue
 		}
+
+		runEndTime := time.Now()
+		c.runEndTimes = append(c.runEndTimes, runEndTime)
 
 		// atomic.AddInt32(&c.outstandingRequests, -1)
 	}

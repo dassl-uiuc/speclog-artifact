@@ -72,6 +72,8 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 	var GSNs []int64
 	var shardIds []int32
 	var dataGenTimes []time.Duration
+	var runStartTimes []time.Time
+	var runEndTimes []time.Time
 	var runTimes []time.Duration
 	var numberOfRequest int
 
@@ -87,12 +89,13 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 			dataGenStartTime := time.Now()
 			record := util.GenerateRandomString(numberOfBytes)
 			dataGenEndTime := time.Now()
+
 			runStartTime := time.Now()
+			runStartTimes = append(runStartTimes, runStartTime)
 
 			var gsn int64
 			var shard int32
 			gsn, shard, err := cli.Append(record)
-			runEndTime := time.Now()
 
 			if err != nil {
 				_, _ = fmt.Fprintln(os.Stderr, err)
@@ -102,7 +105,6 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 			GSNs = append(GSNs, gsn)
 			shardIds = append(shardIds, shard)
 			dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
-			runTimes = append(runTimes, runEndTime.Sub(runStartTime))
 			numberOfRequest++
 		}
 
@@ -116,6 +118,17 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 	endTime := time.Now()
 
 	time.Sleep(60 * time.Second)
+
+	runEndTimes = cli.GetRunEndTimes()
+	if len(runEndTimes) != len(runStartTimes) {
+		log.Errorf("runEndTimes and runStartTimes have different length")
+		return
+	}
+	// Calculate difference between runEndTimes and runStartTimes
+	for i := 0; i < len(runEndTimes); i++ {
+		runTimes = append(runTimes, runEndTimes[i].Sub(runStartTimes[i]))
+	}
+	fmt.Println("run times lenght: ", len(runTimes))
 
 	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
 }
