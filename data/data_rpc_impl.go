@@ -28,11 +28,14 @@ func (s *DataServer) Append(stream datapb.Data_AppendServer) error {
 			}
 			if !initialized {
 				cid := record.ClientID
+				ackSendC := make(chan *datapb.Ack, 4096)
+				s.ackSendCMu.Lock()
+				s.ackSendC[cid] = ackSendC
+				s.ackSendCMu.Unlock()
 				go s.respondToClient(cid, done, stream)
 				initialized = true
 			}
 			s.appendC <- record
-
 		}
 	}
 }
@@ -46,10 +49,7 @@ func (s *DataServer) AppendOne(ctx context.Context, record *datapb.Record) (*dat
 }
 
 func (s *DataServer) respondToClient(cid int32, done chan struct{}, stream datapb.Data_AppendServer) {
-	ackSendC := make(chan *datapb.Ack, 4096)
-	s.ackSendCMu.Lock()
-	s.ackSendC[cid] = ackSendC
-	s.ackSendCMu.Unlock()
+	ackSendC := s.ackSendC[cid]
 	defer func() {
 		s.ackSendCMu.Lock()
 		delete(s.ackSendC, cid)
