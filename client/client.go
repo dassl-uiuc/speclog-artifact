@@ -61,7 +61,6 @@ type Client struct {
 	dataAppendClientMu sync.Mutex
 
 	outstandingRequestsLimit int32
-	outstandingRequests      int32
 
 	runStartTimes []time.Time
 	runEndTimes []time.Time
@@ -256,8 +255,6 @@ func (c *Client) ProcessAppend() {
 
 		runEndTime := time.Now()
 		c.runEndTimes = append(c.runEndTimes, runEndTime)
-
-		// atomic.AddInt32(&c.outstandingRequests, -1)
 	}
 }
 
@@ -278,8 +275,6 @@ func (c *Client) Append(record string) (int64, int32, error) {
 		ClientSN: c.getNextClientSN(),
 		Record:   record,
 	}
-
-	// atomic.AddInt32(&c.outstandingRequests, 1)
 
 	c.appendC <- r
 	return 0, 0, nil
