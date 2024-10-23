@@ -150,7 +150,7 @@ get_disk_stats() {
 mode="$1"
 if [ "$mode" -eq 0 ]; then # append one experiment mode
     # clients=("130")
-    clients=("130" "140" "150" "160")
+    clients=("80")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -235,6 +235,8 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
             low_num=$(($c / $num_client_nodes))
             mod=$(($c % $num_client_nodes))
 
+            jobs=0
+
             for (( i=0; i<num_client_nodes; i++))
             do
                 if [ "$i" -lt "$mod" ]; then
@@ -244,8 +246,10 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
                     num_jobs_for_client=$low_num
                 fi
                 
-                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <append_mode> <rate>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval "append" "250"
+                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <start_sharding_hint> <append_mode> <rate>
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "append" "250"
+
+                jobs=$(($jobs + $num_jobs_for_client))
             done
 
             echo "Waiting for clients to terminate"

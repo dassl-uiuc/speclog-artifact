@@ -20,8 +20,8 @@ mkdir -p $output_dir
 
 for ((i=1; i<=$client_number; i++)); do
     request_size="4096"
-    cmd="/usr/local/go/bin/go run append_bench.go $time_limit $request_size $sharding_hint $append_mode $rate ${output_dir}/<hp${client_id}>_${time_limit}_${request_size}_${i}.csv"
     sharding_hint=$(($start_sharding_hint + $i-1))
+    cmd="/usr/local/go/bin/go run append_bench.go $time_limit $request_size $sharding_hint $append_mode $rate ${output_dir}/<hp${client_id}>_${time_limit}_${request_size}_${i}.csv"
     $cmd &
 done
 
