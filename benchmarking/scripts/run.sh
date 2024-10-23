@@ -9,7 +9,7 @@ order=("node0" "node1" "node2")
 
 # index into remote_nodes/ips for data shards
 data_0=("node3" "node4")
-# data_1=("node5" "node6")
+data_1=("node5" "node6")
 
 client_nodes=("node7" "node8")
 
@@ -53,10 +53,14 @@ collect_logs() {
     do 
         scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
-    for svr in ${data_1[@]};
+    # for svr in ${data_1[@]};
+    # do 
+    #     scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+    # done 
+    for svr in ${client_nodes[@]};
     do 
         scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
-    done 
+    done
     wait
 }
 
@@ -77,11 +81,11 @@ start_data_nodes() {
         ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[$i]} "sh -c \"cd $benchmark_dir/data-0-$i; nohup ./run_goreman.sh > ${LOGDIR}/data-0-$i.log 2>&1 &\""
     done
 
-    # for ((i=0; i<=1; i++))
-    # do
-    #     echo "Starting data-1-${i} on ${data_1[$i]}"
-    #     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "sh -c \"cd $benchmark_dir/data-1-$i; nohup ./run_goreman.sh > ${LOGDIR}/data-1-$i.log 2>&1 &\""
-    # done
+    for ((i=0; i<=1; i++))
+    do
+        echo "Starting data-1-${i} on ${data_1[$i]}"
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "sh -c \"cd $benchmark_dir/data-1-$i; nohup ./run_goreman.sh > ${LOGDIR}/data-1-$i.log 2>&1 &\""
+    done
 }
 
 start_discovery() {
@@ -97,15 +101,15 @@ check_data_log() {
         ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[$i]} "grep error ${LOGDIR}/data-0-$i.log"
     done
 
-    # for ((i=0; i<=1; i++))
-    # do
-    #     echo "Checking data node data-1-$i..."
-    #     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "grep error ${LOGDIR}/data-1-$i.log"
-    # done
+    for ((i=0; i<=1; i++))
+    do
+        echo "Checking data node data-1-$i..."
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "grep error ${LOGDIR}/data-1-$i.log"
+    done
 }
 
 start_append_clients() {
-    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; ./run_append_client.sh $2 $3 $1 $4 $5 $6 $7 > ${LOGDIR}/client_$1.log 2>&1" &
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; ./run_append_client.sh $2 $3 $1 $4 $5 $6 $7 $8 > ${LOGDIR}/client_$1.log 2>&1" &
 }
 
 start_random_read_clients() {
@@ -146,7 +150,7 @@ get_disk_stats() {
 mode="$1"
 if [ "$mode" -eq 0 ]; then # append one experiment mode
     # clients=("130")
-    clients=("80")
+    clients=("130" "140" "150" "160")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -172,6 +176,8 @@ if [ "$mode" -eq 0 ]; then # append one experiment mode
             low_num=$(($c / $num_client_nodes))
             mod=$(($c % $num_client_nodes))
 
+            jobs=0
+
             for (( i=0; i<num_client_nodes; i++))
             do
                 if [ "$i" -lt "$mod" ]; then
@@ -181,8 +187,10 @@ if [ "$mode" -eq 0 ]; then # append one experiment mode
                     num_jobs_for_client=$low_num
                 fi
                 
-                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <append_mode> <rate>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval "appendOne" "0"
+                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <start_sharding_hint> <append_mode> <rate>
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "appendOne" "0"
+
+                jobs=$(($jobs + $num_jobs_for_client))
             done
 
             echo "Waiting for clients to terminate"
