@@ -80,9 +80,10 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 		discAddr:     discAddr,
 		shardingHint: shardingHint,
 	}
+	c.outstandingRequestsLimit = 64
 	c.shardingPolicy = NewShardingPolicyWithHint(numReplica, shardingHint)
 	c.viewC = make(chan *discpb.View, 4096)
-	c.appendC = make(chan *datapb.Record, 4096)
+	c.appendC = make(chan *datapb.Record, c.outstandingRequestsLimit)
 	c.ackC = make(chan *datapb.Ack, 4096)
 	c.subC = make(chan CommittedRecord, 4096)
 	c.dataConn = make(map[int32]*grpc.ClientConn)
