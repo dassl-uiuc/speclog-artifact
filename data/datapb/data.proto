@@ -23,6 +23,7 @@ message Record {
 	int64 globalSN = 6; // global sequence number
 	string record = 7; 
     int32 numHoles = 8; // number of holes to replicate (if this is a hole)
+    int64 globalSN1 = 9; // extra gsn field used for speculation confirmation
 }
 
 message Ack {

@@ -232,7 +232,7 @@ func (s *OrderServer) adjustToMinimums(rid int32, lc *orderpb.LocalCut, windowNu
 
 func (s *OrderServer) isReadyToAssignQuota() bool {
 	if s.assignWindow == 0 {
-		return len(s.replicasInReserve) == 4
+		return len(s.replicasInReserve) == 2
 	}
 	return s.numQuotaChanged == int64(len(s.quota[s.assignWindow-1]))
 }
@@ -477,8 +477,9 @@ func (s *OrderServer) processReport() {
 					// increment view ID if new shards
 					incrViewId := false
 					for rid := range s.quota[s.assignWindow] {
-						if _, ok := s.shards[rid/s.numReplica]; !ok {
+						if _, ok := s.shards[rid/s.dataNumReplica]; !ok {
 							incrViewId = true
+							s.shards[rid/s.dataNumReplica] = true
 						}
 					}
 
@@ -490,7 +491,7 @@ func (s *OrderServer) processReport() {
 					// increment window
 					s.assignWindow++
 
-					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1}, FinalizeShards: nil}
+					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid}, FinalizeShards: nil}
 					log.Printf("quota: %v", s.quota[s.assignWindow-1])
 				} else {
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
@@ -518,7 +519,7 @@ func (s *OrderServer) processReport() {
 				prevPrintCut[rid] = cut
 			}
 			s.stats.printStats()
-			for rid, _ := range s.avgDelta {
+			for rid := range s.avgDelta {
 				log.Printf("replica %v: avg delta in ms %v", rid, s.avgDelta[rid].Avg()/1000000)
 			}
 		}

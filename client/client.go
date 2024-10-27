@@ -31,6 +31,11 @@ type tuple struct {
 	err error
 }
 
+type SpeculationConf struct {
+	StartGSN int64
+	EndGSN   int64
+}
+
 type CommittedRecord struct {
 	GSN    int64
 	Record string
@@ -47,8 +52,11 @@ type Client struct {
 	appendC            chan *datapb.Record
 	ackC               chan *datapb.Ack
 	subC               chan CommittedRecord
+	confC              chan SpeculationConf
 	committedRecords   map[int64]CommittedRecord
 	committedRecordsMu sync.RWMutex
+	nextConf           int64
+	speculationConfs   map[int64]*datapb.Record
 	shardingPolicy     ShardingPolicy
 	shardingHint       int64 // client number, which is used to specifically connect to a replica of a shard
 
@@ -84,6 +92,8 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 	c.dataAppendClient = make(map[int32]datapb.Data_AppendClient)
 	c.view = view.NewView()
 	c.committedRecords = make(map[int64]CommittedRecord)
+	c.speculationConfs = make(map[int64]*datapb.Record)
+	c.confC = make(chan SpeculationConf, 4096)
 	err := c.UpdateDiscovery()
 	if err != nil {
 		return nil, err
@@ -111,6 +121,8 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 	c.dataAppendClient = make(map[int32]datapb.Data_AppendClient)
 	c.view = view.NewView()
 	c.committedRecords = make(map[int64]CommittedRecord)
+	c.speculationConfs = make(map[int64]*datapb.Record)
+	c.confC = make(chan SpeculationConf, 4096)
 	err := c.UpdateDiscovery()
 	if err != nil {
 		return nil, err
@@ -322,9 +334,10 @@ func (c *Client) Read(gsn int64, shard, replica int32) (string, error) {
 	return record.Record, nil
 }
 
-func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, error) {
+func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, chan SpeculationConf, error) {
 	c.committedRecordsMu.Lock()
 	c.nextGSN = gsn
+	c.nextConf = gsn
 	c.committedRecordsMu.Unlock()
 
 	for _, shard := range c.view.LiveShards {
@@ -333,7 +346,7 @@ func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, error) {
 		}
 	}
 
-	return c.subC, nil
+	return c.subC, c.confC, nil
 }
 
 func (c *Client) subscribeShardServer(shard, replica int32) {
@@ -360,13 +373,22 @@ func (c *Client) subscribeShardServer(shard, replica int32) {
 			log.Errorf("%v", err)
 			return
 		}
+
 		c.committedRecordsMu.Lock()
-		c.committedRecords[record.GlobalSN] = CommittedRecord{
-			GSN:    record.GlobalSN,
-			Record: record.Record,
-		}
-		if record.GlobalSN == c.nextGSN {
-			c.respondToClient()
+		if record.ClientID != -1 {
+			c.committedRecords[record.GlobalSN] = CommittedRecord{
+				GSN:    record.GlobalSN,
+				Record: record.Record,
+			}
+			if record.GlobalSN == c.nextGSN {
+				c.respondToClient()
+			}
+		} else {
+			// this is a speculation confirmation
+			c.speculationConfs[record.GlobalSN] = record
+			if record.GlobalSN == c.nextConf {
+				c.confirmToClient()
+			}
 		}
 		c.committedRecordsMu.Unlock()
 		// TODO(shreesha): handle view change
@@ -383,6 +405,19 @@ func (c *Client) respondToClient() {
 		c.subC <- commitedRecord
 		delete(c.committedRecords, c.nextGSN)
 		c.nextGSN++
+	}
+}
+
+// called with lock held
+func (c *Client) confirmToClient() {
+	for {
+		rec, in := c.speculationConfs[c.nextConf]
+		if !in {
+			break
+		}
+		c.confC <- SpeculationConf{StartGSN: rec.GlobalSN, EndGSN: rec.GlobalSN1}
+		delete(c.speculationConfs, c.nextConf)
+		c.nextConf = rec.GlobalSN1 + 1
 	}
 }
 

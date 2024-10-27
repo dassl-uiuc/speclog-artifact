@@ -86,6 +86,7 @@ func (s *Stats) printStats() {
 type WindowAndQuota struct {
 	windowNum int64
 	quota     map[int32]int64
+	viewID    int32
 }
 
 type DataServer struct {
@@ -162,6 +163,7 @@ type DataServer struct {
 	waitForNewQuota               chan int64
 	windowNumber                  int64
 	quotas                        map[int64](map[int32]int64) // quotas for each window
+	views                         map[int64]int32             // viewID in which each window is supposed to be committed
 	nextAssignableWindowAndQuotas chan *WindowAndQuota
 
 	// hole filling
@@ -179,7 +181,12 @@ type DataServer struct {
 	replMu        sync.Mutex
 
 	// channel to return speculative reads
-	speculativeSubC chan *datapb.Record
+	speculativeSubC  chan *datapb.Record
+	speculationConfC chan *datapb.Record
+
+	// this is needed in case the confirmation records are accessible before the actual records have been speculated on
+	// in such a case we buffer the confirmation records in the subsequent array @confirmationRecords and send them only after the actual records have been submitted to the clients
+	confirmationRecords map[int64]*datapb.Record
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -211,8 +218,8 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.diskWriteC = make(map[int64]chan bool)
 	s.localCglobalCSync = make(chan bool, 1)
 	s.prevSentLocalCut = 0
-	s.newClientSubscribersChan = make(chan *clientSubscriber, 4096)
 	s.liveSubscribeC = make(chan int64, 4096)
+	s.newClientSubscribersChan = make(chan *clientSubscriber, 4096)
 	s.subWg = sync.WaitGroup{}
 	s.committedRecords = make(map[int64]*datapb.Record)
 	s.timeOfEntry = make(map[int64]time.Time)
@@ -222,7 +229,10 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.replStartTime = make(map[int64]time.Time)
 	s.localCutChan = make(chan int64, 4096)
 	s.speculativeSubC = make(chan *datapb.Record, 4096)
+	s.speculationConfC = make(chan *datapb.Record, 4096)
 	s.nextAssignableWindowAndQuotas = make(chan *WindowAndQuota, 4096)
+	s.confirmationRecords = make(map[int64]*datapb.Record)
+	s.views = make(map[int64]int32)
 
 	s.quota = 1
 	s.localCutNum = -1
@@ -234,6 +244,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.nextCSNForHole = -1
 	s.holeID = s.generateClientIDForHole()
 	s.quotas = make(map[int64](map[int32]int64))
+
 	s.recordsInPipeline.Store(0)
 	s.fixLag = make(chan int64, 4096)
 
@@ -350,7 +361,7 @@ func (s *DataServer) processNewSubscribers() {
 	}
 }
 
-func (s *DataServer) sendToSubscriber(sub *clientSubscriber, gsn int64) {
+func (s *DataServer) sendToSubscriber(sub *clientSubscriber, gsn int64, onlyConfirmations bool) {
 	defer s.subWg.Done()
 	if sub.state == CLOSED {
 		return
@@ -360,21 +371,30 @@ func (s *DataServer) sendToSubscriber(sub *clientSubscriber, gsn int64) {
 	if sub.state == BEHIND {
 		startRecords = sub.startGsn
 	}
-	s.committedRecordsMu.RLock()
+	if !onlyConfirmations {
+		s.committedRecordsMu.RLock()
+		for i := startRecords; i <= endRecords; i++ {
+			if record, ok := s.committedRecords[i]; ok {
+				sub.respChan <- record
+			}
+		}
+		s.committedRecordsMu.RUnlock()
+	}
+	// send all the confirmations in this range, note that the records are sent in batches
+	// i represents the end of the batch here
 	for i := startRecords; i <= endRecords; i++ {
-		if record, ok := s.committedRecords[i]; ok {
+		if record, ok := s.confirmationRecords[i]; ok {
+			log.Debugf("Sending confirmation record %v", record)
 			sub.respChan <- record
 		}
 	}
-	s.committedRecordsMu.RUnlock()
 	if sub.state == BEHIND {
 		sub.state = UPDATED
 	}
 }
 
 func (s *DataServer) processLiveSubscribe() {
-	var latestGsn int64
-	latestGsn = -1
+	latestGsn := int64(-1)
 	for {
 		select {
 		case gsn := <-s.liveSubscribeC:
@@ -388,7 +408,28 @@ func (s *DataServer) processLiveSubscribe() {
 					continue
 				}
 				if sub.state != CLOSED && gsn >= sub.startGsn {
-					go s.sendToSubscriber(sub, gsn)
+					go s.sendToSubscriber(sub, gsn, false)
+				} else {
+					s.subWg.Done()
+				}
+			}
+			s.clientSubscribersMu.Unlock()
+			s.subWg.Wait()
+		case record := <-s.speculationConfC:
+			s.clientSubscribersMu.Lock()
+			// add confirmation record to the map
+			s.confirmationRecords[record.GlobalSN1] = record
+			numSub := len(s.clientSubscribers)
+			s.subWg.Add(numSub)
+			for _, sub := range s.clientSubscribers {
+				if sub == nil {
+					s.subWg.Done()
+					continue
+				}
+				if sub.state == BEHIND {
+					go s.sendToSubscriber(sub, latestGsn, false)
+				} else if sub.state == UPDATED {
+					go s.sendToSubscriber(sub, record.GlobalSN1, true)
 				} else {
 					s.subWg.Done()
 				}
@@ -409,7 +450,7 @@ func (s *DataServer) processLiveSubscribe() {
 					continue
 				}
 				if sub.state == BEHIND && latestGsn >= sub.startGsn {
-					go s.sendToSubscriber(sub, latestGsn)
+					go s.sendToSubscriber(sub, latestGsn, false)
 				} else {
 					s.subWg.Done()
 				}
@@ -536,6 +577,54 @@ func (s *DataServer) processReplicate() {
 	}
 }
 
+func (s *DataServer) processSingleRecord(record *datapb.Record, nextGsn *int64, quotas *map[int32]int64, avlInQuota *int64, viewID *int32, localCutNum *int64) {
+	rid := s.shardID*s.numReplica + s.replicaID
+	if *avlInQuota == 0 {
+		// advance nextGsn
+		for id, q := range *quotas {
+			if id > rid {
+				*nextGsn += q
+			}
+		}
+
+		// advance local cut number
+		*localCutNum++
+		if *localCutNum == s.numLocalCutsThreshold {
+			// we have advanced by a window
+			wq := <-s.nextAssignableWindowAndQuotas
+			*quotas = wq.quota
+			*viewID = wq.viewID
+			*localCutNum = 0
+		}
+
+		// advance nextGsn
+		for id, q := range *quotas {
+			if id < rid {
+				*nextGsn += q
+			}
+		}
+
+		*avlInQuota = (*quotas)[rid]
+	}
+
+	// assign gsn to record
+	// send record on exposable records channel
+
+	record.GlobalSN = *nextGsn
+	record.LocalReplicaID = s.replicaID
+	record.ShardID = s.shardID
+	record.ViewID = *viewID
+
+	s.committedRecordsMu.Lock()
+	s.committedRecords[*nextGsn] = record
+	s.committedRecordsMu.Unlock()
+
+	s.liveSubscribeC <- record.GlobalSN
+
+	*nextGsn++
+	*avlInQuota--
+}
+
 // handles speculative subscribes for records that have been replicated but not yet ordered
 func (s *DataServer) processSpeculativeSubscribes() {
 	// replica list: <rid_0, rid_1, ...., rid_me, rid_{me+1}, ...., rid_n>
@@ -547,64 +636,23 @@ func (s *DataServer) processSpeculativeSubscribes() {
 	nextGsn := int64(0)
 	localCutNum := s.numLocalCutsThreshold - 1
 	var quotas map[int32]int64
+	viewID := int32(-1)
 	avlInQuota := int64(0)
-	rid := s.shardID*s.numReplica + s.replicaID
 
 	for record := range s.speculativeSubC {
-		if avlInQuota == 0 {
-			// advance nextGsn
-			for id, q := range quotas {
-				if id > rid {
-					nextGsn += q
-				}
-			}
-
-			// advance local cut number
-			localCutNum++
-			if localCutNum == s.numLocalCutsThreshold {
-				// we have advanced by a window
-				wq := <-s.nextAssignableWindowAndQuotas
-				quotas = wq.quota
-				localCutNum = 0
-			}
-
-			// advance nextGsn
-			for id, q := range quotas {
-				if id < rid {
-					nextGsn += q
-				}
-			}
-
-			avlInQuota = quotas[rid]
-		}
-
-		// assign gsn to record
-		// send record on exposable records channel
-
 		if record.ClientID == s.holeID {
-			// create new dummy record
-			// we need to do this as all holes point to the same record upto this point
-			record = &datapb.Record{
-				ClientID: s.holeID,
-				ClientSN: record.ClientSN,
-				Record:   record.Record,
-				NumHoles: 1,
+			for i := int64(0); i < int64(record.NumHoles); i++ {
+				dummyRecord := &datapb.Record{
+					ClientID: record.ClientID,
+					ClientSN: record.ClientSN,
+					Record:   record.Record,
+					NumHoles: 1,
+				}
+				s.processSingleRecord(dummyRecord, &nextGsn, &quotas, &avlInQuota, &viewID, &localCutNum)
 			}
+		} else {
+			s.processSingleRecord(record, &nextGsn, &quotas, &avlInQuota, &viewID, &localCutNum)
 		}
-
-		record.GlobalSN = nextGsn
-		record.LocalReplicaID = s.replicaID
-		record.ShardID = s.shardID
-		record.ViewID = s.viewID
-
-		s.committedRecordsMu.Lock()
-		s.committedRecords[nextGsn] = record
-		s.committedRecordsMu.Unlock()
-
-		s.liveSubscribeC <- record.GlobalSN
-
-		nextGsn++
-		avlInQuota--
 	}
 }
 
@@ -1010,12 +1058,14 @@ func (s *DataServer) processCommittedEntry() {
 				_, quotaExists := s.quotas[entry.CommittedCut.WindowNum]
 				if !quotaExists {
 					s.quotas[entry.CommittedCut.WindowNum] = entry.CommittedCut.ShardQuotas
+					s.views[entry.CommittedCut.WindowNum] = entry.CommittedCut.ViewID
 				}
 				if quota, ok := entry.CommittedCut.ShardQuotas[rid]; ok {
-					s.waitForNewQuota <- quota
 					if s.windowNumber == -1 {
 						s.windowNumber = entry.CommittedCut.WindowNum
 					}
+					// needs to happen before sending the quota
+					s.waitForNewQuota <- quota
 					quotasCopy := make(map[int32]int64)
 					for k, v := range entry.CommittedCut.ShardQuotas {
 						quotasCopy[k] = v
@@ -1023,6 +1073,7 @@ func (s *DataServer) processCommittedEntry() {
 					s.nextAssignableWindowAndQuotas <- &WindowAndQuota{
 						windowNum: entry.CommittedCut.WindowNum,
 						quota:     quotasCopy,
+						viewID:    entry.CommittedCut.ViewID,
 					}
 				}
 			}
@@ -1039,7 +1090,11 @@ func (s *DataServer) processCommittedEntry() {
 				log.Debugf("prevCommittedCut.Cut: %v", s.prevCommittedCut.Cut)
 				terminate := true
 				for rid, lsn := range entry.CommittedCut.Cut {
-					terminate = terminate && (s.prevCommittedCut.Cut[rid] == lsn)
+					_, ok := s.prevCommittedCut.Cut[rid]
+					if !ok || lsn != s.prevCommittedCut.Cut[rid] {
+						terminate = false
+						break
+					}
 				}
 				if terminate {
 					break
@@ -1047,6 +1102,10 @@ func (s *DataServer) processCommittedEntry() {
 				// compute startGSN using the number of records stored
 				// in shards with smaller ids
 				for rid, lsn := range entry.CommittedCut.Cut {
+					_, ok := s.quotas[s.nextExpectedWindowNum][rid]
+					if !ok {
+						continue
+					}
 					if rid < startReplicaID {
 						diff := lsn
 						if l, ok := s.prevCommittedCut.Cut[rid]; ok {
@@ -1057,76 +1116,95 @@ func (s *DataServer) processCommittedEntry() {
 						}
 					}
 				}
-				// assign gsn to records in my shard
-				for i := int32(0); i < s.numReplica; i++ {
-					rid := startReplicaID + i
-					lsn := entry.CommittedCut.Cut[rid]
-					diff := int32(lsn)
-					start := int64(0)
-					if l, ok := s.prevCommittedCut.Cut[rid]; ok {
-						start = l
-						diff = int32(lsn - l)
-					}
-					if diff > 0 {
-						diff := int32(s.quotas[s.nextExpectedWindowNum][rid])
-						err := s.storage.Assign(i, start, diff, startGSN)
-						if err != nil {
-							log.Errorf("Assign GSN to storage error: %v", err)
-							continue
+				_, ok := s.quotas[s.nextExpectedWindowNum][startReplicaID]
+				if ok {
+					// assign gsn to records in my shard
+					for i := int32(0); i < s.numReplica; i++ {
+						rid := startReplicaID + i
+						lsn := entry.CommittedCut.Cut[rid]
+						diff := int32(lsn)
+						start := int64(0)
+						if l, ok := s.prevCommittedCut.Cut[rid]; ok {
+							start = l
+							diff = int32(lsn - l)
 						}
-						if i == s.replicaID {
-							for j := int32(0); j < diff; j++ {
-								s.recordsMu.Lock()
-								record, ok := s.records[start+int64(j)]
-								if ok {
-									delete(s.records, start+int64(j))
-								}
-								s.recordsMu.Unlock()
-								if !ok {
-									log.Errorf("error, not able to find records")
-									continue
-								}
-
-								// reply back to clients only for non-holes
-								if record.ClientID != s.holeID {
-									ack := &datapb.Ack{
-										ClientID:       record.ClientID,
-										ClientSN:       record.ClientSN,
-										ShardID:        s.shardID,
-										LocalReplicaID: s.replicaID,
-										ViewID:         s.viewID,
-										GlobalSN:       startGSN + int64(j),
-									}
-									s.ackC <- ack
-								}
-
-								// verify speculated records
-								s.committedRecordsMu.RLock()
-								if r, ok := s.committedRecords[startGSN+int64(j)]; ok {
-									if r.ClientID != record.ClientID || r.ClientSN != record.ClientSN {
-										log.Errorf("error, speculated record does not match")
-									}
-								}
-								s.committedRecordsMu.RUnlock()
-
-								// send record on exposable records channel
-								// record.GlobalSN = startGSN + int64(j)
-								// record.LocalReplicaID = s.replicaID
-								// record.ShardID = s.shardID
-								// record.ViewID = s.viewID
-
-								// s.committedRecordsMu.Lock()
-								// s.committedRecords[startGSN+int64(j)] = record
-								// s.committedRecordsMu.Unlock()
-
-								// s.liveSubscribeC <- record.GlobalSN
+						if diff > 0 {
+							diff := int32(s.quotas[s.nextExpectedWindowNum][rid])
+							err := s.storage.Assign(i, start, diff, startGSN)
+							if err != nil {
+								log.Errorf("Assign GSN to storage error: %v", err)
+								continue
 							}
+							if i == s.replicaID {
+								for j := int32(0); j < diff; j++ {
+									s.recordsMu.Lock()
+									record, ok := s.records[start+int64(j)]
+									if ok {
+										delete(s.records, start+int64(j))
+									}
+									s.recordsMu.Unlock()
+									if !ok {
+										log.Errorf("error, not able to find records")
+										continue
+									}
+
+									// reply back to clients only for non-holes
+									if record.ClientID != s.holeID {
+										ack := &datapb.Ack{
+											ClientID:       record.ClientID,
+											ClientSN:       record.ClientSN,
+											ShardID:        s.shardID,
+											LocalReplicaID: s.replicaID,
+											ViewID:         s.viewID,
+											GlobalSN:       startGSN + int64(j),
+										}
+										s.ackC <- ack
+									}
+
+									// verify speculated records
+									s.committedRecordsMu.RLock()
+									if r, ok := s.committedRecords[startGSN+int64(j)]; ok {
+										if r.ClientID != record.ClientID || r.ClientSN != record.ClientSN {
+											log.Errorf("error, speculated record does not match")
+											log.Errorf(
+												"Speculated record: %v, Actual record: %v, Correct GSN: %v", r, record, startGSN+int64(j), startGSN+int64(j),
+											)
+										}
+									}
+									s.committedRecordsMu.RUnlock()
+
+									// send record on exposable records channel
+									// record.GlobalSN = startGSN + int64(j)
+									// record.LocalReplicaID = s.replicaID
+									// record.ShardID = s.shardID
+									// record.ViewID = s.viewID
+
+									// s.committedRecordsMu.Lock()
+									// s.committedRecords[startGSN+int64(j)] = record
+									// s.committedRecordsMu.Unlock()
+
+									// s.liveSubscribeC <- record.GlobalSN
+								}
+
+								log.Debugf("Sending confirmations for records %v to %v", startGSN, startGSN+int64(diff)-1)
+								// send a batch of acks for all these records on the spec confirmation channel
+								s.speculationConfC <- &datapb.Record{
+									ClientID:  -1, // mark this as a confirmation record
+									ViewID:    s.views[s.nextExpectedWindowNum],
+									GlobalSN:  startGSN,
+									GlobalSN1: startGSN + int64(diff) - 1,
+								}
+							}
+							startGSN += int64(diff)
 						}
-						startGSN += int64(diff)
 					}
 				}
 
 				for rid, lsn := range entry.CommittedCut.Cut {
+					_, ok := s.quotas[s.nextExpectedWindowNum][rid]
+					if !ok {
+						continue
+					}
 					if rid > startReplicaID+s.numReplica-1 {
 						diff := lsn
 						if l, ok := s.prevCommittedCut.Cut[rid]; ok {
@@ -1143,7 +1221,9 @@ func (s *DataServer) processCommittedEntry() {
 					if s.prevCommittedCut.Cut == nil {
 						s.prevCommittedCut.Cut = make(map[int32]int64)
 					}
-					s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
+					if _, ok := s.quotas[s.nextExpectedWindowNum][rid]; ok {
+						s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
+					}
 				}
 
 				// update next expected local cut number and window

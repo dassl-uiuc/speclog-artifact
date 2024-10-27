@@ -43,6 +43,7 @@ message CommittedCut {
 	bool isShardQuotaUpdated = 4;
     Control adjustmentSignal = 5;
     int64 windowNum = 6; // to be used only if quota is updated, represents the window number for which this quota is to be used
+    int32 viewID = 7; // to be used only if quota is updated, represents the view number in which this quota is to be committed
 }
 
 message CommittedEntry {
