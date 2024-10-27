@@ -49,7 +49,9 @@ func (s *DataServer) AppendOne(ctx context.Context, record *datapb.Record) (*dat
 }
 
 func (s *DataServer) respondToClient(cid int32, done chan struct{}, stream datapb.Data_AppendServer) {
+	s.ackSendCMu.RLock()
 	ackSendC := s.ackSendC[cid]
+	s.ackSendCMu.RUnlock()
 	defer func() {
 		s.ackSendCMu.Lock()
 		delete(s.ackSendC, cid)
