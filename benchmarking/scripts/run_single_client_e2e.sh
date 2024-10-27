@@ -4,7 +4,7 @@ source ./common.sh
 
 # parameters
 runtime_secs=20
-computation_time=(1200)
+computation_time=(100 200 500 800 1000 1200)
 
 
 for computation_time in "${computation_time[@]}";
@@ -26,5 +26,9 @@ do
     cleanup_clients
     cleanup_servers
     collect_logs
+
+    # move logs to a different folder
+    mkdir -p "$benchmark_dir/results/logs/e2e_${computation_time}"
+    mv $benchmark_dir/logs/* "$benchmark_dir/results/logs/e2e_${computation_time}"
 done
 
