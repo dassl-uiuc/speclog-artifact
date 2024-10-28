@@ -433,6 +433,14 @@ func (s *OrderServer) processReport() {
 					log.Debugf("Shard %v to be added in next avl window", lc.ShardID)
 				}
 			}
+		// case lc := <-s.finalizeC:
+		// A replica set requested to finalize
+		// This branch marks the replicas as finalized and removes them from the quota
+		// if s.isLeader { // finalize replicas
+		// get id, and add it to replicasFinalizeStandby
+		// check if all replicas from that shard have requested to finalize
+		// if all replicas have requested to finalize, move them to replicasFinalize and remove them from local data structures (avgHoles, avgDelta, replicasFinalizeStandby)
+		// }
 		case <-ticker.C:
 			// TODO: check to make sure the key in lcs exist
 			// This thread is responsible for computing the committed cut and proposing it to the Raft node
@@ -466,6 +474,9 @@ func (s *OrderServer) processReport() {
 						s.quota[s.assignWindow][rid] = q
 					}
 
+					// iterate over s.replicasFinalize and remove them from the quota for the next window
+					// clear replicasFinalize
+
 					// clear replicas in reserve
 					s.replicasInReserve = make(map[int32]int64)
 
@@ -475,6 +486,7 @@ func (s *OrderServer) processReport() {
 					}
 
 					// increment view ID if new shards
+					// increment view ID if shards leave as well
 					incrViewId := false
 					for rid := range s.quota[s.assignWindow] {
 						if _, ok := s.shards[rid/s.dataNumReplica]; !ok {
