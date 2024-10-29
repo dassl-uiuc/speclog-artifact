@@ -1,13 +1,16 @@
 package main
 
 import (
-	"github.com/scalog/scalog/scalog_api"
+	"encoding/json"
 	"fmt"
-	"time"
+	"log"
+	"math/rand"
 	"os"
 	"strconv"
-	"encoding/json"
-	"log"
+	"time"
+
+	"github.com/scalog/scalog/scalog_api"
+
 	// "sync"
 	"github.com/spf13/viper"
 )
@@ -32,10 +35,11 @@ func Ping(appenderId int32) {
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
 	startThroughputTimer := time.Now().UnixNano()
-	for (time.Now().Unix() - startTimeInSeconds < runTime) {
+	for time.Now().Unix()-startTimeInSeconds < runTime {
 		record := map[string]interface{}{
 			"timestamp": time.Now().UnixNano(),
 			"message":   "Intrusion detected from: " + string(appenderId),
+			"click":     rand.Intn(10),
 		}
 		recordJson, err := json.Marshal(record)
 		if err != nil {
@@ -50,7 +54,7 @@ func Ping(appenderId int32) {
 
 	// Calculate throughput
 	endThroughputTimer := time.Now().UnixNano()
-	throughput := float64(recordsProduced) / float64((endThroughputTimer - startThroughputTimer) / 1000000000)
+	throughput := float64(recordsProduced) / float64((endThroughputTimer-startThroughputTimer)/1000000000)
 	file, err := os.OpenFile(appendThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)

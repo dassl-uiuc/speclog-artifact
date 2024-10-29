@@ -1,13 +1,14 @@
 package main
 
 import (
-	"github.com/scalog/scalog/scalog_api"
+	"encoding/json"
 	"fmt"
-	"time"
+	"log"
 	"os"
 	"strconv"
-	"encoding/json"
-	"log"
+	"time"
+
+	"github.com/scalog/scalog/scalog_api"
 	"github.com/spf13/viper"
 )
 
@@ -15,13 +16,36 @@ var e2eLatenciesFilePath = "/proj/rasl-PG0/tshong/speclog/applications/vanilla_a
 var readThroughputFilePath = "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/read_throughput.txt"
 var intrusionDetectionConfigFilePath = "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/intrusion_detection_config.yaml"
 var processingTime = int64(2000)
+var detectionTimeRangeNs = int64(10000)
+var window = make([]map[string]interface{}, 1)
+var clickRateThreshold = 5
 
 // TODO: Add computation here
-func HandleIntrusion() {
+func HandleIntrusion(record map[string]interface{}) {
 	// fmt.Println("Handling intrusion")
 	processingStartTime := time.Now().UnixMicro()
-	for time.Now().UnixMicro() - processingStartTime < processingTime {
-		// Do nothing
+
+	var timestamp int64 = int64(record["timestamp"].(float64))
+
+	window = append(window, record)
+	var durationNs int64
+	for {
+		durationNs = timestamp - window[0]["timestamp"].(int64)
+		if durationNs > detectionTimeRangeNs {
+			window = window[1:] // remove the first element
+		} else {
+			break
+		}
+	}
+
+	var totalClick int = 0
+	for i := 0; i < len(window); i++ {
+		totalClick += window[i]["click"].(int)
+	}
+
+	clickRate := totalClick / int(durationNs/1000000000)
+	if clickRate > clickRateThreshold {
+		fmt.Println("Intrusion detected")
 	}
 }
 
@@ -46,7 +70,7 @@ func IntrusionDetectionProcessing(readerId int32) {
 	recordsReceived := 0
 	e2eLatencies := make([]int64, 1000000)
 	startThroughputTimer := time.Now().UnixNano()
-	for (time.Now().Unix() - startTimeInSeconds < (runTime)) {
+	for time.Now().Unix()-startTimeInSeconds < (runTime) {
 		offset := scalogApi.GetLatestOffset()
 		if offset != prevOffset {
 			for i := prevOffset; i < offset; i++ {
@@ -58,7 +82,7 @@ func IntrusionDetectionProcessing(readerId int32) {
 					return
 				}
 
-				// HandleIntrusion()
+				HandleIntrusion(record)
 
 				// Calculate end-to-end latency
 				e2eLatencies[recordsReceived] = time.Now().UnixNano() - int64(record["timestamp"].(float64))
@@ -91,7 +115,7 @@ func IntrusionDetectionProcessing(readerId int32) {
 	}
 
 	// Calculate throughput
-	throughput := float64(recordsReceived) / float64((endThroughputTimer - startThroughputTimer) / 1000000000)
+	throughput := float64(recordsReceived) / float64((endThroughputTimer-startThroughputTimer)/1000000000)
 	file, err = os.OpenFile(readThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -106,7 +130,7 @@ func IntrusionDetectionProcessing(readerId int32) {
 	// Purpose is to wait for producers to finish appending and write their stats to files
 	endingTimeout := 10
 	startTimeInSeconds = time.Now().Unix()
-	for (time.Now().Unix() - startTimeInSeconds < (int64(endingTimeout))) {
+	for time.Now().Unix()-startTimeInSeconds < (int64(endingTimeout)) {
 		// wait for the remaining time to elapse
 	}
 }
