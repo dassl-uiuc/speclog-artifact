@@ -3,9 +3,8 @@
 source ./common.sh
 
 # parameters
-runtime_secs=120
-# computation_time=(100 200 500 800 1000 1200)
-computation_time=(1000)
+runtime_secs=60
+computation_time=(100 200 500 800 1000 1200)
 
 
 for computation_time in "${computation_time[@]}";
