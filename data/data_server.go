@@ -924,8 +924,11 @@ func (s *DataServer) reportLocalCut() {
 			lcs.Cuts = make([]*orderpb.LocalCut, lag)
 			numEntries := int64(0)
 
-			for i := int64(1); i <= lag; i++ {
+			fixed := 0
+			timeout := false
+			for i := int64(1); i <= lag && !timeout; i++ {
 				s.localCutNum += 1
+				fixed += 1
 				lcs.Cuts[i-1] = &orderpb.LocalCut{
 					ShardID:        s.shardID,
 					LocalReplicaID: s.replicaID,
@@ -945,12 +948,27 @@ func (s *DataServer) reportLocalCut() {
 
 				if s.localCutNum == s.numLocalCutsThreshold-1 {
 					startTime := time.Now()
-					s.quota = <-s.waitForNewQuota
-					s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
-					s.stats.numQuotas++
-					s.windowNumber++
-					s.localCutNum = -1
+					// there can be a deadlock here, as there could be a mismatch between the percieved lag at the ordering layer and the actual lag, in such a case, make it best effort and send as many cuts as you can.
+					select {
+					case s.quota = <-s.waitForNewQuota:
+						s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
+						s.stats.numQuotas++
+						s.windowNumber++
+						s.localCutNum = -1
+					case <-time.After(s.batchingInterval):
+						log.Printf("timed out waiting for new quota")
+						// simply continue, we will send as many cuts as we can
+						timeout = true
+					}
 				}
+			}
+
+			if timeout {
+				log.Printf("timed out waiting for new quota, sent %v cuts", fixed)
+				// mark last cut with fixed lag
+				lcs.Cuts[fixed-1].Feedback.FixedLag = true
+				// resize slice
+				lcs.Cuts = lcs.Cuts[:fixed]
 			}
 
 			// get current local cut
