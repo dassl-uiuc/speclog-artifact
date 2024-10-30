@@ -1,7 +1,7 @@
 #!/bin/bash
-PASSLESS_ENTRY="/users/sgbhat3/.ssh/id_rsa"
+PASSLESS_ENTRY="/users/tshong/.ssh/id_rsa"
 
-benchmark_dir="/proj/rasl-PG0/sgbhat3/speclog/benchmarking"
+benchmark_dir="/proj/rasl-PG0/tshong/speclog/benchmarking"
 LOGDIR="/data"
 
 # index into remote_nodes/ips for order nodes
@@ -48,19 +48,19 @@ drop_server_caches() {
 collect_logs() {
     for svr in ${order[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY tshong@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
     for svr in ${data_0[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY tshong@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
     # for svr in ${data_1[@]};
     # do 
-    #     scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+    #     scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY tshong@$svr:/data/*.log $benchmark_dir/logs/ &
     # done 
     for svr in ${client_nodes[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY tshong@$svr:/data/*.log $benchmark_dir/logs/ &
     done
     wait
 }
@@ -111,7 +111,7 @@ check_data_log() {
 
 
 start_append_clients() {
-    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; ./run_append_client.sh $2 $3 $1 $4 $5 $6 > ${LOGDIR}/client_$1.log 2>&1" &
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; ./run_append_client.sh $2 $3 $1 $4 $5 $6 $7 $8 > ${LOGDIR}/client_$1.log 2>&1" &
 }
 
 # args: client node, computation time, runtime secs

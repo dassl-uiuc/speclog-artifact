@@ -234,7 +234,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.confirmationRecords = make(map[int64]*datapb.Record)
 	s.views = make(map[int64]int32)
 
-	s.quota = 2
+	s.quota = 1
 	s.localCutNum = -1
 	s.numLocalCutsThreshold = 100
 	s.waitForNewQuota = make(chan int64, 4096)
@@ -777,8 +777,6 @@ func (s *DataServer) processAck() {
 		s.waitMu.RUnlock()
 		if ok {
 			c <- ack
-		} else {
-			log.Errorf("error wait does not contain clientId")
 		}
 	}
 }
@@ -1047,7 +1045,7 @@ func (s *DataServer) reportLocalCut() {
 			// reset timer
 			holeTimer.Reset(holeTimerDuration)
 		case <-printTicker.C:
-			s.stats.printStats()
+			// s.stats.printStats()
 		}
 	}
 }
@@ -1176,6 +1174,7 @@ func (s *DataServer) processCommittedEntry() {
 											ViewID:         s.viewID,
 											GlobalSN:       startGSN + int64(j),
 										}
+
 										s.ackC <- ack
 									}
 

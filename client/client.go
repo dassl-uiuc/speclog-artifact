@@ -50,7 +50,7 @@ type Client struct {
 	view               *view.View
 	viewC              chan *discpb.View
 	appendC            chan *datapb.Record
-	ackC               chan *datapb.Ack
+	AckC               chan *datapb.Ack
 	subC               chan CommittedRecord
 	confC              chan SpeculationConf
 	committedRecords   map[int64]CommittedRecord
@@ -70,6 +70,9 @@ type Client struct {
 	dataConnMu         sync.Mutex
 	dataAppendClient   map[int32]datapb.Data_AppendClient
 	dataAppendClientMu sync.Mutex
+
+	outstandingRequestsLimit int32
+	outstandingRequestsChan  chan bool
 }
 
 func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32, shardingHint int64) (*Client, error) {
@@ -83,10 +86,12 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 		discAddr:     discAddr,
 		shardingHint: shardingHint,
 	}
+	c.outstandingRequestsLimit = 1
+	c.outstandingRequestsChan = make(chan bool, c.outstandingRequestsLimit)
 	c.shardingPolicy = NewShardingPolicyWithHint(numReplica, shardingHint)
 	c.viewC = make(chan *discpb.View, 4096)
 	c.appendC = make(chan *datapb.Record, 4096)
-	c.ackC = make(chan *datapb.Ack, 4096)
+	c.AckC = make(chan *datapb.Ack, 4096)
 	c.subC = make(chan CommittedRecord, 4096)
 	c.dataConn = make(map[int32]*grpc.ClientConn)
 	c.dataAppendClient = make(map[int32]datapb.Data_AppendClient)
@@ -112,10 +117,12 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 		dataAddr:   dataAddr,
 		discAddr:   discAddr,
 	}
+	c.outstandingRequestsLimit = 1
+	c.outstandingRequestsChan = make(chan bool, c.outstandingRequestsLimit)
 	c.shardingPolicy = NewDefaultShardingPolicy(numReplica)
 	c.viewC = make(chan *discpb.View, 4096)
 	c.appendC = make(chan *datapb.Record, 4096)
-	c.ackC = make(chan *datapb.Ack, 4096)
+	c.AckC = make(chan *datapb.Ack, 4096)
 	c.subC = make(chan CommittedRecord, 4096)
 	c.dataConn = make(map[int32]*grpc.ClientConn)
 	c.dataAppendClient = make(map[int32]datapb.Data_AppendClient)
@@ -212,7 +219,14 @@ func (c *Client) getDataAppendClient(shard, replica int32) (datapb.Data_AppendCl
 	if client, ok := c.dataAppendClient[globalReplicaID]; ok && client != nil {
 		return client, nil
 	}
-	return c.buildDataAppendClient(shard, replica)
+	client, err := c.buildDataAppendClient(shard, replica)
+	if err != nil {
+		return nil, err
+	}
+
+	go c.ProcessAck(&client)
+
+	return client, err
 }
 
 func (c *Client) buildDataAppendClient(shard, replica int32) (datapb.Data_AppendClient, error) {
@@ -242,8 +256,8 @@ func (c *Client) getDataServerConn(shard, replica int32) (*grpc.ClientConn, erro
 
 func (c *Client) Start() {
 	go c.processView()
-	go c.processAppend()
-	go c.processAck()
+	go c.ProcessAppend()
+	// go c.ProcessAck()
 }
 
 func (c *Client) processView() {
@@ -256,14 +270,9 @@ func (c *Client) processView() {
 	}
 }
 
-func (c *Client) processAppend() {
+func (c *Client) ProcessAppend() {
 	for r := range c.appendC {
 		shard, replica := c.shardingPolicy.Shard(c.view, r.Record)
-		r := &datapb.Record{
-			ClientID: c.clientID,
-			ClientSN: c.getNextClientSN(),
-			Record:   r.Record,
-		}
 		// log.Infof("shard: %v, replica: %v\n", shard, replica)
 		client, err := c.getDataAppendClient(shard, replica)
 		if err != nil {
@@ -277,9 +286,20 @@ func (c *Client) processAppend() {
 	}
 }
 
-func (c *Client) processAck() {
-	for r := range c.ackC {
-		_ = r
+func (c *Client) ProcessAck(client *datapb.Data_AppendClient) {
+	for {
+		ack, err := (*client).Recv()
+		if err != nil {
+			if err == io.EOF {
+				log.Infof("Stream closed by server.")
+				return
+			}
+			log.Errorf("Failed to receive ack: %v", err)
+			continue
+		}
+
+		<-c.outstandingRequestsChan
+		c.AckC <- ack
 	}
 }
 
@@ -289,6 +309,7 @@ func (c *Client) getNextClientSN() int32 {
 }
 
 func (c *Client) Append(record string) (int64, int32, error) {
+	c.outstandingRequestsChan <- true
 	r := &datapb.Record{
 		ClientID: c.clientID,
 		ClientSN: c.getNextClientSN(),
