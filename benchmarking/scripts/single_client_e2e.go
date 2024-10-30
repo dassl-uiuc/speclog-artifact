@@ -127,7 +127,7 @@ func computationThread() {
 		totalBatchingLatency += float64(time.Now().Sub(startBatch).Microseconds())
 
 		if len(batch) > 0 {
-			if len(batch) < 5 {
+			if len(batch) < 15 {
 				start := time.Now()
 				for time.Now().Sub(start).Microseconds() < computationTimeUs {
 					continue
@@ -139,7 +139,8 @@ func computationThread() {
 				numBatches++
 				batch = make([]*client.CommittedRecord, 0)
 			} else {
-				log.Printf("[single_client_e2e]: warning! batch size %v is greater than 5", len(batch))
+				log.Printf("[single_client_e2e]: warning! batch size %v is greater than 15", len(batch))
+				batch = make([]*client.CommittedRecord, 0)
 			}
 		}
 	}
@@ -221,8 +222,9 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 	}
 
-	wg.Add(5)
-	for i := 0; i < 4; i++ {
+	log.Printf("[single_client_e2e]: starting benchmark with runtime %v", runTimeSecs)
+	wg.Add(11)
+	for i := 0; i < 10; i++ {
 		c, err := client.NewClientWithShardingHint(dataAddr, discAddr, numReplica, int64(i))
 		if err != nil {
 			log.Fatalf("%v", err)

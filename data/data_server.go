@@ -234,7 +234,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.confirmationRecords = make(map[int64]*datapb.Record)
 	s.views = make(map[int64]int32)
 
-	s.quota = 1
+	s.quota = 2
 	s.localCutNum = -1
 	s.numLocalCutsThreshold = 100
 	s.waitForNewQuota = make(chan int64, 4096)

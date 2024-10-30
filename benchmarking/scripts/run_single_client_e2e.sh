@@ -4,7 +4,7 @@ source ./common.sh
 
 # parameters
 runtime_secs=20
-computation_time=(100 200 500 800 1000 1200)
+computation_time=(100)
 
 
 for computation_time in "${computation_time[@]}";
