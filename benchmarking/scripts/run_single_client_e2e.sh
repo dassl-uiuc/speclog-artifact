@@ -5,7 +5,7 @@ source ./common.sh
 
 # parameters
 runtime_secs=20
-computation_time=(100)
+computation_time=(100 200 500 800 1000 1200)
 
 
 for computation_time in "${computation_time[@]}";
@@ -19,6 +19,7 @@ do
     start_data_nodes 
     start_discovery
 
+    sleep 1
     start_e2e_clients ${client_nodes[0]} $computation_time $runtime_secs
     echo "Waiting for clients to terminate"
 
