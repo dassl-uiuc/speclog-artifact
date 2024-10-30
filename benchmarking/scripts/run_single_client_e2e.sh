@@ -4,7 +4,7 @@ set -x
 source ./common.sh
 
 # parameters
-runtime_secs=20
+runtime_secs=60
 computation_time=(100 200 500 800 1000 1200)
 
 
