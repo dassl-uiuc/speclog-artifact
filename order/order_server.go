@@ -330,16 +330,16 @@ func (s *OrderServer) isLastLagFixed(lastLag map[int32]int64) bool {
 
 func (s *OrderServer) getNewQuota(rid int32, lc *orderpb.LocalCut) int64 {
 	// the general idea here is to have very low tolerance for a higher period and moderate to high tolerance to a lower avg cut period
-	// defaultFreq := float64(1e9 / s.batchingInterval.Nanoseconds())
-	// currentFreq := float64(1e9 / s.avgDelta[rid].Avg())
+	defaultFreq := float64(1e9 / s.batchingInterval.Nanoseconds())
+	currentFreq := float64(1e9 / s.avgDelta[rid].Avg())
 
-	// if (currentFreq-defaultFreq)/defaultFreq >= 0.1 || (defaultFreq-currentFreq)/defaultFreq >= 0.2 {
-	// 	newQuota := int64(math.Ceil(float64(lc.Quota) * currentFreq / defaultFreq))
-	// 	if newQuota < 1 {
-	// 		newQuota = 1
-	// 	}
-	// 	return newQuota
-	// }
+	if (currentFreq-defaultFreq)/defaultFreq >= 0.4 || (defaultFreq-currentFreq)/defaultFreq >= 0.3 {
+		newQuota := int64(math.Ceil(float64(lc.Quota) * currentFreq / defaultFreq))
+		if newQuota < 1 {
+			newQuota = 1
+		}
+		return newQuota
+	}
 	return lc.Quota
 }
 

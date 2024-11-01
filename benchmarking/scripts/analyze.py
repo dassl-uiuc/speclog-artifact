@@ -72,7 +72,7 @@ def get_avg_throughput(directory, num_bytes_per_op):
     return None
 
 # Example usage
-clients = [8]
+clients = [80]
 print(f"#clients,avg tput(ops/sec),avg latency(ms/op),p50 latency(ms/op),p99 latency(ms/op)")
 for n in clients:
     directory_path = "../results/1ms/append_bench_" + str(n)

@@ -134,7 +134,7 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 	}
 	endTime := time.Now()
 
-	<-stop
+	close(stop)
 
 	fmt.Println("client finished")
 	// Calculate difference between runEndTimes and runStartTimes
