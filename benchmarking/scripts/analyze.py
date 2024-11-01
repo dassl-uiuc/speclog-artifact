@@ -16,6 +16,13 @@ import numpy as np
     
 #     return False
 
+def is_int_convertible(s):
+    try:
+        int(s)
+        return True
+    except (ValueError, TypeError):
+        return False
+
 def get_latencies(directory):
     all_latencies = []
 
@@ -24,8 +31,12 @@ def get_latencies(directory):
             file_path = os.path.join(directory, filename)
             with open(file_path, 'r') as csvfile:
                 csv_reader = csv.DictReader(csvfile)
-                latencies = [int(row["latency(ns)"]) for row in csv_reader]
-                all_latencies.extend(latencies)
+                for row in csv_reader:
+                    latency_value = row.get("latency(ns)")
+                    if latency_value is not None and is_int_convertible(latency_value):
+                        all_latencies.append(int(latency_value))
+                    else:
+                        print(f"Invalid or missing latency value in row: {row}")
     
     return all_latencies
 
@@ -49,26 +60,24 @@ def get_avg_throughput(directory, num_bytes_per_op):
                 first_line = next(csv_reader, None)
             
             if first_line:
-                total_bytes += int(first_line[5])
-                max_total_time = max(max_total_time, int(first_line[6]))
+                if first_line[5] is None or first_line[6] is None or not is_int_convertible(first_line[5]) or not is_int_convertible(first_line[6]):
+                    print(f"Invalid or missing value in first line of file {filename}: {first_line}")
+                else:
+                    total_bytes += int(first_line[5])
+                    max_total_time = max(max_total_time, int(first_line[6]))
     
     if max_total_time > 0:
         return total_bytes * 1e9 / max_total_time / num_bytes_per_op
     
     return None
 
-#clients = [2, 4, 6, 8, 16, 20, 32, 64, 128, 256, 512, 600, 700, 800, 900, 1000, 1200, 1300]
-clients = [4]
-throughput = []
-latency = []
-
+# Example usage
+clients = [8]
 print(f"#clients,avg tput(ops/sec),avg latency(ms/op),p50 latency(ms/op),p99 latency(ms/op)")
 for n in clients:
-    # Specify the directory path
     directory_path = "../results/1ms/append_bench_" + str(n)
-
-    # Calculate and print the average throughput
     avg_tput = get_avg_throughput(directory_path, 4096)
-    mean, p50, p99 = get_latency_metrics(get_latencies(directory_path))
+    latencies = get_latencies(directory_path)
+    mean, p50, p99 = get_latency_metrics(latencies)
 
     print(f"{n},{avg_tput},{mean},{p50},{p99}")

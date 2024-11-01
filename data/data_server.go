@@ -838,7 +838,7 @@ func (s *DataServer) reportLocalCut() {
 	for {
 		select {
 		case lcNum := <-s.localCutChan:
-			if lcNum == s.prevSentLocalCut+s.quota {
+			if lcNum >= s.prevSentLocalCut+s.quota {
 				// create lcs
 				lcs = &orderpb.LocalCuts{
 					FixingLag: false,
@@ -962,7 +962,7 @@ func (s *DataServer) reportLocalCut() {
 			}
 
 			if timeout {
-				log.Printf("timed out waiting for new quota, sent %v cuts", fixed)
+				log.Printf("timed out waiting for new quota, cannot send %v cuts, sending %v cuts", lag, fixed)
 				// mark last cut with fixed lag
 				lcs.Cuts[fixed-1].Feedback.FixedLag = true
 				// resize slice
@@ -996,7 +996,7 @@ func (s *DataServer) reportLocalCut() {
 				}
 			}
 
-			s.stats.totalCutsSent += lag
+			s.stats.totalCutsSent += int64(fixed)
 			s.stats.numCuts += 1
 
 			log.Debugf("Data report: %v", lcs)
@@ -1014,6 +1014,16 @@ func (s *DataServer) reportLocalCut() {
 
 			// update prevSentLocalCut
 			s.prevSentLocalCut += numEntries
+
+			// in case there has been a timeout, I now need to wait for the next quota
+			if timeout && s.localCutNum == s.numLocalCutsThreshold-1 {
+				startTime := time.Now()
+				s.quota = <-s.waitForNewQuota
+				s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
+				s.stats.numQuotas++
+				s.windowNumber++
+				s.localCutNum = -1
+			}
 
 			// reset hole timer
 			if !holeTimer.Stop() {
@@ -1045,7 +1055,7 @@ func (s *DataServer) reportLocalCut() {
 			// reset timer
 			holeTimer.Reset(holeTimerDuration)
 		case <-printTicker.C:
-			// s.stats.printStats()
+			s.stats.printStats()
 		}
 	}
 }
@@ -1183,9 +1193,7 @@ func (s *DataServer) processCommittedEntry() {
 									if r, ok := s.committedRecords[startGSN+int64(j)]; ok {
 										if r.ClientID != record.ClientID || r.ClientSN != record.ClientSN {
 											log.Errorf("error, speculated record does not match")
-											log.Errorf(
-												"Speculated record: %v, Actual record: %v, Correct GSN: %v", r, record, startGSN+int64(j), startGSN+int64(j),
-											)
+											log.Errorf("Speculated record: %v, Actual record: %v, Correct GSN: %v", r, record, startGSN+int64(j))
 										}
 									}
 									s.committedRecordsMu.RUnlock()

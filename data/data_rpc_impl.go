@@ -35,6 +35,7 @@ func (s *DataServer) Append(stream datapb.Data_AppendServer) error {
 				go s.respondToClient(cid, done, stream)
 				initialized = true
 			}
+			s.recordsInPipeline.Add(1)
 			s.appendC <- record
 		}
 	}

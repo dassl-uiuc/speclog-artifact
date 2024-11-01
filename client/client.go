@@ -86,7 +86,7 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 		discAddr:     discAddr,
 		shardingHint: shardingHint,
 	}
-	c.outstandingRequestsLimit = 1
+	c.outstandingRequestsLimit = 10
 	c.outstandingRequestsChan = make(chan bool, c.outstandingRequestsLimit)
 	c.shardingPolicy = NewShardingPolicyWithHint(numReplica, shardingHint)
 	c.viewC = make(chan *discpb.View, 4096)
@@ -104,6 +104,7 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 		return nil, err
 	}
 	go c.subscribeView()
+	c.Start()
 	return c, nil
 }
 
@@ -117,7 +118,7 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 		dataAddr:   dataAddr,
 		discAddr:   discAddr,
 	}
-	c.outstandingRequestsLimit = 1
+	c.outstandingRequestsLimit = 10
 	c.outstandingRequestsChan = make(chan bool, c.outstandingRequestsLimit)
 	c.shardingPolicy = NewDefaultShardingPolicy(numReplica)
 	c.viewC = make(chan *discpb.View, 4096)
@@ -135,6 +136,7 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 		return nil, err
 	}
 	go c.subscribeView()
+	c.Start()
 	return c, nil
 }
 
@@ -224,7 +226,7 @@ func (c *Client) getDataAppendClient(shard, replica int32) (datapb.Data_AppendCl
 		return nil, err
 	}
 
-	go c.ProcessAck(&client)
+	go c.processAck(&client)
 
 	return client, err
 }
@@ -256,8 +258,8 @@ func (c *Client) getDataServerConn(shard, replica int32) (*grpc.ClientConn, erro
 
 func (c *Client) Start() {
 	go c.processView()
-	go c.ProcessAppend()
-	// go c.ProcessAck()
+	go c.processAppend()
+	// go c.processAck()
 }
 
 func (c *Client) processView() {
@@ -270,7 +272,7 @@ func (c *Client) processView() {
 	}
 }
 
-func (c *Client) ProcessAppend() {
+func (c *Client) processAppend() {
 	for r := range c.appendC {
 		shard, replica := c.shardingPolicy.Shard(c.view, r.Record)
 		// log.Infof("shard: %v, replica: %v\n", shard, replica)
@@ -286,7 +288,7 @@ func (c *Client) ProcessAppend() {
 	}
 }
 
-func (c *Client) ProcessAck(client *datapb.Data_AppendClient) {
+func (c *Client) processAck(client *datapb.Data_AppendClient) {
 	for {
 		ack, err := (*client).Recv()
 		if err != nil {

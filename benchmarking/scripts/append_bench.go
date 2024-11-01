@@ -6,12 +6,13 @@ import (
 	"strconv"
 	"time"
 
+	"context"
+
 	"github.com/scalog/scalog/benchmark/util"
 	"github.com/scalog/scalog/client"
 	log "github.com/scalog/scalog/logger"
 	"github.com/scalog/scalog/pkg/address"
 	"github.com/spf13/viper"
-	"context"
 	rateLimiter "golang.org/x/time/rate"
 )
 
@@ -68,9 +69,14 @@ func appendOne(cli *client.Client, timeLimit time.Duration, numberOfBytes int, f
 	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
 }
 
-func ack(cli *client.Client, runEndTimes *[]time.Time) {
-	for _ = range cli.AckC {
-		*runEndTimes = append(*runEndTimes, time.Now())
+func ack(cli *client.Client, runEndTimes *[]time.Time, stop chan bool) {
+	for {
+		select {
+		case <-cli.AckC:
+			*runEndTimes = append(*runEndTimes, time.Now())
+		case <-stop:
+			return
+		}
 	}
 }
 
@@ -83,18 +89,20 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 	var runTimes []time.Duration
 	var numberOfRequest int
 
-	go cli.ProcessAppend()
-	go ack(cli, &runEndTimes)
+	stop := make(chan bool)
+	go ack(cli, &runEndTimes, stop)
 
 	startTime := time.Now()
 	numberOfRequest = 0
 
-	limiter := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 1)
+	fmt.Println("starting client with rate limit: ", rate)
+
+	limiter := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 10)
 
 	for stay, timeout := true, time.After(timeLimit); stay; {
 		err := limiter.Wait(context.Background())
 		if err != nil {
-			log.Errorf("rate limiter error: %v", err)
+			fmt.Errorf("rate limiter error: ", err)
 			return
 		}
 
@@ -106,7 +114,6 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 		var shard int32
 		gsn, shard, err = cli.Append(record)
 		runStartTimes = append(runStartTimes, time.Now())
-		fmt.Println("Number of requests: ", numberOfRequest)
 
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
@@ -127,19 +134,15 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 	}
 	endTime := time.Now()
 
-	time.Sleep(60 * time.Second)
+	<-stop
 
-	fmt.Println("Client has finished")
-	if len(runEndTimes) != len(runStartTimes) {
-		log.Errorf("runEndTimes and runStartTimes have different length")
-		return
-	}
+	fmt.Println("client finished")
 	// Calculate difference between runEndTimes and runStartTimes
 	for i := 0; i < len(runEndTimes); i++ {
 		runTimes = append(runTimes, runEndTimes[i].Sub(runStartTimes[i]))
 	}
 
-	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
+	util.LogCsvFile(len(runEndTimes), numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
 }
 
 func main() {
