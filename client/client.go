@@ -45,7 +45,7 @@ type Client struct {
 	view               *view.View
 	viewC              chan *discpb.View
 	appendC            chan *datapb.Record
-	ackC               chan *datapb.Ack
+	AckC               chan *datapb.Ack
 	subC               chan CommittedRecord
 	committedRecords   map[int64]CommittedRecord
 	committedRecordsMu sync.RWMutex
@@ -64,9 +64,7 @@ type Client struct {
 	dataAppendClientMu sync.Mutex
 
 	outstandingRequestsLimit int32
-
-	runStartTimes []time.Time
-	runEndTimes []time.Time
+	outstandingRequestsChan  chan bool
 }
 
 func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32, shardingHint int64) (*Client, error) {
@@ -80,11 +78,12 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 		discAddr:     discAddr,
 		shardingHint: shardingHint,
 	}
-	c.outstandingRequestsLimit = 64
+	c.outstandingRequestsLimit = 10
+	c.outstandingRequestsChan = make(chan bool, c.outstandingRequestsLimit)
 	c.shardingPolicy = NewShardingPolicyWithHint(numReplica, shardingHint)
 	c.viewC = make(chan *discpb.View, 4096)
 	c.appendC = make(chan *datapb.Record, c.outstandingRequestsLimit)
-	c.ackC = make(chan *datapb.Ack, 4096)
+	c.AckC = make(chan *datapb.Ack, 4096)
 	c.subC = make(chan CommittedRecord, 4096)
 	c.dataConn = make(map[int32]*grpc.ClientConn)
 	c.dataAppendClient = make(map[int32]datapb.Data_AppendClient)
@@ -95,6 +94,7 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 		return nil, err
 	}
 	go c.subscribeView()
+	c.Start()
 	return c, nil
 }
 
@@ -108,11 +108,12 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 		dataAddr:   dataAddr,
 		discAddr:   discAddr,
 	}
-	c.outstandingRequestsLimit = 64
+	c.outstandingRequestsLimit = 10
+	c.outstandingRequestsChan = make(chan bool, c.outstandingRequestsLimit)
 	c.shardingPolicy = NewDefaultShardingPolicy(numReplica)
 	c.viewC = make(chan *discpb.View, 4096)
 	c.appendC = make(chan *datapb.Record, c.outstandingRequestsLimit)
-	c.ackC = make(chan *datapb.Ack, 4096)
+	c.AckC = make(chan *datapb.Ack, 4096)
 	c.subC = make(chan CommittedRecord, 4096)
 	c.dataConn = make(map[int32]*grpc.ClientConn)
 	c.dataAppendClient = make(map[int32]datapb.Data_AppendClient)
@@ -207,7 +208,14 @@ func (c *Client) getDataAppendClient(shard, replica int32) (datapb.Data_AppendCl
 	if client, ok := c.dataAppendClient[globalReplicaID]; ok && client != nil {
 		return client, nil
 	}
-	return c.buildDataAppendClient(shard, replica)
+	client, err := c.buildDataAppendClient(shard, replica)
+	if err != nil {
+		return nil, err
+	}
+
+	go c.processAck(&client)
+
+	return client, err
 }
 
 func (c *Client) buildDataAppendClient(shard, replica int32) (datapb.Data_AppendClient, error) {
@@ -237,8 +245,8 @@ func (c *Client) getDataServerConn(shard, replica int32) (*grpc.ClientConn, erro
 
 func (c *Client) Start() {
 	go c.processView()
-	go c.ProcessAppend()
-	go c.processAck()
+	go c.processAppend()
+	// go c.processAck()
 }
 
 func (c *Client) processView() {
@@ -251,19 +259,8 @@ func (c *Client) processView() {
 	}
 }
 
-func (c *Client) GetRunEndTimes() []time.Time {
-	return c.runEndTimes
-}
-
-func (c *Client) GetRunStartTimes() []time.Time {
-	return c.runStartTimes
-}
-
-func (c *Client) ProcessAppend() {
+func (c *Client) processAppend() {
 	for r := range c.appendC {
-		runStartTime := time.Now()
-		c.runStartTimes = append(c.runStartTimes, runStartTime)
-
 		shard, replica := c.shardingPolicy.Shard(c.view, r.Record)
 		// log.Infof("shard: %v, replica: %v\n", shard, replica)
 		client, err := c.getDataAppendClient(shard, replica)
@@ -275,7 +272,12 @@ func (c *Client) ProcessAppend() {
 		if err != nil {
 			log.Errorf("%v", err)
 		}
-		_, err = client.Recv()
+	}
+}
+
+func (c *Client) processAck(client *datapb.Data_AppendClient) {
+	for {
+		ack, err := (*client).Recv()
 		if err != nil {
 			if err == io.EOF {
 				log.Infof("Stream closed by server.")
@@ -285,14 +287,8 @@ func (c *Client) ProcessAppend() {
 			continue
 		}
 
-		runEndTime := time.Now()
-		c.runEndTimes = append(c.runEndTimes, runEndTime)
-	}
-}
-
-func (c *Client) processAck() {
-	for r := range c.ackC {
-		_ = r
+		<-c.outstandingRequestsChan
+		c.AckC <- ack
 	}
 }
 
@@ -302,12 +298,12 @@ func (c *Client) getNextClientSN() int32 {
 }
 
 func (c *Client) Append(record string) (int64, int32, error) {
+	c.outstandingRequestsChan <- true
 	r := &datapb.Record{
 		ClientID: c.clientID,
 		ClientSN: c.getNextClientSN(),
 		Record:   record,
 	}
-
 	c.appendC <- r
 	return 0, 0, nil
 }
