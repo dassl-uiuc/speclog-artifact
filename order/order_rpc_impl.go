@@ -80,7 +80,7 @@ func (s *OrderServer) Forward(stream orderpb.Order_ForwardServer) error {
 	}
 }
 
-func (s *OrderServer) Finalize(ctx context.Context, req *orderpb.FinalizeEntry) (*orderpb.Empty, error) {
+func (s *OrderServer) Finalize(ctx context.Context, req *orderpb.FinalizeRequest) (*orderpb.Empty, error) {
 	s.finalizeC <- req
 	return &orderpb.Empty{}, nil
 }

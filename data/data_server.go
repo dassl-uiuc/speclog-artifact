@@ -234,7 +234,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.confirmationRecords = make(map[int64]*datapb.Record)
 	s.views = make(map[int64]int32)
 
-	s.quota = 2
+	s.quota = 10
 	s.localCutNum = -1
 	s.numLocalCutsThreshold = 100
 	s.waitForNewQuota = make(chan int64, 4096)
@@ -348,6 +348,7 @@ func (s *DataServer) Start() {
 		go s.processNewSubscribers()
 		go s.processLiveSubscribe()
 		go s.processSpeculativeSubscribes()
+		// go s.finalizeShardStandby()
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)
@@ -784,6 +785,10 @@ func (s *DataServer) processAck() {
 }
 
 func (s *DataServer) registerToOrderingLayer() {
+	if s.shardID == 1 {
+		time.Sleep(30 * time.Second)
+	}
+
 	orderClient := orderpb.NewOrderClient(s.orderConn)
 
 	localCut := &orderpb.LocalCut{
@@ -813,6 +818,38 @@ func (s *DataServer) registerToOrderingLayer() {
 	}
 
 	log.Errorf("Max retries reached. Registration failed.")
+}
+
+func (s *DataServer) finalizeShardStandby() {
+	if s.shardID == 0 {
+		// Sleep for 15 seconds
+		time.Sleep(15 * time.Second)
+		// finalize shard
+		s.finalizeShard()
+	}
+}
+func (s *DataServer) finalizeShard() {
+	orderClient := orderpb.NewOrderClient(s.orderConn)
+	shard := &orderpb.FinalizeRequest{
+		ShardID: s.shardID,
+		LocalReplicaID: s.replicaID,
+	}
+	maxRetries := 5
+	for i := 0; i < maxRetries; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, err := orderClient.Finalize(ctx, shard)
+		if err == nil {
+			fmt.Println("Successfully finalized shard")
+			return
+		}
+		fmt.Printf("Finalize shard failed: %v\n", err)
+		// Wait before retrying
+		backoff := time.Duration((1 << i)) * time.Second
+		fmt.Printf("Retrying in %v...\n", backoff)
+		time.Sleep(backoff)
+	}
+	log.Errorf("Max retries reached. Finalize failed.")
 }
 
 func (s *DataServer) reportLocalCut() {

@@ -6,7 +6,7 @@ service Order {
 	rpc Report(stream LocalCuts) returns (stream CommittedEntry) {}
     rpc Register(LocalCut) returns (Empty) {}
 	rpc Forward(stream LocalCuts) returns (Empty) {}
-	rpc Finalize(FinalizeEntry) returns (Empty) {}
+	rpc Finalize(FinalizeRequest) returns (Empty) {}
 }
 
 message Feedback {
@@ -59,3 +59,8 @@ message FinalizeEntry {
 }
 
 message Empty {}
+
+message FinalizeRequest {
+	int32 shardID = 1;
+	int32 localReplicaID = 2;
+}

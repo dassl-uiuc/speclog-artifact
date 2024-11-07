@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"time"
 
+    "google.golang.org/grpc/codes"
+    "google.golang.org/grpc/status"
 	"github.com/scalog/scalog/benchmark/util"
 	"github.com/scalog/scalog/client"
 	log "github.com/scalog/scalog/logger"
@@ -72,10 +74,15 @@ func main() {
 		record := util.GenerateRandomString(numberOfBytes)
 		dataGenEndTime := time.Now()
 		runStartTime := time.Now()
-		gsn, shard, err := cli.AppendOne(record)
+		gsn, shard, err := cli.AppendOneTimeout(record, 1*time.Second)
 		runEndTime := time.Now()
 
 		if err != nil {
+			if status.Code(err) == codes.DeadlineExceeded {
+				fmt.Println("AppendOne call timed out, retrying...")
+				continue
+			}
+
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			goto end
 		}

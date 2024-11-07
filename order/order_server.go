@@ -89,7 +89,7 @@ type OrderServer struct {
 	forwardC         chan *orderpb.LocalCuts
 	proposeC         chan *orderpb.CommittedEntry
 	commitC          chan *orderpb.CommittedEntry
-	finalizeC        chan *orderpb.FinalizeEntry
+	finalizeC        chan *orderpb.FinalizeRequest
 	subC             map[int32]chan *orderpb.CommittedEntry
 	subCMu           sync.RWMutex
 	prevCut          map[int32]int64
@@ -111,6 +111,9 @@ type OrderServer struct {
 	numQuotaChanged      int64           // number of primaries in current window for whom quota has 	been changed
 	replicasInReserve    map[int32]int64 // replicas in reserve for next window
 	replicasStandby      map[int32]int64 // replicas in standby for next window (all replicas from shard not yet registered)
+	replicasFinalize     map[int32]int64 // replicas to be finalized
+	replicasFinalizeStandby map[int32]int64 // replicas in standby for finalization
+	replicasConfirmFinalize map[int32]int64 // replicas waiting to be confirmed finalized
 	processWindow        int64           // window number till which quota has been processed
 	prevCutTime          map[int32]time.Time
 
@@ -136,7 +139,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.forwardC = make(chan *orderpb.LocalCuts, 4096)
 	s.proposeC = make(chan *orderpb.CommittedEntry, 4096)
 	s.commitC = make(chan *orderpb.CommittedEntry, 4096)
-	s.finalizeC = make(chan *orderpb.FinalizeEntry, 4096)
+	s.finalizeC = make(chan *orderpb.FinalizeRequest, 4096)
 	s.subC = make(map[int32]chan *orderpb.CommittedEntry)
 
 	s.registerC = make(chan *orderpb.LocalCut, 4096)
@@ -149,6 +152,9 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.localCutChangeWindow = 100
 	s.replicasInReserve = make(map[int32]int64)
 	s.replicasStandby = make(map[int32]int64)
+	s.replicasFinalize = make(map[int32]int64)
+	s.replicasFinalizeStandby = make(map[int32]int64)
+	s.replicasConfirmFinalize = make(map[int32]int64)
 	s.assignWindow = 0
 	s.processWindow = -1
 
@@ -306,6 +312,27 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		}
 	}
 
+	// check if lcs num is equal to localCutChangeWindow-1
+	// If so we can clear some state
+	for rid := range lcs {
+        wn, ok := s.replicasConfirmFinalize[rid]
+        if !ok {
+            continue
+        }
+
+		log.Infof("Wn: %v, lowestWindowNum: %v, lowestLocalCutNum: %v", wn, lowestWindowNum, lowestLocalCutNum)
+
+        if wn == lowestWindowNum && lowestLocalCutNum == s.localCutChangeWindow-1 {	
+			if _, ok := s.replicasConfirmFinalize[rid]; ok {
+				log.Infof("Replica %v finalized", rid)
+				delete(s.avgHoles, rid)
+				delete(s.avgDelta, rid)
+				delete(s.replicasConfirmFinalize, rid)
+				delete(lcs, rid)
+			}
+		}
+	}
+
 	if lowestWindowNum > s.processWindow {
 		// TODO: delete old quota and unneccesary state
 		// if s.processWindow != -1 {
@@ -433,14 +460,31 @@ func (s *OrderServer) processReport() {
 					log.Debugf("Shard %v to be added in next avl window", lc.ShardID)
 				}
 			}
-		// case lc := <-s.finalizeC:
-		// A replica set requested to finalize
-		// This branch marks the replicas as finalized and removes them from the quota
-		// if s.isLeader { // finalize replicas
-		// get id, and add it to replicasFinalizeStandby
-		// check if all replicas from that shard have requested to finalize
-		// if all replicas have requested to finalize, move them to replicasFinalize and remove them from local data structures (avgHoles, avgDelta, replicasFinalizeStandby)
-		// }
+		case shard := <-s.finalizeC:
+			// A replica set requested to finalize
+			// This branch marks the replicas as finalized and removes them from the quota
+			if s.isLeader { // finalize replicas
+				id := shard.ShardID*s.dataNumReplica + shard.LocalReplicaID
+				s.replicasFinalizeStandby[id] = 0
+				log.Debugf("Replica %v requested to finalize", id)
+				// check if all replicas from that shard have requested to finalize
+				allRequestedToFinalize := true
+				for i := int32(0); i < s.dataNumReplica; i++ {
+					rid := shard.ShardID*s.dataNumReplica + i
+					_, ok := s.replicasFinalizeStandby[rid]
+					allRequestedToFinalize = allRequestedToFinalize && ok
+				}
+				if allRequestedToFinalize {
+					// all replicas from the shard have requested to finalize
+					for i := int32(0); i < s.dataNumReplica; i++ {
+						log.Infof("Replica %v requested to finalize", shard.ShardID*s.dataNumReplica+i)
+						rid := shard.ShardID*s.dataNumReplica + i
+						s.replicasFinalize[rid] = s.replicasFinalizeStandby[rid]
+						delete(s.replicasFinalizeStandby, rid)
+					}
+					log.Infof("Shard %v to be finalized in next avl window", shard.ShardID)
+				}
+			}
 		case <-ticker.C:
 			// TODO: check to make sure the key in lcs exist
 			// This thread is responsible for computing the committed cut and proposing it to the Raft node
@@ -474,8 +518,28 @@ func (s *OrderServer) processReport() {
 						s.quota[s.assignWindow][rid] = q
 					}
 
+					shardsFinalized := false
+					finalizeEntry := &orderpb.FinalizeEntry{ShardIDs: make([]int32, 0)}
 					// iterate over s.replicasFinalize and remove them from the quota for the next window
-					// clear replicasFinalize
+					for rid := range s.replicasFinalize {
+						delete(s.quota[s.assignWindow], rid)
+						s.replicasConfirmFinalize[rid] = s.assignWindow - 1
+						shardsFinalized = true
+
+						found := false
+						for _, sid := range finalizeEntry.ShardIDs {
+							if sid == rid/s.dataNumReplica {
+								found = true
+								break
+							}
+						}
+						if !found {
+							finalizeEntry.ShardIDs = append(finalizeEntry.ShardIDs, rid/s.dataNumReplica)
+						}
+					}
+
+					// clear replicas in finalize
+					s.replicasFinalize = make(map[int32]int64)
 
 					// clear replicas in reserve
 					s.replicasInReserve = make(map[int32]int64)
@@ -495,7 +559,8 @@ func (s *OrderServer) processReport() {
 						}
 					}
 
-					if incrViewId {
+					if incrViewId || shardsFinalized {
+						log.Infof("Incrementing view ID because shardFinalized: %v, incrViewId: %v", shardsFinalized, incrViewId)
 						atomic.AddInt32(&s.viewID, 1)
 						vid = atomic.LoadInt32(&s.viewID)
 					}
@@ -503,7 +568,8 @@ func (s *OrderServer) processReport() {
 					// increment window
 					s.assignWindow++
 
-					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid}, FinalizeShards: nil}
+					log.Infof("Finalizing shards: %v", finalizeEntry.ShardIDs)
+					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid}, FinalizeShards: finalizeEntry}
 					log.Printf("quota: %v", s.quota[s.assignWindow-1])
 				} else {
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
