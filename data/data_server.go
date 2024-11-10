@@ -86,6 +86,7 @@ func (s *Stats) printStats() {
 type WindowAndQuota struct {
 	windowNum int64
 	quota     map[int32]int64
+	startGSN  int64 // start gsn of the window
 	viewID    int32
 }
 
@@ -234,7 +235,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.confirmationRecords = make(map[int64]*datapb.Record)
 	s.views = make(map[int64]int32)
 
-	s.quota = 10
+	s.quota = 2
 	s.localCutNum = -1
 	s.numLocalCutsThreshold = 100
 	s.waitForNewQuota = make(chan int64, 4096)
@@ -427,7 +428,7 @@ func (s *DataServer) processLiveSubscribe() {
 					s.subWg.Done()
 					continue
 				}
-				if sub.state == BEHIND {
+				if sub.state == BEHIND && latestGsn >= sub.startGsn {
 					go s.sendToSubscriber(sub, latestGsn, false)
 				} else if sub.state == UPDATED {
 					go s.sendToSubscriber(sub, record.GlobalSN1, true)
@@ -595,6 +596,7 @@ func (s *DataServer) processSingleRecord(record *datapb.Record, nextGsn *int64, 
 			wq := <-s.nextAssignableWindowAndQuotas
 			*quotas = wq.quota
 			*viewID = wq.viewID
+			*nextGsn = wq.startGSN
 			*localCutNum = 0
 		}
 
@@ -786,7 +788,7 @@ func (s *DataServer) processAck() {
 
 func (s *DataServer) registerToOrderingLayer() {
 	if s.shardID == 1 {
-		time.Sleep(30 * time.Second)
+		time.Sleep(15 * time.Second)
 	}
 
 	orderClient := orderpb.NewOrderClient(s.orderConn)
@@ -831,7 +833,7 @@ func (s *DataServer) finalizeShardStandby() {
 func (s *DataServer) finalizeShard() {
 	orderClient := orderpb.NewOrderClient(s.orderConn)
 	shard := &orderpb.FinalizeRequest{
-		ShardID: s.shardID,
+		ShardID:        s.shardID,
 		LocalReplicaID: s.replicaID,
 	}
 	maxRetries := 5
@@ -1129,6 +1131,7 @@ func (s *DataServer) processCommittedEntry() {
 						windowNum: entry.CommittedCut.WindowNum,
 						quota:     quotasCopy,
 						viewID:    entry.CommittedCut.ViewID,
+						startGSN:  entry.CommittedCut.WindowStartGSN,
 					}
 				}
 			}

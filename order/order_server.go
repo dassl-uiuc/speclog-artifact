@@ -100,22 +100,23 @@ type OrderServer struct {
 	rnErrorC           <-chan error
 	rnSnapshotterReady <-chan *snap.Snapshotter
 
-	registerC            chan *orderpb.LocalCut // new replicas to be registered
-	lastCutTime          map[int32]time.Time
-	avgHoles             map[int32]*movingaverage.MovingAverage
-	avgDelta             map[int32]*movingaverage.MovingAverage
-	prevQueueLength      map[int32]int64
-	quota                map[int64](map[int32]int64) // map from window number to quota for window
-	localCutChangeWindow int64
-	assignWindow         int64           // next window to assign quota
-	numQuotaChanged      int64           // number of primaries in current window for whom quota has 	been changed
-	replicasInReserve    map[int32]int64 // replicas in reserve for next window
-	replicasStandby      map[int32]int64 // replicas in standby for next window (all replicas from shard not yet registered)
-	replicasFinalize     map[int32]int64 // replicas to be finalized
+	registerC               chan *orderpb.LocalCut // new replicas to be registered
+	lastCutTime             map[int32]time.Time
+	avgHoles                map[int32]*movingaverage.MovingAverage
+	avgDelta                map[int32]*movingaverage.MovingAverage
+	prevQueueLength         map[int32]int64
+	quota                   map[int64](map[int32]int64) // map from window number to quota for window
+	localCutChangeWindow    int64
+	assignWindow            int64           // next window to assign quota
+	windowStartGSN          map[int64]int64 // map from window number to start GSN
+	numQuotaChanged         int64           // number of primaries in current window for whom quota has 	been changed
+	replicasInReserve       map[int32]int64 // replicas in reserve for next window
+	replicasStandby         map[int32]int64 // replicas in standby for next window (all replicas from shard not yet registered)
+	replicasFinalize        map[int32]int64 // replicas to be finalized
 	replicasFinalizeStandby map[int32]int64 // replicas in standby for finalization
 	replicasConfirmFinalize map[int32]int64 // replicas waiting to be confirmed finalized
-	processWindow        int64           // window number till which quota has been processed
-	prevCutTime          map[int32]time.Time
+	processWindow           int64           // window number till which quota has been processed
+	prevCutTime             map[int32]time.Time
 
 	// stats
 	stats Stats
@@ -156,6 +157,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.replicasFinalizeStandby = make(map[int32]int64)
 	s.replicasConfirmFinalize = make(map[int32]int64)
 	s.assignWindow = 0
+	s.windowStartGSN = make(map[int64]int64)
 	s.processWindow = -1
 
 	s.rnConfChangeC = make(chan raftpb.ConfChange)
@@ -315,14 +317,14 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 	// check if lcs num is equal to localCutChangeWindow-1
 	// If so we can clear some state
 	for rid := range lcs {
-        wn, ok := s.replicasConfirmFinalize[rid]
-        if !ok {
-            continue
-        }
+		wn, ok := s.replicasConfirmFinalize[rid]
+		if !ok {
+			continue
+		}
 
 		log.Infof("Wn: %v, lowestWindowNum: %v, lowestLocalCutNum: %v", wn, lowestWindowNum, lowestLocalCutNum)
 
-        if wn == lowestWindowNum && lowestLocalCutNum == s.localCutChangeWindow-1 {	
+		if wn == lowestWindowNum && lowestLocalCutNum == s.localCutChangeWindow-1 {
 			if _, ok := s.replicasConfirmFinalize[rid]; ok {
 				log.Infof("Replica %v finalized", rid)
 				delete(s.avgHoles, rid)
@@ -565,11 +567,22 @@ func (s *OrderServer) processReport() {
 						vid = atomic.LoadInt32(&s.viewID)
 					}
 
+					// update window start GSN
+					if s.assignWindow == 0 {
+						s.windowStartGSN[s.assignWindow] = 0
+					} else {
+						sumQuotas := 0
+						for _, q := range s.quota[s.assignWindow-1] {
+							sumQuotas += int(q)
+						}
+						s.windowStartGSN[s.assignWindow] = s.windowStartGSN[s.assignWindow-1] + int64(sumQuotas)*s.localCutChangeWindow
+					}
+
 					// increment window
 					s.assignWindow++
 
 					log.Infof("Finalizing shards: %v", finalizeEntry.ShardIDs)
-					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid}, FinalizeShards: finalizeEntry}
+					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid, WindowStartGSN: s.windowStartGSN[s.assignWindow-1]}, FinalizeShards: finalizeEntry}
 					log.Printf("quota: %v", s.quota[s.assignWindow-1])
 				} else {
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
