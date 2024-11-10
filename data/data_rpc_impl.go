@@ -23,7 +23,6 @@ func (s *DataServer) Append(stream datapb.Data_AppendServer) error {
 					log.Infof("Receive append stream closed.")
 					return nil
 				}
-				log.Errorf("Receive append error: %v", err)
 				return err
 			}
 			if !initialized {
@@ -57,7 +56,6 @@ func (s *DataServer) respondToClient(cid int32, done chan struct{}, stream datap
 		s.ackSendCMu.Lock()
 		delete(s.ackSendC, cid)
 		s.ackSendCMu.Unlock()
-		log.Infof("Client %v is closed", cid)
 		close(ackSendC)
 	}()
 	for {

@@ -333,7 +333,7 @@ func (s *OrderServer) getNewQuota(rid int32, lc *orderpb.LocalCut) int64 {
 	defaultFreq := float64(1e9 / s.batchingInterval.Nanoseconds())
 	currentFreq := float64(1e9 / s.avgDelta[rid].Avg())
 
-	if (currentFreq-defaultFreq)/defaultFreq >= 0.4 || (defaultFreq-currentFreq)/defaultFreq >= 0.3 {
+	if math.Abs(currentFreq-defaultFreq) > 0.05*defaultFreq {
 		newQuota := int64(math.Ceil(float64(lc.Quota) * currentFreq / defaultFreq))
 		if newQuota < 1 {
 			newQuota = 1

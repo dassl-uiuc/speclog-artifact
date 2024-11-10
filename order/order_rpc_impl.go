@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 
-	log "github.com/scalog/scalog/logger"
 	"github.com/scalog/scalog/order/orderpb"
 )
 
@@ -47,7 +46,6 @@ func (s *OrderServer) respondToDataReplica(done chan struct{}, stream orderpb.Or
 			s.subCMu.Lock()
 			delete(s.subC, cid)
 			s.subCMu.Unlock()
-			log.Infof("Client %v is closed", cid)
 			close(respC)
 			return
 		case resp := <-respC:
@@ -55,7 +53,6 @@ func (s *OrderServer) respondToDataReplica(done chan struct{}, stream orderpb.Or
 				s.subCMu.Lock()
 				delete(s.subC, cid)
 				s.subCMu.Unlock()
-				log.Infof("Client %v is closed", cid)
 				close(respC)
 				if _, ok := <-done; !ok {
 					return
