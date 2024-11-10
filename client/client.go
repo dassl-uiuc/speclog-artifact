@@ -86,7 +86,7 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 		discAddr:     discAddr,
 		shardingHint: shardingHint,
 	}
-	c.outstandingRequestsLimit = 4
+	c.outstandingRequestsLimit = 1
 	c.outstandingRequestsChan = make(chan bool, c.outstandingRequestsLimit)
 	c.shardingPolicy = NewShardingPolicyWithHint(numReplica, shardingHint)
 	c.viewC = make(chan *discpb.View, 4096)
@@ -118,7 +118,7 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 		dataAddr:   dataAddr,
 		discAddr:   discAddr,
 	}
-	c.outstandingRequestsLimit = 4
+	c.outstandingRequestsLimit = 1
 	c.outstandingRequestsChan = make(chan bool, c.outstandingRequestsLimit)
 	c.shardingPolicy = NewDefaultShardingPolicy(numReplica)
 	c.viewC = make(chan *discpb.View, 4096)
