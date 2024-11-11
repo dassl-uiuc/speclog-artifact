@@ -10,9 +10,10 @@ source ./common.sh
 #   4 -> kill server and client, read server logs for errors
 #   5 -> clear server and client logs
 
+num_shards=5
 mode="$1"
 if [ "$mode" -eq 0 ]; then # append one experiment mode
-    clients=("1")
+    clients=("80")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -26,9 +27,9 @@ if [ "$mode" -eq 0 ]; then # append one experiment mode
             clear_client_logs
 
             start_order_nodes
-            start_data_nodes 
             start_discovery
-            monitor_disk_stats
+            start_data_nodes $num_shards
+            monitor_disk_stats $num_shards
 
             # wait for 10 secs
             sleep 10
@@ -62,7 +63,7 @@ if [ "$mode" -eq 0 ]; then # append one experiment mode
             cleanup_servers
 
             # check for errors in log files
-            check_data_log
+            check_data_log $num_shards
             collect_logs
 
             # move logs to a different folder
@@ -70,11 +71,11 @@ if [ "$mode" -eq 0 ]; then # append one experiment mode
             mv $benchmark_dir/logs/* "$benchmark_dir/results/logs/$interval/append_bench_${c}"
             
             # move iostat dump to results folder
-            get_disk_stats "results/$interval/append_bench_$c/"
+            get_disk_stats "results/$interval/append_bench_$c/" $num_shards
         done
     done
 elif [ "$mode" -eq 1 ]; then # append experiment mode
-    clients=("80")
+    clients=("400")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -88,9 +89,9 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
             clear_client_logs
 
             start_order_nodes
-            start_data_nodes 
             start_discovery
-            monitor_disk_stats
+            start_data_nodes $num_shards
+            monitor_disk_stats $num_shards
 
             # wait for 10 secs
             sleep 10
@@ -112,7 +113,7 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
                 fi
                 
                 # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <start_sharding_hint> <append_mode> <rate>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "append" "255"
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "append" "266"
 
                 jobs=$(($jobs + $num_jobs_for_client))
             done
@@ -124,7 +125,7 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
             cleanup_servers
 
             # check for errors in log files
-            check_data_log
+            check_data_log $num_shards
             collect_logs
 
             # move logs to a different folder
@@ -132,7 +133,7 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
             mv $benchmark_dir/logs/* "$benchmark_dir/results/logs/$interval/append_bench_${c}"
             
             # move iostat dump to results folder
-            get_disk_stats "results/$interval/append_bench_$c/"
+            get_disk_stats "results/$interval/append_bench_$c/" $num_shards
         done
     done
 elif [ "$mode" -eq 2 ]; then # read experiment mode
@@ -148,8 +149,8 @@ elif [ "$mode" -eq 2 ]; then # read experiment mode
         clear_client_logs
 
         start_order_nodes
-        start_data_nodes 
         start_discovery
+        start_data_nodes $num_shards
 
         # wait for 10 secs
         sleep 10
@@ -188,7 +189,7 @@ elif [ "$mode" -eq 2 ]; then # read experiment mode
         
         cleanup_servers
         # check for errors in log files
-        check_data_log
+        check_data_log $num_shards
     done
 elif [ "$mode" -eq 3 ]; then # setup servers mode
     cleanup_clients
@@ -197,14 +198,14 @@ elif [ "$mode" -eq 3 ]; then # setup servers mode
     clear_client_logs
 
     start_order_nodes
-    start_data_nodes 
     start_discovery
+    start_data_nodes $num_shards
 elif [ "$mode" -eq 4 ]; then # kill servers and clients 
     cleanup_clients
     cleanup_servers
 
     # check for errors in log files
-    check_data_log
+    check_data_log $num_shards
 elif [ "$mode" -eq 5 ]; then 
     cleanup_clients
     cleanup_servers

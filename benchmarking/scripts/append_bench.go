@@ -97,7 +97,7 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 
 	fmt.Println("starting client with rate limit: ", rate)
 
-	limiter := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 10)
+	limiter := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 1)
 
 	for stay, timeout := true, time.After(timeLimit); stay; {
 		err := limiter.Wait(context.Background())

@@ -86,6 +86,7 @@ func (s *Stats) printStats() {
 type WindowAndQuota struct {
 	windowNum int64
 	quota     map[int32]int64
+	startGSN  int64 // start gsn of the window
 	viewID    int32
 }
 
@@ -426,7 +427,7 @@ func (s *DataServer) processLiveSubscribe() {
 					s.subWg.Done()
 					continue
 				}
-				if sub.state == BEHIND {
+				if sub.state == BEHIND && latestGsn >= sub.startGsn {
 					go s.sendToSubscriber(sub, latestGsn, false)
 				} else if sub.state == UPDATED {
 					go s.sendToSubscriber(sub, record.GlobalSN1, true)
@@ -594,6 +595,7 @@ func (s *DataServer) processSingleRecord(record *datapb.Record, nextGsn *int64, 
 			wq := <-s.nextAssignableWindowAndQuotas
 			*quotas = wq.quota
 			*viewID = wq.viewID
+			*nextGsn = wq.startGSN
 			*localCutNum = 0
 		}
 
@@ -1076,7 +1078,7 @@ func (s *DataServer) receiveCommittedCut() {
 func (s *DataServer) processCommittedEntry() {
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
-			log.Debugf("Processing committed cut: %v", entry.CommittedCut)
+			log.Printf("Processing committed cut: %v", entry.CommittedCut)
 			startTime := time.Now()
 			// update quota if new quota is received
 			rid := s.shardID*s.numReplica + s.replicaID
@@ -1089,6 +1091,12 @@ func (s *DataServer) processCommittedEntry() {
 				if quota, ok := entry.CommittedCut.ShardQuotas[rid]; ok {
 					if s.windowNumber == -1 {
 						s.windowNumber = entry.CommittedCut.WindowNum
+						s.nextExpectedLocalCutNum = 0
+						s.nextExpectedWindowNum = s.windowNumber
+						s.prevCommittedCut.Cut = make(map[int32]int64)
+						for k, v := range entry.CommittedCut.PrevCut {
+							s.prevCommittedCut.Cut[k] = v
+						}
 					}
 					// needs to happen before sending the quota
 					s.waitForNewQuota <- quota
@@ -1106,6 +1114,17 @@ func (s *DataServer) processCommittedEntry() {
 
 			if entry.CommittedCut.AdjustmentSignal != nil && entry.CommittedCut.AdjustmentSignal.Lag[rid] > 0 {
 				s.fixLag <- entry.CommittedCut.AdjustmentSignal.Lag[rid]
+			}
+
+			// we cannot proceed beyond this point if we aren't yet included in any windows
+			if s.windowNumber == -1 {
+				continue
+			} else {
+				// window is assigned but we are not yet included in the window?
+				_, ok := entry.CommittedCut.Cut[rid]
+				if !ok {
+					continue
+				}
 			}
 
 			startReplicaID := s.shardID * s.numReplica

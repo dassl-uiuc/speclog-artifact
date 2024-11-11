@@ -108,6 +108,8 @@ type OrderServer struct {
 	quota                map[int64](map[int32]int64) // map from window number to quota for window
 	localCutChangeWindow int64
 	assignWindow         int64           // next window to assign quota
+	windowStartGSN       map[int64]int64 // map from window number to start GSN
+	startCommittedCut    map[int32]int64 // map from rid to the lengths at the start of the window
 	numQuotaChanged      int64           // number of primaries in current window for whom quota has 	been changed
 	replicasInReserve    map[int32]int64 // replicas in reserve for next window
 	replicasStandby      map[int32]int64 // replicas in standby for next window (all replicas from shard not yet registered)
@@ -150,6 +152,8 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.replicasInReserve = make(map[int32]int64)
 	s.replicasStandby = make(map[int32]int64)
 	s.assignWindow = 0
+	s.startCommittedCut = make(map[int32]int64)
+	s.windowStartGSN = make(map[int64]int64)
 	s.processWindow = -1
 
 	s.rnConfChangeC = make(chan raftpb.ConfChange)
@@ -411,7 +415,7 @@ func (s *OrderServer) processReport() {
 			if s.isLeader { // update quota for new replicas
 				id := lc.ShardID*s.dataNumReplica + lc.LocalReplicaID
 				s.replicasStandby[id] = lc.Quota
-				log.Debugf("Replica %v registered with quota %v", id, lc.Quota)
+				log.Printf("Replica %v registered with quota %v", id, lc.Quota)
 
 				// check if all replicas from that shard have registered
 				allRegistered := true
@@ -500,10 +504,41 @@ func (s *OrderServer) processReport() {
 						vid = atomic.LoadInt32(&s.viewID)
 					}
 
+					// update window start GSN
+					if s.assignWindow == 0 {
+						s.windowStartGSN[s.assignWindow] = 0
+					} else {
+						sumQuotas := 0
+						for _, q := range s.quota[s.assignWindow-1] {
+							sumQuotas += int(q)
+						}
+						s.windowStartGSN[s.assignWindow] = s.windowStartGSN[s.assignWindow-1] + int64(sumQuotas)*s.localCutChangeWindow
+					}
+
+					// update start committed cut
+					// this will be considered by the newly starting replicas to be the expected previous committed cut
+					for rid := range s.quota[s.assignWindow] {
+						if s.assignWindow == 0 {
+							s.startCommittedCut[rid] = 0
+						} else {
+							_, ok := s.quota[s.assignWindow-1][rid]
+							if ok {
+								s.startCommittedCut[rid] = s.startCommittedCut[rid] + s.quota[s.assignWindow-1][rid]*s.localCutChangeWindow
+							} else {
+								s.startCommittedCut[rid] = 0
+							}
+						}
+					}
+
+					prevCutHint := make(map[int32]int64)
+					for rid, cut := range s.startCommittedCut {
+						prevCutHint[rid] = cut
+					}
+
 					// increment window
 					s.assignWindow++
 
-					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid}, FinalizeShards: nil}
+					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid, WindowStartGSN: s.windowStartGSN[s.assignWindow-1], PrevCut: prevCutHint}, FinalizeShards: nil}
 					log.Printf("quota: %v", s.quota[s.assignWindow-1])
 				} else {
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}

@@ -297,7 +297,7 @@ func (c *Client) processAck(client *datapb.Data_AppendClient) {
 				return
 			}
 			log.Errorf("Failed to receive ack: %v", err)
-			continue
+			return
 		}
 
 		<-c.outstandingRequestsChan

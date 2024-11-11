@@ -8,10 +8,10 @@ LOGDIR="/data"
 order=("node0" "node1" "node2")
 
 # index into remote_nodes/ips for data shards
-data_0=("node3" "node4")
-# data_1=("node5" "node6")
+data_pri=("node3" "node5" "node7" "node9" "node11")
+data_sec=("node4" "node6" "node8" "node10" "node12")
 
-client_nodes=("node7" "node8")
+client_nodes=("node13" "node14")
 
 batching_intervals=("1ms")
 
@@ -50,14 +50,14 @@ collect_logs() {
     do 
         scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
-    for svr in ${data_0[@]};
+    for svr in ${data_pri[@]};
     do 
         scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
-    # for svr in ${data_1[@]};
-    # do 
-    #     scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
-    # done 
+    for svr in ${data_sec[@]};
+    do 
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+    done 
     for svr in ${client_nodes[@]};
     do 
         scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
@@ -74,39 +74,43 @@ start_order_nodes() {
     done
 }
 
+# args: numshards
 start_data_nodes() {
     # start data nodes
-    for ((i=0; i<=1; i++))
+    for ((i=0; i<$1; i++))
     do
-        echo "Starting data-0-${i} on ${data_0[$i]}"
-        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[$i]} "sh -c \"cd $benchmark_dir/data-0-$i; nohup ./run_goreman.sh > ${LOGDIR}/data-0-$i.log 2>&1 &\""
+        echo "Starting primary for shard $i on ${data_pri[$i]}"
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[$i]} "sh -c \"cd $benchmark_dir/data-$i-0; nohup ./run_goreman.sh > ${LOGDIR}/data-$i-0.log 2>&1 &\""
     done
 
-    # for ((i=0; i<=1; i++))
-    # do
-    #     echo "Starting data-1-${i} on ${data_1[$i]}"
-    #     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "sh -c \"cd $benchmark_dir/data-1-$i; nohup ./run_goreman.sh > ${LOGDIR}/data-1-$i.log 2>&1 &\""
-    # done
+    for ((i=0; i<$1; i++))
+    do
+        echo "Starting secondary for shard $i on ${data_sec[$i]}"
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_sec[$i]} "sh -c \"cd $benchmark_dir/data-$i-1; nohup ./run_goreman.sh > ${LOGDIR}/data-$i-1.log 2>&1 &\""
+    done
 }
 
+## Note: Always start discovery before starting data nodes
 start_discovery() {
     # start discovery
-    echo "Starting discovery on ${data_0[0]}"
-    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[0]} "sh -c \"cd $benchmark_dir/disc; nohup ./run_goreman.sh > ${LOGDIR}/disc.log 2>&1 &\""
+    echo "Starting discovery on ${data_pri[0]}"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[0]} "sh -c \"cd $benchmark_dir/disc; nohup ./run_goreman.sh > ${LOGDIR}/disc.log 2>&1 &\""
+    sleep 1
 }
 
+# args: numshards
 check_data_log() {
-    for ((i=0; i<=1; i++))
+    for ((i=0; i<$1; i++))
     do
-        echo "Checking data node data-0-$i..."
-        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[$i]} "grep error ${LOGDIR}/data-0-$i.log"
+        echo "Checking data node data-$i-0..."
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[$i]} "grep error ${LOGDIR}/data-$i-0.log"
     done
 
-    # for ((i=0; i<=1; i++))
-    # do
-    #     echo "Checking data node data-1-$i..."
-    #     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_1[$i]} "grep error ${LOGDIR}/data-1-$i.log"
-    # done
+    for ((i=0; i<$1; i++))
+    do
+        echo "Checking data node data-$i-1..."
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_sec[$i]} "grep error ${LOGDIR}/data-$i-1.log"
+    done
 }
 
 
@@ -132,17 +136,19 @@ load_phase() {
     /usr/local/go/bin/go run load.go $1 $2 $3 $4 
 }
 
+# args: numshards
 monitor_disk_stats() {
-    for ((i=0; i<=1; i++))
+    for ((i=0; i<$1; i++))
     do
-        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[$i]} "sh -c \"nohup dstat --output ${LOGDIR}/data-0-$i.csv 5 > /dev/null 2>&1  &\""
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[$i]} "sh -c \"nohup dstat --output ${LOGDIR}/data-$i-0.csv 5 > /dev/null 2>&1  &\""
     done
 }
 
+# args: path, numshards
 get_disk_stats() {
-    for ((i=0; i<=1; i++))
+    for ((i=0; i<$2; i++))
     do 
-        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[$i]} "sudo pkill -f \"dstat\""
-        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_0[$i]} "mv ${LOGDIR}/data-0-$i.csv $benchmark_dir/$1"
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[$i]} "sudo pkill -f \"dstat\""
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[$i]} "mv ${LOGDIR}/data-$i-0.csv $benchmark_dir/$1"
     done
 }

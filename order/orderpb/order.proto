@@ -44,6 +44,8 @@ message CommittedCut {
     Control adjustmentSignal = 5;
     int64 windowNum = 6; // to be used only if quota is updated, represents the window number for which this quota is to be used
     int32 viewID = 7; // to be used only if quota is updated, represents the view number in which this quota is to be committed
+    int64 windowStartGSN = 8; // to be used only if quota is updated, represents the start GSN of the window for which this quota is to be used
+    map<int32, int64> prevCut = 9; // to be used only if quota is updated, represents the prev committed cut to be set for new shards joining into the cluster
 }
 
 message CommittedEntry {
