@@ -498,6 +498,53 @@ func (m *Empty) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_Empty proto.InternalMessageInfo
 
+type FinalizeRequest struct {
+	ShardID              int32    `protobuf:"varint,1,opt,name=shardID,proto3" json:"shardID,omitempty"`
+	LocalReplicaID       int32    `protobuf:"varint,2,opt,name=localReplicaID,proto3" json:"localReplicaID,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *FinalizeRequest) Reset()         { *m = FinalizeRequest{} }
+func (m *FinalizeRequest) String() string { return proto.CompactTextString(m) }
+func (*FinalizeRequest) ProtoMessage()    {}
+func (*FinalizeRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_87a9833f63666870, []int{8}
+}
+
+func (m *FinalizeRequest) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_FinalizeRequest.Unmarshal(m, b)
+}
+func (m *FinalizeRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_FinalizeRequest.Marshal(b, m, deterministic)
+}
+func (m *FinalizeRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_FinalizeRequest.Merge(m, src)
+}
+func (m *FinalizeRequest) XXX_Size() int {
+	return xxx_messageInfo_FinalizeRequest.Size(m)
+}
+func (m *FinalizeRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_FinalizeRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_FinalizeRequest proto.InternalMessageInfo
+
+func (m *FinalizeRequest) GetShardID() int32 {
+	if m != nil {
+		return m.ShardID
+	}
+	return 0
+}
+
+func (m *FinalizeRequest) GetLocalReplicaID() int32 {
+	if m != nil {
+		return m.LocalReplicaID
+	}
+	return 0
+}
+
 func init() {
 	proto.RegisterType((*Feedback)(nil), "orderpb.Feedback")
 	proto.RegisterType((*Control)(nil), "orderpb.Control")
@@ -511,6 +558,7 @@ func init() {
 	proto.RegisterType((*CommittedEntry)(nil), "orderpb.CommittedEntry")
 	proto.RegisterType((*FinalizeEntry)(nil), "orderpb.FinalizeEntry")
 	proto.RegisterType((*Empty)(nil), "orderpb.Empty")
+	proto.RegisterType((*FinalizeRequest)(nil), "orderpb.FinalizeRequest")
 }
 
 func init() { proto.RegisterFile("orderpb/order.proto", fileDescriptor_87a9833f63666870) }
@@ -579,7 +627,7 @@ type OrderClient interface {
 	Report(ctx context.Context, opts ...grpc.CallOption) (Order_ReportClient, error)
 	Register(ctx context.Context, in *LocalCut, opts ...grpc.CallOption) (*Empty, error)
 	Forward(ctx context.Context, opts ...grpc.CallOption) (Order_ForwardClient, error)
-	Finalize(ctx context.Context, in *FinalizeEntry, opts ...grpc.CallOption) (*Empty, error)
+	Finalize(ctx context.Context, in *FinalizeRequest, opts ...grpc.CallOption) (*Empty, error)
 }
 
 type orderClient struct {
@@ -664,7 +712,7 @@ func (x *orderForwardClient) CloseAndRecv() (*Empty, error) {
 	return m, nil
 }
 
-func (c *orderClient) Finalize(ctx context.Context, in *FinalizeEntry, opts ...grpc.CallOption) (*Empty, error) {
+func (c *orderClient) Finalize(ctx context.Context, in *FinalizeRequest, opts ...grpc.CallOption) (*Empty, error) {
 	out := new(Empty)
 	err := c.cc.Invoke(ctx, "/orderpb.Order/Finalize", in, out, opts...)
 	if err != nil {
@@ -678,7 +726,7 @@ type OrderServer interface {
 	Report(Order_ReportServer) error
 	Register(context.Context, *LocalCut) (*Empty, error)
 	Forward(Order_ForwardServer) error
-	Finalize(context.Context, *FinalizeEntry) (*Empty, error)
+	Finalize(context.Context, *FinalizeRequest) (*Empty, error)
 }
 
 // UnimplementedOrderServer can be embedded to have forward compatible implementations.
@@ -694,7 +742,7 @@ func (*UnimplementedOrderServer) Register(ctx context.Context, req *LocalCut) (*
 func (*UnimplementedOrderServer) Forward(srv Order_ForwardServer) error {
 	return status.Errorf(codes.Unimplemented, "method Forward not implemented")
 }
-func (*UnimplementedOrderServer) Finalize(ctx context.Context, req *FinalizeEntry) (*Empty, error) {
+func (*UnimplementedOrderServer) Finalize(ctx context.Context, req *FinalizeRequest) (*Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Finalize not implemented")
 }
 
@@ -773,7 +821,7 @@ func (x *orderForwardServer) Recv() (*LocalCuts, error) {
 }
 
 func _Order_Finalize_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FinalizeEntry)
+	in := new(FinalizeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -785,7 +833,7 @@ func _Order_Finalize_Handler(srv interface{}, ctx context.Context, dec func(inte
 		FullMethod: "/orderpb.Order/Finalize",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(OrderServer).Finalize(ctx, req.(*FinalizeEntry))
+		return srv.(OrderServer).Finalize(ctx, req.(*FinalizeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

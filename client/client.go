@@ -73,6 +73,9 @@ type Client struct {
 
 	outstandingRequestsLimit int32
 	outstandingRequestsChan  chan bool
+
+	shardsSubscribedTo map[int32]bool
+	isReader	   bool
 }
 
 func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32, shardingHint int64) (*Client, error) {
@@ -99,6 +102,8 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 	c.committedRecords = make(map[int64]CommittedRecord)
 	c.speculationConfs = make(map[int64]*datapb.Record)
 	c.confC = make(chan SpeculationConf, 4096)
+	c.shardsSubscribedTo = make(map[int32]bool)
+	c.isReader = false
 	err := c.UpdateDiscovery()
 	if err != nil {
 		return nil, err
@@ -131,6 +136,8 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 	c.committedRecords = make(map[int64]CommittedRecord)
 	c.speculationConfs = make(map[int64]*datapb.Record)
 	c.confC = make(chan SpeculationConf, 4096)
+	c.shardsSubscribedTo = make(map[int32]bool)
+	c.isReader = false
 	err := c.UpdateDiscovery()
 	if err != nil {
 		return nil, err
@@ -152,9 +159,24 @@ func (c *Client) subscribeView() {
 			log.Errorf("%v", err)
 			continue
 		}
+		log.Infof("View id: %v", v.ViewID)
+		log.Infof("Live shards: %v", v.LiveShards)
+		log.Infof("Finalized shards: %v", v.FinalizedShards)
 		err = c.view.Update(v)
 		if err != nil {
 			log.Errorf("%v", err)
+		}
+
+		if c.isReader {
+			for _, shard := range v.LiveShards {
+				if _, ok := c.shardsSubscribedTo[shard]; !ok {
+					for replicaId := int32(0); replicaId < c.numReplica; replicaId++ {
+						go c.subscribeShardServer(shard, replicaId)
+					}
+					log.Infof("Subscribed to shard %v", shard)
+					c.shardsSubscribedTo[shard] = true
+				}
+			}
 		}
 	}
 }
@@ -321,6 +343,31 @@ func (c *Client) Append(record string) (int64, int32, error) {
 	return 0, 0, nil
 }
 
+func (c *Client) AppendOneTimeout(record string, timeout time.Duration) (int64, int32, error) {
+	r := &datapb.Record{
+		ClientID: c.clientID,
+		ClientSN: c.getNextClientSN(),
+		Record:   record,
+	}
+	shard, replica := c.shardingPolicy.Shard(c.view, record)
+	conn, err := c.getDataServerConn(shard, replica)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// Create a context with a timeout
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	opts := []grpc.CallOption{}
+	dataClient := datapb.NewDataClient(conn)
+	ack, err := dataClient.AppendOne(ctx, r, opts...)
+	if err != nil {
+		return 0, 0, err
+	}
+	return ack.GlobalSN, ack.ShardID, nil
+}
+
 func (c *Client) AppendOne(record string) (int64, int32, error) {
 	r := &datapb.Record{
 		ClientID: c.clientID,
@@ -367,7 +414,10 @@ func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, chan SpeculationCon
 		for replicaId := int32(0); replicaId < c.numReplica; replicaId++ {
 			go c.subscribeShardServer(shard, replicaId)
 		}
+
+		c.shardsSubscribedTo[shard] = true
 	}
+	c.isReader = true
 
 	return c.subC, c.confC, nil
 }

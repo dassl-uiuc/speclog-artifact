@@ -5,15 +5,16 @@ import (
 	"os"
 	"strconv"
 	"time"
-
 	"context"
-
+  
 	"github.com/scalog/scalog/benchmark/util"
 	"github.com/scalog/scalog/client"
 	log "github.com/scalog/scalog/logger"
 	"github.com/scalog/scalog/pkg/address"
 	"github.com/spf13/viper"
 	rateLimiter "golang.org/x/time/rate"
+  "google.golang.org/grpc/codes"
+  "google.golang.org/grpc/status"
 )
 
 const NumberOfRequest = 10
@@ -44,9 +45,17 @@ func appendOne(cli *client.Client, timeLimit time.Duration, numberOfBytes int, f
 		var gsn int64
 		var shard int32
 		gsn, shard, err := cli.AppendOne(record)
+ 
+    // 		gsn, shard, err := cli.AppendOneTimeout(record, 1*time.Second)
+    
 		runEndTime := time.Now()
 
 		if err != nil {
+			if status.Code(err) == codes.DeadlineExceeded {
+				fmt.Println("AppendOne call timed out, retrying...")
+				continue
+			}
+
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			goto end
 		}
