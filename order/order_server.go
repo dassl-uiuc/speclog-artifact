@@ -261,7 +261,7 @@ func (s *OrderServer) getLags(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
 }
 
 // logs the avg lag in cuts and returns true if there is a significant lag in the cuts
-// significance is currently defined as a maximum lag of 10% of the localCutChangeWindow or more
+// significance is currently defined as a maximum lag of 5% of the localCutChangeWindow or more
 func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
 	maxLag := float64(0)
 	for _, lag := range lags {
@@ -270,7 +270,7 @@ func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
 		}
 	}
 	s.stats.diffCut += float64(maxLag)
-	return float64(maxLag) >= float64(0.1)*float64(s.localCutChangeWindow)
+	return float64(maxLag) >= float64(0.05)*float64(s.localCutChangeWindow)
 }
 
 func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {

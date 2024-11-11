@@ -10,7 +10,7 @@ source ./common.sh
 #   4 -> kill server and client, read server logs for errors
 #   5 -> clear server and client logs
 
-num_shards=5
+num_shards=1
 mode="$1"
 if [ "$mode" -eq 0 ]; then # append one experiment mode
     clients=("80")
@@ -75,7 +75,7 @@ if [ "$mode" -eq 0 ]; then # append one experiment mode
         done
     done
 elif [ "$mode" -eq 1 ]; then # append experiment mode
-    clients=("400")
+    clients=("30")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -113,7 +113,7 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
                 fi
                 
                 # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <start_sharding_hint> <append_mode> <rate>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "append" "266"
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "append" "1000"
 
                 jobs=$(($jobs + $num_jobs_for_client))
             done

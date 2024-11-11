@@ -1078,7 +1078,7 @@ func (s *DataServer) receiveCommittedCut() {
 func (s *DataServer) processCommittedEntry() {
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
-			log.Printf("Processing committed cut: %v", entry.CommittedCut)
+			log.Debugf("Processing committed cut: %v", entry.CommittedCut)
 			startTime := time.Now()
 			// update quota if new quota is received
 			rid := s.shardID*s.numReplica + s.replicaID
