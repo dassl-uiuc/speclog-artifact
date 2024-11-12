@@ -53,6 +53,10 @@ func Append_One_Ping(appenderId int32) {
 
 	// Calculate throughput
 	endThroughputTimer := time.Now().UnixNano()
+
+	// Wait for everyone to finish their run
+	time.Sleep(15 * time.Second)
+
 	throughput := float64(recordsProduced) / float64((endThroughputTimer-startThroughputTimer)/1000000000)
 	appendThroughputFilePath := "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data/append_throughput_" + strconv.Itoa(int(appenderId)) + ".txt"
 	file, err := os.OpenFile(appendThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -127,6 +131,10 @@ func Append_Stream_Ping(appenderId int32, clientNumber int) {
 
 	// Calculate throughput
 	endThroughputTimer := time.Now().UnixNano()
+
+	// Wait for everyone to finish their run
+	time.Sleep(15 * time.Second)
+	
 	throughput := float64(recordsProduced) / float64((endThroughputTimer-startThroughputTimer)/1000000000)
 	appendThroughputFilePath := "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data/append_throughput_" + strconv.Itoa(int(appenderId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err := os.OpenFile(appendThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)

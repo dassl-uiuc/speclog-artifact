@@ -102,6 +102,9 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 	}
 
 	endThroughputTimer := time.Now().UnixNano()
+	
+	// Wait for everyone to finish their run
+	time.Sleep(15 * time.Second)
 
 	// Record records received
 	recordsReceivedFilePath := "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data/records_received_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
