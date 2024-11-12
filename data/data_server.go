@@ -785,10 +785,6 @@ func (s *DataServer) processAck() {
 }
 
 func (s *DataServer) registerToOrderingLayer() {
-	if s.shardID == 1 {
-		time.Sleep(15 * time.Second)
-	}
-
 	orderClient := orderpb.NewOrderClient(s.orderConn)
 
 	localCut := &orderpb.LocalCut{
@@ -820,14 +816,15 @@ func (s *DataServer) registerToOrderingLayer() {
 	log.Errorf("Max retries reached. Registration failed.")
 }
 
-func (s *DataServer) finalizeShardStandby() {
-	if s.shardID == 0 {
-		// Sleep for 15 seconds
-		time.Sleep(15 * time.Second)
-		// finalize shard
-		s.finalizeShard()
-	}
-}
+// func (s *DataServer) finalizeShardStandby() {
+// 	if s.shardID == 0 {
+// 		// Sleep for 15 seconds
+// 		time.Sleep(15 * time.Second)
+// 		// finalize shard
+// 		s.finalizeShard()
+// 	}
+// }
+
 func (s *DataServer) finalizeShard() {
 	orderClient := orderpb.NewOrderClient(s.orderConn)
 	shard := &orderpb.FinalizeRequest{

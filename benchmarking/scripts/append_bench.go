@@ -1,20 +1,20 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"time"
-	"context"
-  
+
 	"github.com/scalog/scalog/benchmark/util"
 	"github.com/scalog/scalog/client"
 	log "github.com/scalog/scalog/logger"
 	"github.com/scalog/scalog/pkg/address"
 	"github.com/spf13/viper"
 	rateLimiter "golang.org/x/time/rate"
-  "google.golang.org/grpc/codes"
-  "google.golang.org/grpc/status"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const NumberOfRequest = 10
@@ -45,9 +45,9 @@ func appendOne(cli *client.Client, timeLimit time.Duration, numberOfBytes int, f
 		var gsn int64
 		var shard int32
 		gsn, shard, err := cli.AppendOne(record)
- 
-    // 		gsn, shard, err := cli.AppendOneTimeout(record, 1*time.Second)
-    
+
+		// gsn, shard, err := cli.AppendOneTimeout(record, 1*time.Second)
+
 		runEndTime := time.Now()
 
 		if err != nil {
@@ -145,7 +145,6 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 
 	close(stop)
 
-	fmt.Println("client finished")
 	// Calculate difference between runEndTimes and runStartTimes
 	for i := 0; i < len(runEndTimes); i++ {
 		runTimes = append(runTimes, runEndTimes[i].Sub(runStartTimes[i]))

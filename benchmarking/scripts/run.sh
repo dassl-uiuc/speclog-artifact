@@ -75,14 +75,18 @@ if [ "$mode" -eq 0 ]; then # append one experiment mode
         done
     done
 elif [ "$mode" -eq 1 ]; then # append experiment mode
-    clients=("30")
+    clients=("80" "480")
+    num_shards=("1" "5")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
         modify_batching_intervals $interval
 
-        for c in "${clients[@]}"; 
+        for ((j=0; j<${#num_shards[@]}; j++)) 
         do
+            c=${clients[$i]}
+            shard=${num_shards[$i]}
+            echo "Running append experiment with $shard shards"
             cleanup_clients
             cleanup_servers
             clear_server_logs
@@ -90,8 +94,8 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
 
             start_order_nodes
             start_discovery
-            start_data_nodes $num_shards
-            monitor_disk_stats $num_shards
+            start_data_nodes $shard
+            monitor_disk_stats $shard
 
             # wait for 10 secs
             sleep 10
@@ -113,7 +117,7 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
                 fi
                 
                 # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <start_sharding_hint> <append_mode> <rate>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "append" "1000"
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "append" "260"
 
                 jobs=$(($jobs + $num_jobs_for_client))
             done
@@ -125,7 +129,7 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
             cleanup_servers
 
             # check for errors in log files
-            check_data_log $num_shards
+            check_data_log $shard
             collect_logs
 
             # move logs to a different folder
@@ -133,7 +137,7 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
             mv $benchmark_dir/logs/* "$benchmark_dir/results/logs/$interval/append_bench_${c}"
             
             # move iostat dump to results folder
-            get_disk_stats "results/$interval/append_bench_$c/" $num_shards
+            get_disk_stats "results/$interval/append_bench_$c/" $shard
         done
     done
 elif [ "$mode" -eq 2 ]; then # read experiment mode

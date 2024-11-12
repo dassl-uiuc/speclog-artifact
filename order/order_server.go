@@ -117,7 +117,7 @@ type OrderServer struct {
 	replicasConfirmFinalize map[int32]int64 // replicas waiting to be confirmed finalized
 	processWindow           int64           // window number till which quota has been processed
 	prevCutTime             map[int32]time.Time
-
+	startCommittedCut       map[int32]int64
 	// stats
 	stats Stats
 }

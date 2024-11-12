@@ -11,7 +11,7 @@ order=("node0" "node1" "node2")
 data_pri=("node3" "node5" "node7" "node9" "node11")
 data_sec=("node4" "node6" "node8" "node10" "node12")
 
-client_nodes=("node13" "node14")
+client_nodes=("node13" "node14" "node15")
 
 batching_intervals=("1ms")
 
