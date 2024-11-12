@@ -4,7 +4,9 @@ source ./common.sh
 
 # parameters
 runtime_secs=60
-computation_time=(100 200 500 800 1000 1200)
+# computation_time=(100 200 500 800 1000 1200)
+computation_time=(100)
+num_shards=2
 
 
 for computation_time in "${computation_time[@]}";
@@ -15,8 +17,8 @@ do
     clear_client_logs
 
     start_order_nodes
-    start_data_nodes 
     start_discovery
+    start_data_nodes $num_shards
 
     sleep 1
     start_e2e_clients ${client_nodes[0]} $computation_time $runtime_secs
@@ -26,7 +28,7 @@ do
 
     cleanup_clients
     cleanup_servers
-    collect_logs
+    collect_logs $num_shards
 
     # move logs to a different folder
     mkdir -p "$benchmark_dir/results/logs/e2e_${computation_time}"

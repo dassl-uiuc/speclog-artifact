@@ -27,7 +27,7 @@ type tuple struct {
 	err   error
 }
 
-func appendOne(cli *client.Client, timeLimit time.Duration, numberOfBytes int, fileName string) {
+func appendOne(cli *client.Client, timeLimit time.Duration, numberOfBytes int, rate int, fileName string) {
 	var GSNs []int64
 	var shardIds []int32
 	var dataGenTimes []time.Duration
@@ -35,8 +35,17 @@ func appendOne(cli *client.Client, timeLimit time.Duration, numberOfBytes int, f
 	var numberOfRequest int
 
 	startTime := time.Now()
+
+	fmt.Println("starting client with rate limit: ", rate)
+
+	limiter := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 1)
 	numberOfRequest = 0
 	for stay, timeout := true, time.After(timeLimit); stay; {
+		err := limiter.Wait(context.Background())
+		if err != nil {
+			fmt.Errorf("rate limiter error: ", err)
+			return
+		}
 		dataGenStartTime := time.Now()
 		record := util.GenerateRandomString(numberOfBytes)
 		dataGenEndTime := time.Now()
@@ -44,7 +53,7 @@ func appendOne(cli *client.Client, timeLimit time.Duration, numberOfBytes int, f
 
 		var gsn int64
 		var shard int32
-		gsn, shard, err := cli.AppendOne(record)
+		gsn, shard, err = cli.AppendOne(record)
 
 		// gsn, shard, err := cli.AppendOneTimeout(record, 1*time.Second)
 
@@ -196,7 +205,7 @@ func main() {
 	}
 
 	if appendMode == "appendOne" {
-		appendOne(cli, timeLimit, numberOfBytes, fileName)
+		appendOne(cli, timeLimit, numberOfBytes, rate, fileName)
 	} else if appendMode == "append" {
 		appendStream(cli, timeLimit, numberOfBytes, rate, fileName)
 	} else {

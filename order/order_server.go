@@ -62,6 +62,7 @@ type Stats struct {
 	timeToDecideQuota         int64
 	numQuotaDecisions         int64
 	diffCut                   float64
+	numLagFixes               map[int32]int64
 }
 
 func (s *Stats) printStats() {
@@ -74,6 +75,9 @@ func (s *Stats) printStats() {
 		return
 	}
 	log.Printf("avg time to decide quota in us: %v", s.timeToDecideQuota/s.numQuotaDecisions/1000)
+	for rid, num := range s.numLagFixes {
+		log.Printf("replica %v: num lag fixes: %v", rid, num)
+	}
 }
 
 type OrderServer struct {
@@ -175,6 +179,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.rnErrorC = errorC
 	s.rnSnapshotterReady = snapshotterReady
 	s.stats = Stats{}
+	s.stats.numLagFixes = make(map[int32]int64)
 	return s
 }
 
@@ -276,6 +281,19 @@ func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
 	}
 	s.stats.diffCut += float64(maxLag)
 	return float64(maxLag) >= float64(0.05)*float64(s.localCutChangeWindow)
+}
+
+func (s *OrderServer) getSignificantLags(lags *map[int32]int64) {
+	for rid, lag := range *lags {
+		if float64(lag) < float64(0.05)*float64(s.localCutChangeWindow) {
+			delete(*lags, rid)
+		} else {
+			if _, ok := s.stats.numLagFixes[rid]; !ok {
+				s.stats.numLagFixes[rid] = 0
+			}
+			s.stats.numLagFixes[rid]++
+		}
+	}
 }
 
 func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
@@ -612,6 +630,7 @@ func (s *OrderServer) processReport() {
 					// log.Printf("significant lag in cuts: %v", lags)
 					if lastLag == nil || s.isLastLagFixed(lastLag) {
 						ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
+						s.getSignificantLags(&lags)
 						ce.CommittedCut.AdjustmentSignal.Lag = lags
 						lastLag = lags
 					}

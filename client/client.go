@@ -75,7 +75,7 @@ type Client struct {
 	outstandingRequestsChan  chan bool
 
 	shardsSubscribedTo map[int32]bool
-	isReader	   bool
+	isReader           bool
 }
 
 func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32, shardingHint int64) (*Client, error) {
@@ -173,7 +173,7 @@ func (c *Client) subscribeView() {
 					for replicaId := int32(0); replicaId < c.numReplica; replicaId++ {
 						go c.subscribeShardServer(shard, replicaId)
 					}
-					log.Infof("Subscribed to shard %v", shard)
+					log.Printf("Subscribed to shard %v", shard)
 					c.shardsSubscribedTo[shard] = true
 				}
 			}

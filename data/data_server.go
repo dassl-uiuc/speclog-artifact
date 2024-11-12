@@ -1110,6 +1110,7 @@ func (s *DataServer) receiveCommittedCut() {
 }
 
 func (s *DataServer) processCommittedEntry() {
+	initStartGSN := int64(-1)
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
 			log.Debugf("Processing committed cut: %v", entry.CommittedCut)
@@ -1131,6 +1132,7 @@ func (s *DataServer) processCommittedEntry() {
 						for k, v := range entry.CommittedCut.PrevCut {
 							s.prevCommittedCut.Cut[k] = v
 						}
+						initStartGSN = entry.CommittedCut.WindowStartGSN
 					}
 					// needs to happen before sending the quota
 					s.waitForNewQuota <- quota
@@ -1147,8 +1149,11 @@ func (s *DataServer) processCommittedEntry() {
 				}
 			}
 
-			if entry.CommittedCut.AdjustmentSignal != nil && entry.CommittedCut.AdjustmentSignal.Lag[rid] > 0 {
-				s.fixLag <- entry.CommittedCut.AdjustmentSignal.Lag[rid]
+			if entry.CommittedCut.AdjustmentSignal != nil {
+				_, ok := entry.CommittedCut.AdjustmentSignal.Lag[rid]
+				if ok {
+					s.fixLag <- entry.CommittedCut.AdjustmentSignal.Lag[rid]
+				}
 			}
 
 			// we cannot proceed beyond this point if we aren't yet included in any windows
@@ -1163,7 +1168,7 @@ func (s *DataServer) processCommittedEntry() {
 			}
 
 			startReplicaID := s.shardID * s.numReplica
-			startGSN := entry.CommittedCut.StartGSN
+			startGSN := max(entry.CommittedCut.StartGSN, initStartGSN)
 			for {
 				log.Debugf("processing next expected local cut num: %v, next expected window num: %v", s.nextExpectedLocalCutNum, s.nextExpectedWindowNum)
 				log.Debugf("entry.CommittedCut.Cut: %v", entry.CommittedCut.Cut)
