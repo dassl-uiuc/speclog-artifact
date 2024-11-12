@@ -517,8 +517,6 @@ func (s *DataServer) processAck() {
 		s.waitMu.RUnlock()
 		if ok {
 			c <- ack
-		} else {
-			log.Errorf("error wait does not contain clientId")
 		}
 	}
 }

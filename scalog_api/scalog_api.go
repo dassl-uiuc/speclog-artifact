@@ -26,6 +26,26 @@ func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) int64 {
 	return gsn
 }
 
+func (s *Scalog) Ack(stop chan bool) {
+	for {
+		select {
+		case <-s.client.AckC:
+			// Do nothing for now
+		case <-stop:
+			return
+		}
+	}
+}
+
+func (s *Scalog) AppendOneToAssignedShard(appenderId int32, record string) int64 {
+	gsn, _, err := s.client.AppendOneToAssignedShard(appenderId, record)
+	if err != nil {
+		log.Errorf("%v", err)
+	}
+
+	return gsn
+}
+
 func (s *Scalog) Append(record string) int64 {
 	gsn, _, err := s.client.AppendOne(record)
 	if err != nil {
@@ -110,7 +130,7 @@ func CreateClient() *Scalog {
 	}
 
 	// Hack: array will never be moved in memory
-	records := make([]string, 1000000)
+	records := make([]string, 10000000)
 
 	return &Scalog{client: c, records: records, atomicInt: 0}
 }

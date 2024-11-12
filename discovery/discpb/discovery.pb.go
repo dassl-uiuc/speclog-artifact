@@ -8,6 +8,8 @@ import (
 	fmt "fmt"
 	proto "github.com/golang/protobuf/proto"
 	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 	math "math"
 )
 
@@ -188,6 +190,14 @@ func (x *discoveryDiscoverClient) Recv() (*View, error) {
 // DiscoveryServer is the server API for Discovery service.
 type DiscoveryServer interface {
 	Discover(*Empty, Discovery_DiscoverServer) error
+}
+
+// UnimplementedDiscoveryServer can be embedded to have forward compatible implementations.
+type UnimplementedDiscoveryServer struct {
+}
+
+func (*UnimplementedDiscoveryServer) Discover(req *Empty, srv Discovery_DiscoverServer) error {
+	return status.Errorf(codes.Unimplemented, "method Discover not implemented")
 }
 
 func RegisterDiscoveryServer(s *grpc.Server, srv DiscoveryServer) {

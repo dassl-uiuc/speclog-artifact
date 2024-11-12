@@ -11,10 +11,7 @@ order=("node0" "node1" "node2")
 data_0=("node3" "node4")
 data_1=("node5" "node6")
 
-client_nodes=("node7")
-
-intrusion_detection_client_nodes=("node7")
-intrusion_detection_generator_client_nodes=("node8")
+client_nodes=("node7" "node8")
 intrusion_detection_dir="/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection"
 
 batching_intervals=("1ms")
@@ -110,7 +107,7 @@ check_data_log() {
 
 
 start_append_clients() {
-    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo ./run_append_client.sh $2 $3 $1 $4 $5 > ${LOGDIR}/client_$1.log 2>&1" &
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; ./run_append_client.sh $2 $3 $1 $4 $5 $6 $7 $8 > ${LOGDIR}/client_$1.log 2>&1" &
 }
 
 start_random_read_clients() {
@@ -141,25 +138,28 @@ get_disk_stats() {
 }
 
 start_intrusion_detection_clients() {
-    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_client.sh $1 $2 > ${LOGDIR}/client_$1.log 2>&1" &
+    # echo "Executing: ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 'cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_client.sh $1 $2 $3 $4> ${LOGDIR}/client_$1.log 2>&1'"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_client.sh $1 $2 $3 $4 > ${LOGDIR}/client_reader_$1 2>&1" &
 }
 
 start_intrusion_detection_generator_clients() {
-    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_generator_client.sh $1 $2 > ${LOGDIR}/client_$1.log 2>&1" &
+    # echo "Executing: ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 'cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_generator_client.sh $1 $2 $3 $4 $5> ${LOGDIR}/client_$1.log 2>&1'"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_generator_client.sh $1 $2 $3 $4 $5 > ${LOGDIR}/client_writer_$1 2>&1" &
 }
 
 # mode 
-#   0 -> append experiment mode
-#   1 -> read experiment mode
-#   2 -> setup servers
-#   3 -> kill server and client, read server logs for errors
-#   4 -> clear server and client logs
+#   0 -> append one experiment mode
+#   1 -> append experiment mode
+#   2 -> read experiment mode
+#   3 -> setup servers
+#   4 -> kill server and client, read server logs for errors
+#   5 -> clear server and client logs
 #   6 -> intrusion detection experiment mode
 
 mode="$1"
-if [ "$mode" -eq 0 ]; then # append experiment mode
+if [ "$mode" -eq 0 ]; then # append one experiment mode
     # clients=("130")
-    clients=("80")
+    clients=("200")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -185,6 +185,8 @@ if [ "$mode" -eq 0 ]; then # append experiment mode
             low_num=$(($c / $num_client_nodes))
             mod=$(($c % $num_client_nodes))
 
+            jobs=0
+
             for (( i=0; i<num_client_nodes; i++))
             do
                 if [ "$i" -lt "$mod" ]; then
@@ -194,8 +196,10 @@ if [ "$mode" -eq 0 ]; then # append experiment mode
                     num_jobs_for_client=$low_num
                 fi
                 
-                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval
+                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <start_sharding_hint> <append_mode> <rate>
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "appendOne" "0"
+
+                jobs=$(($jobs + $num_jobs_for_client))
             done
 
             echo "Waiting for clients to terminate"
@@ -212,7 +216,66 @@ if [ "$mode" -eq 0 ]; then # append experiment mode
             get_disk_stats "results/$interval/append_bench_$c/"
         done
     done
-elif [ "$mode" -eq 1 ]; then # read experiment mode
+elif [ "$mode" -eq 1 ]; then # append experiment mode
+    # clients=("130")
+    clients=("200")
+    for interval in "${batching_intervals[@]}";
+    do
+        # modify intervals
+        modify_batching_intervals $interval
+
+        for c in "${clients[@]}"; 
+        do
+            cleanup_clients
+            cleanup_servers
+            clear_server_logs
+            clear_client_logs
+
+            start_order_nodes
+            start_data_nodes 
+            start_discovery
+            monitor_disk_stats
+
+            # wait for 10 secs
+            sleep 10
+
+            num_client_nodes=${#client_nodes[@]}
+            high_num=$((($c + $num_client_nodes - 1)/$num_client_nodes))
+            low_num=$(($c / $num_client_nodes))
+            mod=$(($c % $num_client_nodes))
+
+            jobs=0
+
+            for (( i=0; i<num_client_nodes; i++))
+            do
+                if [ "$i" -lt "$mod" ]; then
+                    # If there's a remainder, assign one additional job to the first 'mod' clients
+                    num_jobs_for_client=$((low_num + 1))
+                else
+                    num_jobs_for_client=$low_num
+                fi
+                
+                # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <start_sharding_hint> <append_mode> <rate>
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "append" "200"
+
+                jobs=$(($jobs + $num_jobs_for_client))
+            done
+
+            echo "Waiting for clients to terminate"
+            wait
+
+            cleanup_clients
+            cleanup_servers
+
+            # check for errors in log files
+            check_data_log
+            collect_logs
+            
+            # move iostat dump to results folder
+            get_disk_stats "results/$interval/append_bench_$c/"
+        done
+    done
+elif [ "$mode" -eq 2 ]; then # read experiment mode
     clients=("1")
     for interval in "${batching_intervals[@]}";
     do
@@ -267,7 +330,7 @@ elif [ "$mode" -eq 1 ]; then # read experiment mode
         # check for errors in log files
         check_data_log
     done
-elif [ "$mode" -eq 2 ]; then # setup servers mode
+elif [ "$mode" -eq 3 ]; then # setup servers mode
     cleanup_clients
     cleanup_servers
     clear_server_logs
@@ -276,19 +339,21 @@ elif [ "$mode" -eq 2 ]; then # setup servers mode
     start_order_nodes
     start_data_nodes 
     start_discovery
-elif [ "$mode" -eq 3 ]; then # kill servers and clients 
+elif [ "$mode" -eq 4 ]; then # kill servers and clients 
     cleanup_clients
     cleanup_servers
 
     # check for errors in log files
     check_data_log
-elif [ "$mode" -eq 4 ]; then 
+elif [ "$mode" -eq 5 ]; then 
     cleanup_clients
     cleanup_servers
     collect_logs
 elif [ "$mode" -eq 6 ]; then
-    append_clients=("4")
+    append_clients=("200")
     read_clients=("4")
+    replicas=("4")
+    append_type="1"
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -296,8 +361,11 @@ elif [ "$mode" -eq 6 ]; then
 
         for i in "${!append_clients[@]}"; 
         do
-            num_append_clients="${append_clients[$i]}"
-            num_read_clients="${read_clients[$i]}"
+            num_append_clients=${append_clients[$i]}
+            num_read_clients=${read_clients[$i]}
+            num_replicas=${replicas[$i]}
+            num_append_clients_per_replica=$(($num_append_clients / $num_replicas))
+            num_read_clients_per_replica=$(($num_read_clients / $num_replicas))
 
             cleanup_clients
             cleanup_servers
@@ -311,38 +379,32 @@ elif [ "$mode" -eq 6 ]; then
 
             # wait for 10 secs
             sleep 10
-
+            
             sudo mkdir "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics"
+            sudo rm -rf "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data"
+            sudo mkdir "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data"
             sudo rm "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/read_throughput.txt"
             sudo rm "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/e2e_latencies.txt"
-            sudo rm "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/append_throughput.txt"
 
-            # Spawn reader clients
-            num_reader_client_nodes=${#intrusion_detection_client_nodes[@]}
+            # Ensure even division between num_replica and client_nodes
+            if (( $num_replicas % ${#client_nodes[@]} != 0 )); then
+                echo "Error: num_replica ($num_replica) is not evenly divisible by the number of client nodes (${#client_nodes[@]})."
+                exit 1
+            fi
 
-            for (( i=0; i<num_reader_client_nodes; i++))
+            start=0
+            # TODO: Kind of assuming that we have even number num replica and length of client nodes
+            stride=$(( $num_replicas / ${#client_nodes[@]} ))
+            for j in "${!client_nodes[@]}";
             do
-                # start_fraud_detection_clients <num_of_clients_to_run>
-                start_intrusion_detection_clients "${intrusion_detection_client_nodes[$i]}" $num_read_clients
-            done
-
-            # Spawn append clients
-            num_append_client_nodes=${#intrusion_detection_generator_client_nodes[@]}
-            high_num=$((($num_append_clients + $num_append_client_nodes - 1)/$num_append_client_nodes))
-            low_num=$(($num_append_clients / $num_append_client_nodes))
-            mod=$(($num_append_clients % $num_append_client_nodes))
-
-            for (( i=0; i<num_append_client_nodes; i++))
-            do
-                if [ "$i" -lt "$mod" ]; then
-                    # If there's a remainder, assign one additional job to the first 'mod' clients
-                    num_jobs_for_client=$((low_num + 1))
-                else
-                    num_jobs_for_client=$low_num
-                fi
-                
-                # start_append_clients <num_of_clients_to_run>
-                start_intrusion_detection_generator_clients "${intrusion_detection_generator_client_nodes[$i]}" $num_jobs_for_client
+                for (( k=start; k<start+stride; k++ ));
+                do
+                    # Spawn reader clients
+                    start_intrusion_detection_clients "${client_nodes[$j]}" $num_replicas $num_read_clients_per_replica $k
+                    # Spawn append clients
+                    start_intrusion_detection_generator_clients "${client_nodes[$j]}" $num_replicas $num_append_clients_per_replica $append_type $k
+                done
+                start=$((start + stride))
             done
 
             echo "Waiting for clients to terminate"
