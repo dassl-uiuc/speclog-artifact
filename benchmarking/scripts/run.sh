@@ -392,6 +392,16 @@ elif [ "$mode" -eq 6 ]; then
                 exit 1
             fi
 
+            if (( $num_append_clients % $num_replicas != 0 )); then
+                echo "Error: num_append_clients ($num_append_clients) is not evenly divisible by num_replicas ($num_replicas)."
+                exit 1
+            fi
+
+            if (( $num_read_clients % $num_replicas != 0 )); then
+                echo "Error: num_read_clients ($num_read_clients) is not evenly divisible by num_replicas ($num_replicas)."
+                exit 1
+            fi
+
             start=0
             # TODO: Kind of assuming that we have even number num replica and length of client nodes
             stride=$(( $num_replicas / ${#client_nodes[@]} ))
