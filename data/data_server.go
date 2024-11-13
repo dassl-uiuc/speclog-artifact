@@ -239,6 +239,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.localCutNum = -1
 	s.numLocalCutsThreshold = 100
 	s.waitForNewQuota = make(chan int64, 4096)
+
 	s.windowNumber = -1
 	s.nextExpectedLocalCutNum = 0
 	s.nextExpectedWindowNum = 0
