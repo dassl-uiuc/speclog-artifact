@@ -71,8 +71,8 @@ if [ "$mode" -eq 0 ]; then # append one experiment mode
         done
     done
 elif [ "$mode" -eq 1 ]; then # append experiment mode
-    clients=("80" "480")
-    num_shards=("1" "5")
+    clients=("80" "380")
+    num_shards=("1" "4")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -113,7 +113,7 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
                 fi
                 
                 # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <start_sharding_hint> <append_mode> <rate>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "append" "250"
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "append" "260"
 
                 jobs=$(($jobs + $num_jobs_for_client))
             done

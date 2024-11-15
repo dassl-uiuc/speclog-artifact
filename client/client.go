@@ -283,8 +283,7 @@ func (c *Client) processAck(client *datapb.Data_AppendClient) {
 				log.Infof("Stream closed by server.")
 				return
 			}
-			log.Errorf("Failed to receive ack: %v", err)
-			continue
+			return
 		}
 
 		<-c.outstandingRequestsChan
