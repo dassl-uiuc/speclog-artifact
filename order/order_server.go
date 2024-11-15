@@ -280,12 +280,12 @@ func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
 		}
 	}
 	s.stats.diffCut += float64(maxLag)
-	return float64(maxLag) >= float64(0.1)*float64(s.localCutChangeWindow)
+	return float64(maxLag) >= float64(0.05)*float64(s.localCutChangeWindow)
 }
 
 func (s *OrderServer) getSignificantLags(lags *map[int32]int64) {
 	for rid, lag := range *lags {
-		if float64(lag) < float64(0.1)*float64(s.localCutChangeWindow) {
+		if float64(lag) < float64(0.05)*float64(s.localCutChangeWindow) {
 			delete(*lags, rid)
 		} else {
 			if _, ok := s.stats.numLagFixes[rid]; !ok {
@@ -344,6 +344,7 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		log.Infof("Wn: %v, lowestWindowNum: %v, lowestLocalCutNum: %v", wn, lowestWindowNum, lowestLocalCutNum)
 
 		if wn == lowestWindowNum && lowestLocalCutNum == s.localCutChangeWindow-1 {
+			// TODO: redundant check, delete this later
 			if _, ok := s.replicasConfirmFinalize[rid]; ok {
 				log.Infof("Replica %v finalized", rid)
 				delete(s.avgHoles, rid)
@@ -423,8 +424,9 @@ func (s *OrderServer) processReport() {
 					if valid {
 						if !e.FixingLag {
 							// dividing average by difference in local cut numbers in case some are missing
-							if _, ok := s.lastCutTime[id]; ok && !e.FixingLag {
-								s.avgDelta[id].Add(float64(time.Since(s.lastCutTime[id]).Nanoseconds()) / float64(s.diff(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum)))
+							if _, ok := s.lastCutTime[id]; ok {
+								numCuts := s.diff(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum)
+								s.avgDelta[id].Add(float64(time.Since(s.lastCutTime[id]).Nanoseconds()) / float64(numCuts))
 							}
 							s.lastCutTime[id] = time.Now()
 						}
@@ -438,6 +440,9 @@ func (s *OrderServer) processReport() {
 							if _, ok := s.quota[lc.WindowNum+1][id]; !ok {
 								s.quota[lc.WindowNum+1][id] = s.getNewQuota(id, lc)
 								s.numQuotaChanged++
+								if s.numQuotaChanged == 1 {
+									quotaStartTime = time.Now()
+								}
 							}
 						}
 
