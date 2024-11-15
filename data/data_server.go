@@ -1032,8 +1032,8 @@ func (s *DataServer) reportLocalCut() {
 					Record:   storage.HolePrefix,
 					NumHoles: int32(diff),
 				}
-				s.recordsInSystem.Add(int64(diff))
 				s.appendC <- holeRecord
+				s.recordsInSystem.Add(int64(diff))
 				s.stats.numHolesGenerated += diff
 				s.holeWg.Wait()
 				s.stats.timeToFillHolesPerLFNs += time.Since(startTime).Nanoseconds()
@@ -1102,8 +1102,8 @@ func (s *DataServer) reportLocalCut() {
 					Record:   storage.HolePrefix,
 					NumHoles: int32(diff),
 				}
-				s.recordsInSystem.Add(int64(diff))
 				s.appendC <- holeRecord
+				s.recordsInSystem.Add(int64(diff))
 				s.stats.numHolesGenerated += diff
 			}
 			// wait for these to naturally hit case 0
