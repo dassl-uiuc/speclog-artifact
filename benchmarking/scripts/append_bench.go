@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/scalog/scalog/benchmark/util"
@@ -125,7 +126,7 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 		}
 
 		dataGenStartTime := time.Now()
-		record := util.GenerateRandomString(numberOfBytes)
+		record := strings.Repeat("a", numberOfBytes)
 		dataGenEndTime := time.Now()
 
 		var gsn int64

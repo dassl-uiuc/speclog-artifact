@@ -337,7 +337,12 @@ func (c *Client) getNextClientSN() int32 {
 }
 
 func (c *Client) Append(record string) (int64, int32, error) {
-	c.outstandingRequestsChan <- true
+	select {
+	case c.outstandingRequestsChan <- true:
+	case <-time.After(1 * time.Second):
+		log.Printf("Timeout waiting for outstanding requests")
+		return 0, 0, fmt.Errorf("Timeout waiting for outstanding requests")
+	}
 	r := &datapb.Record{
 		ClientID: c.clientID,
 		ClientSN: c.getNextClientSN(),
