@@ -1,4 +1,4 @@
-order-port: 26733
+order-port: 26734
 raft-port: 27238
 order-replication-factor: 3
 order-batching-interval: 1ms

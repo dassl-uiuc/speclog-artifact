@@ -24,6 +24,7 @@ message Record {
 	string record = 7; 
     int32 numHoles = 8; // number of holes to replicate (if this is a hole)
     int64 globalSN1 = 9; // extra gsn field used for speculation confirmation
+	int32 appenderID = 10;
 }
 
 message Ack {
