@@ -80,8 +80,8 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
 
         for ((j=0; j<${#num_shards[@]}; j++)) 
         do
-            c=${clients[$i]}
-            shard=${num_shards[$i]}
+            c=${clients[$j]}
+            shard=${num_shards[$j]}
             echo "Running append experiment with $shard shards"
             cleanup_clients
             cleanup_servers
