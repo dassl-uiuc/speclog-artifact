@@ -1,6 +1,7 @@
 package scalog_api
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync/atomic"
@@ -10,51 +11,113 @@ import (
 	log "github.com/scalog/scalog/logger"
 	"github.com/scalog/scalog/pkg/address"
 	"github.com/spf13/viper"
+	rateLimiter "golang.org/x/time/rate"
 )
 
-type Scalog struct {
-	client *client.Client
-	records []string
-	atomicInt int64
-	stop chan bool
+type BenchmarkStats struct {
+	// both of these are maps from GSN to time
+	DeliveryTime        map[int64]time.Time
+	ConfirmTime         map[int64]time.Time
+	AppendEndTime       map[int64]time.Time
+	AppendStartTime     map[int64]time.Time
+	AppendStartTimeChan chan time.Time // i will get my own acks in order
 }
 
-func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) int64 {
-	gsn, _, err := s.client.AppendToAssignedShard(appenderId, record)
+type Scalog struct {
+	client      *client.Client
+	records     []client.CommittedRecord
+	atomicInt   int64
+	rateLimiter *rateLimiter.Limiter
+	rate        int // rate used by rate limiter
+	Stats       BenchmarkStats
+	Stop        chan bool // stop scalog client subscribing, must be closed by app, closes confirmation thread
+	stopConf    chan bool // stop confirmation thread
+	StopAck     chan bool // stop ack thread, must be closed by app
+}
+
+func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) error {
+	// first call creates rate limiter
+	if s.rateLimiter == nil {
+		s.rateLimiter = rateLimiter.NewLimiter(rateLimiter.Limit(s.rate), 1)
+		// start ack thread
+		s.StopAck = make(chan bool)
+		go s.Ack()
+	}
+
+	err := s.rateLimiter.Wait(context.Background())
+	if err != nil {
+		return fmt.Errorf("rate limiter error: %v", err)
+	}
+
+	_, _, err = s.client.AppendToAssignedShard(appenderId, record)
 	if err != nil {
 		log.Errorf("%v", err)
 	}
 
-	return gsn
+	s.Stats.AppendStartTimeChan <- time.Now()
+
+	return err
 }
 
-func (s *Scalog) Ack(stop chan bool) {
+func (s *Scalog) Ack() {
 	for {
 		select {
-		case <-s.client.AckC:
-			// Do nothing for now
-		case <-stop:
+		case ack := <-s.client.AckC:
+			startTime := <-s.Stats.AppendStartTimeChan
+			s.Stats.AppendEndTime[ack.GlobalSN] = time.Now()
+			s.Stats.AppendStartTime[ack.GlobalSN] = startTime
+		case <-s.StopAck:
 			return
 		}
 	}
 }
 
 func (s *Scalog) AppendOneToAssignedShard(appenderId int32, record string) int64 {
+	startTime := time.Now()
 	gsn, _, err := s.client.AppendOneToAssignedShard(appenderId, record)
 	if err != nil {
 		log.Errorf("%v", err)
 	}
 
+	s.Stats.AppendStartTime[gsn] = startTime
+	s.Stats.AppendEndTime[gsn] = time.Now()
+
 	return gsn
 }
 
-func (s *Scalog) Append(record string) int64 {
+func (s *Scalog) AppendOne(record string) int64 {
+	startTime := time.Now()
 	gsn, _, err := s.client.AppendOne(record)
 	if err != nil {
 		log.Errorf("%v", err)
 	}
+	s.Stats.AppendStartTime[gsn] = startTime
+	s.Stats.AppendEndTime[gsn] = time.Now()
 
 	return gsn
+}
+
+func (s *Scalog) Append(record string) error {
+	// first call creates rate limiter
+	if s.rateLimiter == nil {
+		s.rateLimiter = rateLimiter.NewLimiter(rateLimiter.Limit(s.rate), 1)
+		// start ack thread
+		s.StopAck = make(chan bool)
+		go s.Ack()
+	}
+
+	err := s.rateLimiter.Wait(context.Background())
+	if err != nil {
+		return fmt.Errorf("rate limiter error: %v", err)
+	}
+
+	_, _, err = s.client.Append(record)
+	if err != nil {
+		log.Errorf("%v", err)
+	}
+	s.Stats.AppendStartTimeChan <- time.Now()
+
+	return err
 }
 
 func (s *Scalog) ConfirmationThread(conf chan client.SpeculationConf) {
@@ -63,80 +126,81 @@ func (s *Scalog) ConfirmationThread(conf chan client.SpeculationConf) {
 	for {
 		select {
 		case c := <-conf:
-			// tconf := time.Now()
+			tconf := time.Now()
 			for i := c.StartGSN; i <= c.EndGSN; i++ {
-				// timeConfirm[i] = tconf
+				s.Stats.ConfirmTime[i] = tconf
 				confirmed++
 			}
 			continue
 		case <-printTicker.C:
-			log.Printf("[intrusion detection]: confirmed %v records", confirmed)
-		case <-s.stop:
+			log.Printf("[scalog_api]: confirmed %v records", confirmed)
+		case <-s.stopConf:
 			return
 		}
 	}
 }
 
-func (s *Scalog) SubscribeToAssignedShardThread(readerId int32) {
-	stream, conf, err := s.client.SubscribeToAssignedShard(0, readerId)
+func (s *Scalog) SubscribeToAssignedShardThread(readerId int32, startGsn int64) {
+	stream, conf, err := s.client.SubscribeToAssignedShard(startGsn, readerId)
 	if err != nil {
 		log.Errorf("%v", err)
 	}
-	s.stop = make(chan bool)
+	s.stopConf = make(chan bool)
 	go s.ConfirmationThread(conf)
-	defer close(s.stop)
-	// prevGsn := int64(-1)
 
-	for r := range stream {
-		// if r.GSN != prevGsn+1 {
-		// 	log.Errorf("[single_client_e2e]: out of order record: %v", r.GSN)
-		// }
-		// prevGsn = r.GSN
-		if r.Record != "0xDEADBEEF" {
-			index := atomic.LoadInt64(&s.atomicInt)
-
-			s.records[index] = r.Record
-
-			// Increment atomic var
-			atomic.AddInt64(&s.atomicInt, 1)
+	for {
+		select {
+		case <-s.Stop:
+			close(s.stopConf)
+			return
+		case r := <-stream:
+			if r.Record != "0xDEADBEEF" {
+				index := atomic.LoadInt64(&s.atomicInt)
+				s.records[index] = r
+				atomic.AddInt64(&s.atomicInt, 1)
+				s.Stats.DeliveryTime[r.GSN] = time.Now()
+			}
+			continue
 		}
-		continue
 	}
 }
 
-func (s *Scalog) SubscribeToAssignedShard(readerId int32) {
-	go s.SubscribeToAssignedShardThread(readerId)
+func (s *Scalog) SubscribeToAssignedShard(readerId int32, startGsn int64) {
+	go s.SubscribeToAssignedShardThread(readerId, startGsn)
 }
 
-func (s *Scalog) SubscribeThread() {
-	stream, conf, err := s.client.Subscribe(0)
+func (s *Scalog) SubscribeThread(startGsn int64) {
+	stream, conf, err := s.client.Subscribe(startGsn)
 	if err != nil {
 		log.Errorf("%v", err)
 	}
-	s.stop = make(chan bool)
+	s.stopConf = make(chan bool)
 	go s.ConfirmationThread(conf)
-	defer close(s.stop)
 	prevGsn := int64(-1)
 
-	for r := range stream {
-		if r.GSN != prevGsn+1 {
-			log.Errorf("[single_client_e2e]: out of order record: %v", r.GSN)
+	for {
+		select {
+		case <-s.Stop:
+			close(s.stopConf)
+			return
+		case r := <-stream:
+			if r.GSN != prevGsn+1 {
+				log.Errorf("[scalog_api]: out of order record: %v", r.GSN)
+			}
+			prevGsn = r.GSN
+			if r.Record != "0xDEADBEEF" {
+				index := atomic.LoadInt64(&s.atomicInt)
+				s.records[index] = r
+				atomic.AddInt64(&s.atomicInt, 1)
+				s.Stats.DeliveryTime[r.GSN] = time.Now()
+			}
+			continue
 		}
-		prevGsn = r.GSN
-		if r.Record != "0xDEADBEEF" {
-			index := atomic.LoadInt64(&s.atomicInt)
-
-			s.records[index] = r.Record
-
-			// Increment atomic var
-			atomic.AddInt64(&s.atomicInt, 1)
-		}
-		continue
 	}
 }
 
-func (s *Scalog) Subscribe() {
-	go s.SubscribeThread()
+func (s *Scalog) Subscribe(startGsn int64) {
+	go s.SubscribeThread(startGsn)
 }
 
 func (s *Scalog) GetLatestOffset() int64 {
@@ -144,15 +208,17 @@ func (s *Scalog) GetLatestOffset() int64 {
 	return atomic.LoadInt64(&s.atomicInt)
 }
 
-func (s *Scalog) Read(index int64) string {
+func (s *Scalog) Read(index int64) client.CommittedRecord {
 	return s.records[index]
 }
 
-func CreateClient() *Scalog {
+// rate limit: if intended to be used for append stream
+// sharding hint: to be used if provided, if not -1
+func CreateClient(rateLimit int, shardingHint int, configFile string) *Scalog {
 	var err error
 
 	// read configuration file
-	viper.SetConfigFile("/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
+	viper.SetConfigFile(configFile)
 	viper.AutomaticEnv()
 	err = viper.ReadInConfig()
 	if err != nil {
@@ -170,13 +236,28 @@ func CreateClient() *Scalog {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 	}
 
-	c, err := client.NewClient(dataAddr, discAddr, numReplica)
-	if err != nil {
-		log.Fatalf("%v", err)
+	var c *client.Client
+	if shardingHint == -1 {
+		c, err = client.NewClient(dataAddr, discAddr, numReplica)
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
+	} else {
+		c, err = client.NewClientWithShardingHint(dataAddr, discAddr, numReplica, int64(shardingHint))
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
 	}
 
-	// Hack: array will never be moved in memory
-	records := make([]string, 10000000)
+	records := make([]client.CommittedRecord, 10000000)
 
-	return &Scalog{client: c, records: records, atomicInt: 0}
+	stats := BenchmarkStats{
+		DeliveryTime:        make(map[int64]time.Time),
+		ConfirmTime:         make(map[int64]time.Time),
+		AppendEndTime:       make(map[int64]time.Time),
+		AppendStartTime:     make(map[int64]time.Time),
+		AppendStartTimeChan: make(chan time.Time, 100), // do not need more than this
+	}
+
+	return &Scalog{client: c, records: records, atomicInt: 0, rate: rateLimit, Stats: stats, Stop: make(chan bool)}
 }
