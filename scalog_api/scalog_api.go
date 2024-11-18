@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"github.com/scalog/scalog/client"
 	log "github.com/scalog/scalog/logger"
@@ -15,6 +16,7 @@ type Scalog struct {
 	client *client.Client
 	records []string
 	atomicInt int64
+	stop chan bool
 }
 
 func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) int64 {
@@ -55,42 +57,86 @@ func (s *Scalog) Append(record string) int64 {
 	return gsn
 }
 
+func (s *Scalog) ConfirmationThread(conf chan client.SpeculationConf) {
+	printTicker := time.NewTicker(1 * time.Second)
+	confirmed := 0
+	for {
+		select {
+		case c := <-conf:
+			// tconf := time.Now()
+			for i := c.StartGSN; i <= c.EndGSN; i++ {
+				// timeConfirm[i] = tconf
+				confirmed++
+			}
+			continue
+		case <-printTicker.C:
+			log.Printf("[intrusion detection]: confirmed %v records", confirmed)
+		case <-s.stop:
+			return
+		}
+	}
+}
+
+func (s *Scalog) SubscribeToAssignedShardThread(readerId int32) {
+	stream, conf, err := s.client.SubscribeToAssignedShard(0, readerId)
+	if err != nil {
+		log.Errorf("%v", err)
+	}
+	s.stop = make(chan bool)
+	go s.ConfirmationThread(conf)
+	defer close(s.stop)
+	// prevGsn := int64(-1)
+
+	for r := range stream {
+		// if r.GSN != prevGsn+1 {
+		// 	log.Errorf("[single_client_e2e]: out of order record: %v", r.GSN)
+		// }
+		// prevGsn = r.GSN
+		if r.Record != "0xDEADBEEF" {
+			index := atomic.LoadInt64(&s.atomicInt)
+
+			s.records[index] = r.Record
+
+			// Increment atomic var
+			atomic.AddInt64(&s.atomicInt, 1)
+		}
+		continue
+	}
+}
+
 func (s *Scalog) SubscribeToAssignedShard(readerId int32) {
 	go s.SubscribeToAssignedShardThread(readerId)
 }
 
-func (s *Scalog) SubscribeToAssignedShardThread(readerId int32) {
-	stream, err := s.client.SubscribeToAssignedShard(0, readerId)
+func (s *Scalog) SubscribeThread() {
+	stream, conf, err := s.client.Subscribe(0)
 	if err != nil {
 		log.Errorf("%v", err)
 	}
+	s.stop = make(chan bool)
+	go s.ConfirmationThread(conf)
+	defer close(s.stop)
+	prevGsn := int64(-1)
+
 	for r := range stream {
-		index := atomic.LoadInt64(&s.atomicInt)
+		if r.GSN != prevGsn+1 {
+			log.Errorf("[single_client_e2e]: out of order record: %v", r.GSN)
+		}
+		prevGsn = r.GSN
+		if r.Record != "0xDEADBEEF" {
+			index := atomic.LoadInt64(&s.atomicInt)
 
-		s.records[index] = r.Record
+			s.records[index] = r.Record
 
-		// Increment atomic var
-		atomic.AddInt64(&s.atomicInt, 1)
+			// Increment atomic var
+			atomic.AddInt64(&s.atomicInt, 1)
+		}
+		continue
 	}
 }
 
 func (s *Scalog) Subscribe() {
 	go s.SubscribeThread()
-}
-
-func (s *Scalog) SubscribeThread() {
-	stream, err := s.client.Subscribe(0)
-	if err != nil {
-		log.Errorf("%v", err)
-	}
-	for r := range stream {
-		index := atomic.LoadInt64(&s.atomicInt)
-
-		s.records[index] = r.Record
-
-		// Increment atomic var
-		atomic.AddInt64(&s.atomicInt, 1)
-	}
 }
 
 func (s *Scalog) GetLatestOffset() int64 {

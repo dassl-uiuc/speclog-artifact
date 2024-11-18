@@ -285,6 +285,7 @@ func (c *Client) getDataServerConn(shard, replica int32) (*grpc.ClientConn, erro
 func (c *Client) Start() {
 	go c.processView()
 	go c.processAppend()
+	// go c.processAssignedAppend()
 	// go c.processAck()
 }
 
@@ -305,11 +306,12 @@ func (c *Client) processAppend() {
 		client, err := c.getDataAppendClient(shard, replica)
 		if err != nil {
 			log.Errorf("%v", err)
-			continue
+			return
 		}
 		err = client.Send(r)
 		if err != nil {
 			log.Errorf("%v", err)
+			return
 		}
 	}
 }
@@ -405,11 +407,12 @@ func (c *Client) processAssignedAppend() {
 		client, err := c.getDataAppendClient(shard, replica)
 		if err != nil {
 			log.Errorf("%v", err)
-			continue
+			return
 		}
 		err = client.Send(r)
 		if err != nil {
 			log.Errorf("%v", err)
+			return
 		}
 	}
 }
@@ -499,9 +502,46 @@ func (c *Client) SubscribeToAssignedShard(gsn int64, readerId int32) (chan Commi
 
 	log.Infof("Subscribe to assigned shard %v replica %v", shard, replica)
 
-	go c.subscribeShardServer(shard, replica)
+	go c.subscribeToAssignedShardServer(shard, replica)
 
 	return c.subC, c.confC, nil
+}
+
+func (c *Client) subscribeToAssignedShardServer(shard, replica int32) {
+	conn, err := c.getDataServerConn(shard, replica)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	opts := []grpc.CallOption{}
+	dataClient := datapb.NewDataClient(conn)
+	globalSN := &datapb.GlobalSN{GSN: c.nextGSN}
+	stream, err := dataClient.Subscribe(context.Background(), globalSN, opts...)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	for {
+		record, err := stream.Recv()
+		if err == io.EOF {
+			log.Infof("Receive subscribe stream closed.")
+			return
+		}
+		if err != nil {
+			log.Errorf("%v", err)
+			return
+		}
+
+		if record.ClientID != -1 {
+			commitedRecord := CommittedRecord{
+				GSN:    record.GlobalSN,
+				Record: record.Record,
+			}
+			c.subC <- commitedRecord
+		} else {
+			c.confC <- SpeculationConf{StartGSN: record.GlobalSN, EndGSN: record.GlobalSN1}
+		}
+	}
 }
 
 func (c *Client) subscribeShardServer(shard, replica int32) {
