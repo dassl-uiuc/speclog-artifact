@@ -40,7 +40,6 @@ func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) error {
 	if s.rateLimiter == nil {
 		s.rateLimiter = rateLimiter.NewLimiter(rateLimiter.Limit(s.rate), 1)
 		// start ack thread
-		s.StopAck = make(chan bool)
 		go s.Ack()
 	}
 
@@ -102,7 +101,6 @@ func (s *Scalog) Append(record string) error {
 	if s.rateLimiter == nil {
 		s.rateLimiter = rateLimiter.NewLimiter(rateLimiter.Limit(s.rate), 1)
 		// start ack thread
-		s.StopAck = make(chan bool)
 		go s.Ack()
 	}
 
@@ -258,6 +256,15 @@ func CreateClient(rateLimit int, shardingHint int, configFile string) *Scalog {
 		AppendStartTime:     make(map[int64]time.Time),
 		AppendStartTimeChan: make(chan time.Time, 100), // do not need more than this
 	}
+	scalogClient := &Scalog{
+		client:    c,
+		records:   records,
+		atomicInt: 0,
+		rate:      rateLimit,
+		Stats:     stats,
+		Stop:      make(chan bool, 1),
+		StopAck:   make(chan bool, 1)
+	}
 
-	return &Scalog{client: c, records: records, atomicInt: 0, rate: rateLimit, Stats: stats, Stop: make(chan bool)}
+	return scalogClient
 }
