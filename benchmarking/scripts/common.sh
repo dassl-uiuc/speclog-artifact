@@ -152,3 +152,13 @@ get_disk_stats() {
         ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[$i]} "mv ${LOGDIR}/data-$i-0.csv $benchmark_dir/$1"
     done
 }
+
+start_intrusion_detection_clients() {
+    # echo "Executing: ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 'cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_client.sh $1 $2 $3 $4> ${LOGDIR}/client_$1.log 2>&1'"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_client.sh $1 $2 $3 $4 > ${LOGDIR}/client_reader_$1 2>&1" &
+}
+
+start_intrusion_detection_generator_clients() {
+    # echo "Executing: ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 'cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_generator_client.sh $1 $2 $3 $4 $5> ${LOGDIR}/client_$1.log 2>&1'"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_generator_client.sh $1 $2 $3 $4 $5 > ${LOGDIR}/client_writer_$1 2>&1" &
+}

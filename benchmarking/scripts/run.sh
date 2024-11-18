@@ -219,7 +219,7 @@ elif [ "$mode" -eq 6 ]; then
     append_clients=("200")
     read_clients=("4")
     replicas=("4")
-    append_type="1"
+    append_type="0"
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -239,18 +239,16 @@ elif [ "$mode" -eq 6 ]; then
             clear_client_logs
 
             start_order_nodes
-            start_data_nodes 
+            start_data_nodes $num_shards
             start_discovery
-            monitor_disk_stats
+            monitor_disk_stats $num_shards
 
             # wait for 10 secs
             sleep 10
             
-            sudo mkdir "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics"
-            sudo rm -rf "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data"
-            sudo mkdir "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data"
-            sudo rm "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/read_throughput.txt"
-            sudo rm "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/analytics/e2e_latencies.txt"
+            sudo mkdir "/proj/rasl-PG0/sgbhat3/speclog/applications/vanilla_applications/intrusion_detection/analytics"
+            sudo rm -rf "/proj/rasl-PG0/sgbhat3/speclog/applications/vanilla_applications/intrusion_detection/data"
+            sudo mkdir "/proj/rasl-PG0/sgbhat3/speclog/applications/vanilla_applications/intrusion_detection/data"
 
             # Ensure even division between num_replica and client_nodes
             if (( $num_replicas % ${#client_nodes[@]} != 0 )); then
@@ -290,7 +288,7 @@ elif [ "$mode" -eq 6 ]; then
             cleanup_servers
 
             # check for errors in log files
-            check_data_log
+            check_data_log $num_shards
             collect_logs
         done
     done
