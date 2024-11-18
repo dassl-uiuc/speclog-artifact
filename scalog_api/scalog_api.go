@@ -263,7 +263,7 @@ func CreateClient(rateLimit int, shardingHint int, configFile string) *Scalog {
 		rate:      rateLimit,
 		Stats:     stats,
 		Stop:      make(chan bool, 1),
-		StopAck:   make(chan bool, 1)
+		StopAck:   make(chan bool, 1),
 	}
 
 	return scalogClient
