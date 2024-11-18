@@ -280,12 +280,12 @@ func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
 		}
 	}
 	s.stats.diffCut += float64(maxLag)
-	return float64(maxLag) >= float64(0.05)*float64(s.localCutChangeWindow)
+	return float64(maxLag) >= float64(0.03)*float64(s.localCutChangeWindow)
 }
 
 func (s *OrderServer) getSignificantLags(lags *map[int32]int64) {
 	for rid, lag := range *lags {
-		if float64(lag) < float64(0.05)*float64(s.localCutChangeWindow) {
+		if float64(lag) < float64(0.03)*float64(s.localCutChangeWindow) {
 			delete(*lags, rid)
 		} else {
 			if _, ok := s.stats.numLagFixes[rid]; !ok {

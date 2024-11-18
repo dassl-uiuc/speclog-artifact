@@ -135,6 +135,8 @@ type DataServer struct {
 	prevSentLocalCut  int64
 	localCglobalCSync chan bool
 
+	// outstandingCuts chan bool
+
 	committedRecords   map[int64]*datapb.Record
 	committedRecordsMu sync.RWMutex
 
@@ -242,6 +244,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.nextAssignableWindowAndQuotas = make(chan *WindowAndQuota, 4096)
 	s.confirmationRecords = make(map[int64]*datapb.Record)
 	s.views = make(map[int64]int32)
+	// s.outstandingCuts = make(chan bool, 2)
 
 	s.quota = 10
 	s.localCutNum = -1
@@ -914,6 +917,7 @@ func (s *DataServer) reportLocalCut() {
 				// wait until the ordering interval hits
 				// <-orderingIntervalTicker.C
 
+				// s.outstandingCuts <- true
 				log.Debugf("Data report: %v", lcs)
 				err := (*s.orderClient).Send(lcs)
 				if prevLocalCutTime.IsZero() {
@@ -1047,6 +1051,9 @@ func (s *DataServer) reportLocalCut() {
 			s.stats.totalCutsSent += int64(fixed)
 			s.stats.numCuts += 1
 
+			// for i := 0; i < fixed; i++ {
+			// 	s.outstandingCuts <- true
+			// }
 			log.Debugf("Data report: %v", lcs)
 			err := (*s.orderClient).Send(lcs)
 			if prevLocalCutTime.IsZero() {
@@ -1188,6 +1195,7 @@ func (s *DataServer) processCommittedEntry() {
 
 			startReplicaID := s.shardID * s.numReplica
 			startGSN := max(entry.CommittedCut.StartGSN, initStartGSN)
+			// numCuts := int64(0)
 			for {
 				log.Debugf("processing next expected local cut num: %v, next expected window num: %v", s.nextExpectedLocalCutNum, s.nextExpectedWindowNum)
 				log.Debugf("entry.CommittedCut.Cut: %v", entry.CommittedCut.Cut)
@@ -1335,7 +1343,13 @@ func (s *DataServer) processCommittedEntry() {
 					s.nextExpectedLocalCutNum = 0
 					s.nextExpectedWindowNum = s.nextExpectedWindowNum + 1
 				}
+
+				// numCuts++
 			}
+
+			// for i := 0; i < int(numCuts); i++ {
+			// 	<-s.outstandingCuts
+			// }
 
 			// update stats for cuts
 			nextCommittedCutNum := s.nextExpectedWindowNum*s.numLocalCutsThreshold + s.nextExpectedLocalCutNum
