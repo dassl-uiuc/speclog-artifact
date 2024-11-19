@@ -437,7 +437,6 @@ func (c *Client) AppendOneToAssignedShard(appenderId int32, record string) (int6
 	}
 
 	shard, replica := c.shardingPolicy.AssignSpecificShard(c.view, record, appenderId)
-	log.Infof("Append to assigned shard %v replica %v", shard, replica)
 	conn, err := c.getDataServerConn(shard, replica)
 	if err != nil {
 		return 0, 0, err

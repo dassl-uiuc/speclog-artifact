@@ -1,17 +1,16 @@
 package main
 
 import (
-	"fmt"
+	"encoding/csv"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/scalog/scalog/benchmark/util"
-	"github.com/scalog/scalog/client"
 	log "github.com/scalog/scalog/logger"
-	"github.com/scalog/scalog/pkg/address"
-	"github.com/spf13/viper"
+	"github.com/scalog/scalog/scalog_api"
 )
 
 const NumberOfRequest = 10
@@ -20,24 +19,9 @@ const StreamName = "AppendBenchmark"
 
 const readType = "subscribe"
 
-/*
-Flow of a record:
-1. Record is appended to the shared log
-2. Record is consumed from the shared log through a subscribe and asynchronously posted on a computation channel
-3. Record is read by the computation thread. This thread can batch records together. Currently, as long as the batch size < 5, the computation thread sleeps for a fixed amount of time (configurable) before marking the record as computed.
-4. A background confirmation thread reads confirmation records from the shared log. This is completely in parallel with the actual computation
-*/
-
 // global data structures to sync between readers and writers
+
 var wg sync.WaitGroup
-var timeAppend map[int64]time.Time
-var timeAppendMu sync.Mutex
-
-// time at which a record was consumed from the shared log
-var timeConsume map[int64]time.Time
-
-// time at which a record's position was confirmed from the shared log
-var timeConfirm map[int64]time.Time
 
 // time at which a record was computed on
 var timeCompute map[int64]time.Time
@@ -45,36 +29,24 @@ var computationTimeUs int64
 
 var runTimeSecs int
 
-// computation channel
-var computationChan chan *client.CommittedRecord
-
 // global stop signal
 var stop chan bool
 
-func appendThread(client *client.Client, id int, timeSecs int) {
+func appendThread(scalog *scalog_api.Scalog, id int, shardId int, timeSecs int) {
 	defer wg.Done()
 	numRecords := 0
 	ticker := time.After(time.Duration(timeSecs) * time.Second)
-	appendLatencyAvgMicros := float64(0)
 	for {
-		str := util.GenerateRandomString(4096)
-		startTime := time.Now()
-		gsn, _, err := client.AppendOne(str)
-		elapsed := time.Since(startTime)
-		appendLatencyAvgMicros += float64(elapsed.Microseconds())
-		timeAppendMu.Lock()
-		timeAppend[gsn] = startTime
-		timeAppendMu.Unlock()
+		str := strings.Repeat("a", 4096)
+		_ = scalog.AppendToAssignedShard(int32(shardId), str)
 		if numRecords%1000 == 0 {
 			log.Printf("[single_client_e2e]: client %v appended %v records", id, numRecords)
-		}
-		if err != nil {
-			log.Errorf("%v", err)
 		}
 		numRecords++
 		select {
 		case <-ticker:
-			log.Printf("[single_client_e2e]: client %v appended %v records at avg latency of %v microseconds", id, numRecords, appendLatencyAvgMicros/float64(numRecords))
+			log.Printf("[single_client_e2e]: stopping client %v", id)
+			scalog.StopAck <- true
 			return
 		default:
 			continue
@@ -82,111 +54,50 @@ func appendThread(client *client.Client, id int, timeSecs int) {
 	}
 }
 
-func confirmationThread(conf chan client.SpeculationConf) {
-	printTicker := time.NewTicker(1 * time.Second)
-	confirmed := 0
-	for {
-		select {
-		case c := <-conf:
-			tconf := time.Now()
-			for i := c.StartGSN; i <= c.EndGSN; i++ {
-				timeConfirm[i] = tconf
-				confirmed++
-			}
-			continue
-		case <-printTicker.C:
-			log.Printf("[single_client_e2e]: confirmed %v records", confirmed)
-		case <-stop:
-			return
-		}
-	}
-}
-
-func computationThread() {
+func computationThread(c *scalog_api.Scalog) {
 	totalBatchSize := float64(0)
 	numBatches := float64(0)
 	printTicker := time.NewTicker(1 * time.Second)
-	batch := make([]*client.CommittedRecord, 0)
-	totalBatchingLatency := float64(0)
+	nextExpectedOffset := int64(0)
 	for {
-		startBatch := time.Now()
-	batcher:
-		for {
-			select {
-			case r := <-computationChan:
-				batch = append(batch, r)
-			case <-stop:
-				return
-			case <-printTicker.C:
-				log.Printf("[single_client_e2e]: average batch size: %v", totalBatchSize/numBatches)
-				log.Printf("[single_client_e2e]: average batching latency: %v", totalBatchingLatency/numBatches)
-			default:
-				break batcher
+		latestOffset := c.GetLatestOffset()
+		if latestOffset >= nextExpectedOffset {
+			lenBatch := latestOffset - nextExpectedOffset + 1
+			start := time.Now()
+			for time.Now().Sub(start).Microseconds() < computationTimeUs {
+				continue
 			}
-		}
-		totalBatchingLatency += float64(time.Now().Sub(startBatch).Microseconds())
+			for i := nextExpectedOffset; i <= latestOffset; i++ {
+				timeCompute[c.Read(i).GSN] = time.Now()
+			}
+			totalBatchSize += float64(lenBatch)
+			numBatches++
 
-		if len(batch) > 0 {
-			if len(batch) < 15 {
-				start := time.Now()
-				for time.Now().Sub(start).Microseconds() < computationTimeUs {
-					continue
-				}
-				for _, r := range batch {
-					timeCompute[r.GSN] = time.Now()
-				}
-				totalBatchSize += float64(len(batch))
-				numBatches++
-				batch = make([]*client.CommittedRecord, 0)
-			} else {
-				log.Printf("[single_client_e2e]: warning! batch size %v is greater than 15", len(batch))
-				batch = make([]*client.CommittedRecord, 0)
-			}
+			nextExpectedOffset = latestOffset + 1
+		}
+		select {
+		case <-printTicker.C:
+			log.Printf("[single_client_e2e]: computed %v records", totalBatchSize)
+			log.Printf("[single_client_e2e]: average batch size %v", totalBatchSize/numBatches)
+		case <-stop:
+			log.Printf("[single_client_e2e]: consumer thread terminating")
+			c.Stop <- true
+			return
+		default:
+			continue
 		}
 	}
-
 }
 
-func subscribeThread(cli *client.Client, id int, timeSec int) {
-	defer wg.Done()
-	stream, conf, err := cli.Subscribe(0)
-	stop = make(chan bool)
-	go confirmationThread(conf)
-	defer close(stop)
-	ticker := time.After(time.Duration(timeSec) * time.Second)
-	if err != nil {
-		log.Errorf("%v", err)
-	}
-	consumed := 0
-	prevGsn := int64(-1)
-
-	for {
-		select {
-		case r := <-stream:
-			if r.GSN != prevGsn+1 {
-				log.Errorf("[single_client_e2e]: out of order record: %v", r.GSN)
-			}
-			prevGsn = r.GSN
-			timeConsume[r.GSN] = time.Now()
-			if r.Record != "0xDEADBEEF" {
-				computationChan <- &r
-			}
-			consumed++
-			continue
-		case <-ticker:
-			log.Printf("[single_client_e2e]: consumed %v records", consumed)
-			return
-		}
-	}
+type LatencyTuple struct {
+	GSN     int64
+	Latency int64
 }
 
 func main() {
 	// initialize global data structures
-	timeAppend = make(map[int64]time.Time, 30000)
-	timeConsume = make(map[int64]time.Time, 30000)
-	timeConfirm = make(map[int64]time.Time, 30000)
 	timeCompute = make(map[int64]time.Time, 30000)
-	computationChan = make(chan *client.CommittedRecord, 4096)
+	stop = make(chan bool)
 	computationTime, err := strconv.Atoi(os.Args[1])
 	if err != nil {
 		log.Errorf("[single_client_e2e]: unable to parse time duration")
@@ -198,73 +109,94 @@ func main() {
 		log.Errorf("[single_client_e2e]: unable to parse time duration")
 	}
 
-	// clean up old files
-	err = os.RemoveAll("log")
+	shardId, err := strconv.Atoi(os.Args[3])
 	if err != nil {
-		log.Errorf("%v", err)
-	}
-	// read configuration file
-	viper.SetConfigFile("../../.scalog.yaml")
-	viper.AutomaticEnv()
-	err = viper.ReadInConfig()
-	if err != nil {
-		log.Errorf("[single_client_e2e]: read config file error: %v", err)
+		log.Errorf("[single_client_e2e]: unable to parse shard id")
 	}
 
-	numReplica := int32(viper.GetInt("data-replication-factor"))
-	discPort := uint16(viper.GetInt("disc-port"))
-	discIp := viper.GetString(fmt.Sprintf("disc-ip"))
-	discAddr := address.NewGeneralDiscAddr(discIp, discPort)
-	dataPort := uint16(viper.GetInt("data-port"))
-	dataAddr := address.NewGeneralDataAddr("data-%v-%v-ip", numReplica, dataPort)
-
+	numAppenders, err := strconv.Atoi(os.Args[4])
 	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
+		log.Errorf("[single_client_e2e]: unable to parse number of appenders")
 	}
+
+	filepath := os.Args[5]
 
 	log.Printf("[single_client_e2e]: starting benchmark with runtime %v", runTimeSecs)
-	wg.Add(11)
-	for i := 0; i < 10; i++ {
-		c, err := client.NewClientWithShardingHint(dataAddr, discAddr, numReplica, int64(i))
-		if err != nil {
-			log.Fatalf("%v", err)
-		}
-		go appendThread(c, i, runTimeSecs)
-	}
-
+	var consumer *scalog_api.Scalog
+	// start consumer
 	for i := 0; i < 1; i++ {
-		c, err := client.NewClient(dataAddr, discAddr, numReplica)
-		if err != nil {
-			log.Fatalf("%v", err)
-		}
-		go subscribeThread(c, i, runTimeSecs)
-		go computationThread()
-
+		consumer = scalog_api.CreateClient(0, -1, "../../.scalog.yaml")
+		consumer.SubscribeToAssignedShard(int32(shardId), 0)
+		go computationThread(consumer)
 	}
 
+	appendClients := make([]*scalog_api.Scalog, 0)
+	// start producer
+	wg.Add(numAppenders)
+	for i := 0; i < numAppenders; i++ {
+		c := scalog_api.CreateClient(1000, shardId, "../../.scalog.yaml")
+		go appendThread(c, i, shardId, runTimeSecs)
+		appendClients = append(appendClients, c)
+	}
 	wg.Wait()
 
-	// dump statistics to calculate e2e latencies
-	computableRecords := 0
-	totalRecords := 0
-	for gsn, appendTime := range timeAppend {
-		if totalRecords > 200 {
-			consumeTime, ok := timeConsume[gsn]
-			if !ok {
-				continue
-			}
-			confirmTime, ok := timeConfirm[gsn]
-			if !ok {
-				continue
-			}
-			computeTime, ok := timeCompute[gsn]
-			if !ok {
-				continue
-			}
+	// stop computation thread
+	stop <- true
 
-			log.Printf("latencies: %v, %v, %v", consumeTime.Sub(appendTime).Microseconds(), confirmTime.Sub(appendTime).Microseconds(), computeTime.Sub(appendTime).Microseconds())
-			computableRecords++
-		}
-		totalRecords++
+	// append latencies
+	appendLatencies := make([]LatencyTuple, 0)
+	appendStartTimeMap := make(map[int64]time.Time)
+
+	e2eMetrics, err := os.Create(filepath + "e2e_metrics_" + strconv.Itoa(shardId) + ".csv")
+	if err != nil {
+		log.Errorf("[single_client_e2e]: failed to open csv file")
 	}
+	defer e2eMetrics.Close()
+
+	appendMetrics, err := os.Create(filepath + "append_metrics_" + strconv.Itoa(shardId) + ".csv")
+	if err != nil {
+		log.Errorf("[single_client_e2e]: failed to open csv file")
+	}
+	defer appendMetrics.Close()
+
+	appendTput := float64(0)
+	for _, appendClient := range appendClients {
+		for gsn, appendStartTime := range appendClient.Stats.AppendStartTime {
+			appendEndTime, ok := appendClient.Stats.AppendEndTime[gsn]
+			if ok {
+				appendLatencies = append(appendLatencies, LatencyTuple{gsn, appendEndTime.Sub(appendStartTime).Microseconds()})
+				appendStartTimeMap[gsn] = appendStartTime
+			}
+		}
+		appendTput += float64(len(appendClient.Stats.AppendEndTime)) / float64(runTimeSecs)
+	}
+
+	// sort slices
+	sort.Slice(appendLatencies, func(i, j int) bool {
+		return appendLatencies[i].GSN < appendLatencies[j].GSN
+	})
+
+	// write to csv
+	appendWriter := csv.NewWriter(appendMetrics)
+	header := []string{"gsn", "latency (us)", "append tput (ops/sec)"}
+	appendWriter.Write(header)
+	for _, latency := range appendLatencies {
+		appendWriter.Write([]string{strconv.Itoa(int(latency.GSN)), strconv.Itoa(int(latency.Latency)), strconv.FormatFloat(appendTput, 'f', -1, 64)})
+	}
+	appendWriter.Flush()
+
+	e2eWriter := csv.NewWriter(e2eMetrics)
+	header = []string{"gsn", "delivery latency (us)", "confirm latency (us)", "compute latency (us)", "e2e latency (us)"}
+	e2eWriter.Write(header)
+	for _, latency := range appendLatencies {
+		confirmTime, inConfirm := consumer.Stats.ConfirmTime[latency.GSN]
+		computeTime, inCompute := timeCompute[latency.GSN]
+		deliveryTime, inDelivery := consumer.Stats.DeliveryTime[latency.GSN]
+		if inConfirm && inCompute && inDelivery {
+			e2eWriter.Write([]string{strconv.Itoa(int(latency.GSN)), strconv.Itoa(int(deliveryTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(max(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds(), computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())))})
+		}
+	}
+	e2eWriter.Flush()
+
+	log.Printf("[single_client_e2e]: benchmark complete")
 }
