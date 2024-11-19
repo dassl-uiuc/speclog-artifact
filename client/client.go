@@ -20,6 +20,7 @@ import (
 
 type ShardingPolicy interface {
 	Shard(view *view.View, record string) (int32, int32)
+	AssignSpecificShard(view *view.View, record string, appenderId int32) (int32, int32)
 	GetShardID() int32
 	GetReplicaID() int32
 }
@@ -45,6 +46,7 @@ type Client struct {
 	view               *view.View
 	viewC              chan *discpb.View
 	appendC            chan *datapb.Record
+	assignedAppendC    chan *datapb.Record
 	AckC               chan *datapb.Ack
 	subC               chan CommittedRecord
 	committedRecords   map[int64]CommittedRecord
@@ -78,11 +80,12 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 		discAddr:     discAddr,
 		shardingHint: shardingHint,
 	}
-	c.outstandingRequestsLimit = 1
+	c.outstandingRequestsLimit = 5
 	c.outstandingRequestsChan = make(chan bool, c.outstandingRequestsLimit)
 	c.shardingPolicy = NewShardingPolicyWithHint(numReplica, shardingHint)
 	c.viewC = make(chan *discpb.View, 4096)
 	c.appendC = make(chan *datapb.Record, c.outstandingRequestsLimit)
+	c.assignedAppendC = make(chan *datapb.Record, c.outstandingRequestsLimit)
 	c.AckC = make(chan *datapb.Ack, 4096)
 	c.subC = make(chan CommittedRecord, 4096)
 	c.dataConn = make(map[int32]*grpc.ClientConn)
@@ -108,11 +111,12 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 		dataAddr:   dataAddr,
 		discAddr:   discAddr,
 	}
-	c.outstandingRequestsLimit = 1
+	c.outstandingRequestsLimit = 5
 	c.outstandingRequestsChan = make(chan bool, c.outstandingRequestsLimit)
 	c.shardingPolicy = NewDefaultShardingPolicy(numReplica)
 	c.viewC = make(chan *discpb.View, 4096)
 	c.appendC = make(chan *datapb.Record, c.outstandingRequestsLimit)
+	c.assignedAppendC = make(chan *datapb.Record, c.outstandingRequestsLimit)
 	c.AckC = make(chan *datapb.Ack, 4096)
 	c.subC = make(chan CommittedRecord, 4096)
 	c.dataConn = make(map[int32]*grpc.ClientConn)
@@ -245,7 +249,8 @@ func (c *Client) getDataServerConn(shard, replica int32) (*grpc.ClientConn, erro
 
 func (c *Client) Start() {
 	go c.processView()
-	go c.processAppend()
+	// go c.processAppend()
+	go c.processAssignedAppend()
 	// go c.processAck()
 }
 
@@ -328,6 +333,56 @@ func (c *Client) AppendOne(record string) (int64, int32, error) {
 	return ack.GlobalSN, ack.ShardID, nil
 }
 
+func (c *Client) processAssignedAppend() {
+	for r := range c.assignedAppendC {
+		shard, replica := c.shardingPolicy.AssignSpecificShard(c.view, r.Record, r.AppenderID)
+		// log.Infof("shard: %v, replica: %v\n", shard, replica)
+		client, err := c.getDataAppendClient(shard, replica)
+		if err != nil {
+			log.Errorf("%v", err)
+			return
+		}
+		err = client.Send(r)
+		if err != nil {
+			log.Errorf("%v", err)
+			return
+		}
+	}
+}
+
+func (c *Client) AppendToAssignedShard(appenderId int32, record string) (int64, int32, error) {
+	c.outstandingRequestsChan <- true
+	r := &datapb.Record{
+		ClientID:   c.clientID,
+		ClientSN:   c.getNextClientSN(),
+		Record:     record,
+		AppenderID: appenderId,
+	}
+	c.assignedAppendC <- r
+	return 0, 0, nil
+}
+
+func (c *Client) AppendOneToAssignedShard(appenderId int32, record string) (int64, int32, error) {
+	r := &datapb.Record{
+		ClientID: c.clientID,
+		ClientSN: c.getNextClientSN(),
+		Record:   record,
+	}
+
+	shard, replica := c.shardingPolicy.AssignSpecificShard(c.view, record, appenderId)
+	conn, err := c.getDataServerConn(shard, replica)
+	if err != nil {
+		return 0, 0, err
+	}
+	opts := []grpc.CallOption{}
+	dataClient := datapb.NewDataClient(conn)
+	ack, err := dataClient.AppendOne(context.TODO(), r, opts...)
+	if err != nil {
+		return 0, 0, err
+	}
+	return ack.GlobalSN, ack.ShardID, nil
+}
+
 func (c *Client) Read(gsn int64, shard, replica int32) (string, error) {
 	globalSN := &datapb.GlobalSN{GSN: gsn}
 	conn, err := c.getDataServerConn(shard, replica)
@@ -355,6 +410,58 @@ func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, error) {
 	}
 
 	return c.subC, nil
+}
+
+func (c *Client) SubscribeToAssignedShard(gsn int64, readerId int32) (chan CommittedRecord, error) {
+	c.committedRecordsMu.Lock()
+	c.nextGSN = gsn
+	c.committedRecordsMu.Unlock()
+
+	if readerId >= c.numReplica*int32(len(c.view.LiveShards)) {
+		return nil, fmt.Errorf("readerId %v is out of range", readerId)
+	}
+
+	shard := readerId / c.numReplica
+	replica := readerId % c.numReplica
+
+	log.Infof("Subscribe to assigned shard %v replica %v", shard, replica)
+
+	go c.subscribeToAssignedShardServer(shard, replica)
+
+	return c.subC, nil
+}
+
+func (c *Client) subscribeToAssignedShardServer(shard, replica int32) {
+	conn, err := c.getDataServerConn(shard, replica)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	opts := []grpc.CallOption{}
+	dataClient := datapb.NewDataClient(conn)
+	globalSN := &datapb.GlobalSN{GSN: c.nextGSN}
+	stream, err := dataClient.Subscribe(context.Background(), globalSN, opts...)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	for {
+		record, err := stream.Recv()
+		if err == io.EOF {
+			log.Infof("Receive subscribe stream closed.")
+			return
+		}
+		if err != nil {
+			log.Errorf("%v", err)
+			return
+		}
+
+		commitedRecord := CommittedRecord{
+			GSN:    record.GlobalSN,
+			Record: record.Record,
+		}
+		c.subC <- commitedRecord
+	}
 }
 
 func (c *Client) subscribeShardServer(shard, replica int32) {
