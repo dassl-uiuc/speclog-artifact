@@ -25,6 +25,7 @@ var wg sync.WaitGroup
 
 // time at which a record was computed on
 var timeCompute map[int64]time.Time
+var timeBeginCompute map[int64]time.Time
 var computationTimeUs int64
 
 var runTimeSecs int
@@ -64,6 +65,9 @@ func computationThread(c *scalog_api.Scalog) {
 		if latestOffset >= nextExpectedOffset {
 			lenBatch := latestOffset - nextExpectedOffset + 1
 			start := time.Now()
+			for i := nextExpectedOffset; i <= latestOffset; i++ {
+				timeBeginCompute[c.Read(i).GSN] = start
+			}
 			for time.Now().Sub(start).Microseconds() < computationTimeUs {
 				continue
 			}
@@ -97,6 +101,7 @@ type LatencyTuple struct {
 func main() {
 	// initialize global data structures
 	timeCompute = make(map[int64]time.Time, 30000)
+	timeBeginCompute = make(map[int64]time.Time, 30000)
 	stop = make(chan bool)
 	computationTime, err := strconv.Atoi(os.Args[1])
 	if err != nil {
@@ -186,14 +191,14 @@ func main() {
 	appendWriter.Flush()
 
 	e2eWriter := csv.NewWriter(e2eMetrics)
-	header = []string{"gsn", "delivery latency (us)", "confirm latency (us)", "compute latency (us)", "e2e latency (us)"}
+	header = []string{"gsn", "delivery latency (us)", "confirm latency (us)", "compute latency (us)", "e2e latency (us)", "queuing delay (us)"}
 	e2eWriter.Write(header)
 	for _, latency := range appendLatencies {
 		confirmTime, inConfirm := consumer.Stats.ConfirmTime[latency.GSN]
 		computeTime, inCompute := timeCompute[latency.GSN]
 		deliveryTime, inDelivery := consumer.Stats.DeliveryTime[latency.GSN]
 		if inConfirm && inCompute && inDelivery {
-			e2eWriter.Write([]string{strconv.Itoa(int(latency.GSN)), strconv.Itoa(int(deliveryTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(max(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds(), computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())))})
+			e2eWriter.Write([]string{strconv.Itoa(int(latency.GSN)), strconv.Itoa(int(deliveryTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(max(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds(), computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds()))), strconv.Itoa(int(timeBeginCompute[latency.GSN].Sub(consumer.Stats.DeliveryTime[latency.GSN]).Microseconds()))})
 		}
 	}
 	e2eWriter.Flush()

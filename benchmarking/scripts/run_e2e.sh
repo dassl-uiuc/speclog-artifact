@@ -3,10 +3,9 @@
 source ./common.sh
 
 # parameters
-runtime_secs=20
-# computation_time=(100 200 500 800 1000 1200)
-computation_time=(1000)
-num_shards=1
+runtime_secs=120
+computation_time=(100 200 500 800 1000 1200 1500 2000)
+num_shards=2
 
 for computation_time in "${computation_time[@]}";
 do 
@@ -22,6 +21,8 @@ do
     sleep 1
     start_e2e_clients ${client_nodes[0]} $computation_time $runtime_secs 0 10 $benchmark_dir/logs/
     start_e2e_clients ${client_nodes[1]} $computation_time $runtime_secs 1 10 $benchmark_dir/logs/
+    # start_e2e_clients ${client_nodes[2]} $computation_time $runtime_secs 2 10 $benchmark_dir/logs/
+    # start_e2e_clients ${client_nodes[3]} $computation_time $runtime_secs 3 10 $benchmark_dir/logs/
     echo "Waiting for clients to terminate"
 
     wait 

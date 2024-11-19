@@ -153,10 +153,10 @@ func (s *Scalog) SubscribeToAssignedShardThread(readerId int32, startGsn int64) 
 			return
 		case r := <-stream:
 			if r.Record != "0xDEADBEEF" {
+				s.Stats.DeliveryTime[r.GSN] = time.Now()
 				index := atomic.LoadInt64(&s.atomicInt)
 				s.records[index] = r
 				atomic.AddInt64(&s.atomicInt, 1)
-				s.Stats.DeliveryTime[r.GSN] = time.Now()
 			}
 			continue
 		}
