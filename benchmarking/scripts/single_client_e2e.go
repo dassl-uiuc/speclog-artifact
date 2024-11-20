@@ -62,6 +62,7 @@ func computationThread(c *scalog_api.Scalog) {
 	nextExpectedOffset := int64(0)
 	for {
 		latestOffset := c.GetLatestOffset()
+		latestOffset -= 1
 		if latestOffset >= nextExpectedOffset {
 			lenBatch := latestOffset - nextExpectedOffset + 1
 			start := time.Now()
