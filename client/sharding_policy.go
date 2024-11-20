@@ -2,7 +2,9 @@ package client
 
 import (
 	"math/rand"
+	"sort"
 	"time"
+
 	log "github.com/scalog/scalog/logger"
 
 	"github.com/scalog/scalog/pkg/view"
@@ -45,6 +47,12 @@ func (p *ShardingPolicyWithHint) Shard(view *view.View, record string) (int32, i
 	if numLiveShards < 1 {
 		return -1, -1
 	}
+
+	// sort list of live shards to ensure uniform order across clients
+	sort.Slice(view.LiveShards, func(i, j int) bool {
+		return view.LiveShards[i] < view.LiveShards[j]
+	})
+
 	replicaId := p.shardingHint % (int64(p.numReplica) * int64(numLiveShards))
 	rs := int32(replicaId / int64(p.numReplica))
 	rr := int32(replicaId % int64(p.numReplica))
@@ -68,14 +76,20 @@ func (p *ShardingPolicyWithHint) AssignSpecificShard(view *view.View, record str
 	}
 
 	if appenderId >= (int32(numLiveShards) * p.numReplica) {
-		log.Errorf("appenderId %v is out of range", appenderId)
 		return -1, -1
 	}
+
+	// sort list of live shards to ensure uniform order across clients
+	sort.Slice(view.LiveShards, func(i, j int) bool {
+		return view.LiveShards[i] < view.LiveShards[j]
+	})
 
 	rs := appenderId / p.numReplica
 	rr := appenderId % p.numReplica
 	p.shardID = view.LiveShards[rs]
 	p.replicaID = rr
+	log.Printf("appenderId: %v, shardID: %v, replicaID: %v", appenderId, p.shardID, p.replicaID)
+
 	return p.shardID, p.replicaID
 }
 
@@ -118,8 +132,16 @@ func (p *DefaultShardingPolicy) Shard(view *view.View, record string) (int32, in
 	}
 	rs := rand.New(p.seed).Intn(numLiveShards)
 	rr := int32(rand.New(p.seed).Intn(int(p.numReplica)))
+
+	// sort list of live shards to ensure uniform order across clients
+	sort.Slice(view.LiveShards, func(i, j int) bool {
+		return view.LiveShards[i] < view.LiveShards[j]
+	})
+
 	p.shardID = view.LiveShards[rs]
 	p.replicaID = rr
+
+	log.Printf("shardID: %v, replicaID: %v", p.shardID, p.replicaID)
 	return p.shardID, p.replicaID
 }
 
@@ -137,13 +159,19 @@ func (p *DefaultShardingPolicy) AssignSpecificShard(view *view.View, record stri
 	}
 
 	if appenderId >= (int32(numLiveShards) * p.numReplica) {
-		log.Errorf("appenderId %v is out of range", appenderId)
 		return -1, -1
 	}
+
+	// sort list of live shards to ensure uniform order across clients
+	sort.Slice(view.LiveShards, func(i, j int) bool {
+		return view.LiveShards[i] < view.LiveShards[j]
+	})
 
 	rs := appenderId / p.numReplica
 	rr := appenderId % p.numReplica
 	p.shardID = view.LiveShards[rs]
 	p.replicaID = rr
+
+	log.Printf("appenderId: %v, shardID: %v, replicaID: %v", appenderId, p.shardID, p.replicaID)
 	return p.shardID, p.replicaID
 }
