@@ -284,7 +284,7 @@ func (c *Client) getDataServerConn(shard, replica int32) (*grpc.ClientConn, erro
 
 func (c *Client) Start() {
 	go c.processView()
-	// go c.processAppend()
+	go c.processAppend()
 	go c.processAssignedAppend()
 	// go c.processAck()
 }
