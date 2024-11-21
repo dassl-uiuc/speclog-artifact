@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -17,6 +16,14 @@ import (
 )
 
 var intrusionDetectionConfigFilePath = "../../applications/vanilla_applications/intrusion_detection/intrusion_detection_config.yaml"
+
+func GenerateRecord(length int) string {
+	padding := util.GenerateRandomString(length - 2)
+	rand.Seed(time.Now().UnixNano())
+	temperature := rand.Intn(90) + 10
+	record := strconv.Itoa(temperature) + padding
+	return record
+}
 
 func Append_One_Ping(appenderId int32, clientNumber int) {
 	// read configuration file
@@ -34,18 +41,13 @@ func Append_One_Ping(appenderId int32, clientNumber int) {
 	startTimeInSeconds := time.Now().Unix()
 	startThroughputTimer := time.Now().UnixNano()
 	for time.Now().Unix()-startTimeInSeconds < runTime {
-		record := map[string]interface{}{
-			"timestamp": time.Now().UnixNano(),
-			"message":   util.GenerateRandomString(1024),
-			"click":     rand.Intn(10),
-		}
-		recordJson, err := json.Marshal(record)
+		record := GenerateRecord(4096)
 		if err != nil {
 			fmt.Println("Error marshalling record")
 			return
 		}
 
-		scalogApi.AppendOneToAssignedShard(appenderId, string(recordJson))
+		scalogApi.AppendOneToAssignedShard(appenderId, record)
 
 		recordsProduced++
 	}
@@ -72,18 +74,13 @@ func Append_Stream_Ping(appenderId int32, clientNumber int) {
 	startTimeInSeconds := time.Now().Unix()
 	startThroughputTimer := time.Now().UnixNano()
 	for time.Now().Unix()-startTimeInSeconds < runTime {
-		record := map[string]interface{}{
-			"timestamp": time.Now().UnixNano(),
-			"message":   util.GenerateRandomString(4096),
-			"click":     rand.Intn(10),
-		}
-		recordJson, err := json.Marshal(record)
+		record := GenerateRecord(4096)
 		if err != nil {
 			fmt.Println("Error marshalling record")
 			return
 		}
 
-		scalogApi.AppendToAssignedShard(appenderId, string(recordJson))
+		scalogApi.AppendToAssignedShard(appenderId, record)
 
 		recordsProduced++
 	}

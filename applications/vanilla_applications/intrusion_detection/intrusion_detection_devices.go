@@ -1,53 +1,97 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
 	"time"
 
+	"github.com/RobinUS2/golang-moving-average"
 	"github.com/scalog/scalog/scalog_api"
+	"github.com/scalog/scalog/client"
 	"github.com/spf13/viper"
+	"database/sql"
+	"strings"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var intrusionDetectionConfigFilePath = "../../applications/vanilla_applications/intrusion_detection/intrusion_detection_config.yaml"
-var processingTime = int64(2000)
-var detectionTimeRangeNs = int64(10000)
-var window = make([]map[string]interface{}, 1)
-var clickRateThreshold = 5
+var movingAverage = movingaverage.New(10)
 
 // TODO: Add computation here
-// func HandleIntrusion(record map[string]interface{}) {
-// 	// fmt.Println("Handling intrusion")
-// 	processingStartTime := time.Now().UnixMicro()
+func HandleIntrusion(committedRecords []client.CommittedRecord, db *sql.DB) {
+	var placeholders []string
+	var values []interface{}
 
-// 	var timestamp int64 = int64(record["timestamp"].(float64))
+	for _, record := range committedRecords {
+		// Extract first two chars of record.Record and convert to int
+		temperature, err := strconv.Atoi(record.Record[:2])
+		if err != nil {
+			fmt.Println("Error converting temperature to int")
+		}
 
-// 	window = append(window, record)
-// 	var durationNs int64
-// 	for {
-// 		durationNs = timestamp - window[0]["timestamp"].(int64)
-// 		if durationNs > detectionTimeRangeNs {
-// 			window = window[1:] // remove the first element
-// 		} else {
-// 			break
-// 		}
-// 	}
+		// Add temperature to moving average
+		movingAverage.Add(float64(temperature))
+		
+		// Add to placeholder and values to input to DB later
+		placeholders = append(placeholders, "(?)")
+		values = append(values, record.Record)
+	}
 
-// 	var totalClick int = 0
-// 	for i := 0; i < len(window); i++ {
-// 		totalClick += window[i]["click"].(int)
-// 	}
+	fmt.Println("Length of placeholders: ", len(placeholders))
+	fmt.Println("Length of values: ", len(values))
 
-// 	clickRate := totalClick / int(durationNs/1000000000)
-// 	if clickRate > clickRateThreshold {
-// 		fmt.Println("Intrusion detected")
-// 	}
-// }
+	// Get moving average
+	average := movingAverage.Avg()
+	if average > 90 {
+		fmt.Println("Intrusion detected")
+	}
+
+	// Build the SQL query
+	insertQuery := fmt.Sprintf("INSERT INTO records (temperature) VALUES %s", strings.Join(placeholders, ","))
+
+	// Insert the rows
+	_, err := db.Exec(insertQuery, values...)
+	if err != nil {
+		log.Fatalf("Failed to insert rows: %v", err)
+	}
+}
+
+func CreateDatabase() *sql.DB {
+	dbFile := "/data/records.db"
+	db, err := sql.Open("sqlite3", dbFile)
+	if err != nil {
+		log.Fatalf("Failed to open SQLite database: %v", err)
+	}
+
+	// Create table if it doesn't exist
+	createTableQuery := `
+	CREATE TABLE IF NOT EXISTS records (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		temperature TEXT NOT NULL
+	);`
+	_, err = db.Exec(createTableQuery)
+	if err != nil {
+		log.Fatalf("Failed to create table: %v", err)
+	}
+
+	return db
+}
+
+func DeleteDatabase(db *sql.DB) {
+	dbFile := "/data/records.db"
+	err := os.Remove(dbFile)
+	if err != nil {
+		log.Fatalf("Failed to delete SQLite database: %v", err)
+	}
+}
 
 func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
+	// Create database
+	db := CreateDatabase()
+
 	// read configuration file
 	viper.SetConfigFile(intrusionDetectionConfigFilePath)
 	viper.AutomaticEnv()
@@ -61,7 +105,7 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 
 	scalogApi.SubscribeToAssignedShard(readerId, 0)
 
-	var record map[string]interface{}
+	// var record map[string]interface{}
 	// Time used to keep track of the time to run wordcount
 	startTimeInSeconds := time.Now().Unix()
 	prevOffset := int64(0)
@@ -80,26 +124,29 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 	for time.Now().Unix()-startTimeInSeconds < (runTime) {
 		offset := scalogApi.GetLatestOffset()
 		if offset != prevOffset {
-			duration := time.Duration(2) * time.Millisecond
-			start := time.Now()
-			for time.Since(start) < duration {
-				// Busy-waiting
-			}
+			committedRecords := make([]client.CommittedRecord, 0)
 
-			timestamp := time.Now().UnixNano()
 			for i := prevOffset; i < offset; i++ {
 				committedRecord := scalogApi.Read(i)
 
-				err := json.Unmarshal([]byte(committedRecord.Record), &record)
-				if err != nil {
-					fmt.Println("Error unmarshalling record")
-					return
-				}
+				committedRecords = append(committedRecords, committedRecord)
+			}
 
-				// HandleIntrusion(record)
+			fmt.Println("Length of committed records: ", len(committedRecords))
+			fmt.Println("Expected number of records: ", offset-prevOffset)
 
-				// Calculate end-to-end latency
-				computeE2eEndTimes[committedRecord.GSN] = timestamp
+			HandleIntrusion(committedRecords, db)
+
+			// duration := time.Duration(2) * time.Millisecond
+			// start := time.Now()
+			// for time.Since(start) < duration {
+			// 	// Busy-waiting
+			// }
+
+			// Iterate through committed records
+			timestamp := time.Now().UnixNano()
+			for _, record := range committedRecords {
+				computeE2eEndTimes[record.GSN] = timestamp
 
 				recordsReceived++
 			}
@@ -109,6 +156,9 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 	}
 
 	endThroughputTimer := time.Now().UnixNano()
+
+	// Delete database
+	DeleteDatabase(db)
 
 	// Wait for everyone to finish their run
 	time.Sleep(30 * time.Second)

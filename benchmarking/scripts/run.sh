@@ -11,7 +11,7 @@ source ./common.sh
 #   5 -> clear server and client logs
 #   6 -> intrusion detection experiment mode
 
-num_shards=2
+num_shards=1
 mode="$1"
 if [ "$mode" -eq 0 ]; then # append one experiment mode
     clients=("60" "320")
@@ -221,15 +221,15 @@ elif [ "$mode" -eq 5 ]; then
     cleanup_servers
     collect_logs
 elif [ "$mode" -eq 6 ]; then
-    append_clients=("200")
-    read_clients=("4")
-    replicas=("4")
-    append_type="0"
+    append_clients=("20")
+    read_clients=("2")
+    replicas=("2")
+    append_type="1"
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
         modify_batching_intervals $interval
-
+ 
         for i in "${!append_clients[@]}"; 
         do
             num_append_clients=${append_clients[$i]}
@@ -244,16 +244,16 @@ elif [ "$mode" -eq 6 ]; then
             clear_client_logs
 
             start_order_nodes
-            start_data_nodes $num_shards
             start_discovery
+            start_data_nodes $num_shards
             monitor_disk_stats $num_shards
 
             # wait for 10 secs
             sleep 10
             
-            sudo mkdir "/proj/rasl-PG0/sgbhat3/speclog/applications/vanilla_applications/intrusion_detection/analytics"
-            sudo rm -rf "/proj/rasl-PG0/sgbhat3/speclog/applications/vanilla_applications/intrusion_detection/data"
-            sudo mkdir "/proj/rasl-PG0/sgbhat3/speclog/applications/vanilla_applications/intrusion_detection/data"
+            sudo mkdir "../../applications/vanilla_applications/intrusion_detection/analytics"
+            sudo rm -rf "../../applications/vanilla_applications/intrusion_detection/data"
+            sudo mkdir "../../applications/vanilla_applications/intrusion_detection/data"
 
             # Ensure even division between num_replica and client_nodes
             if (( $num_replicas % ${#client_nodes[@]} != 0 )); then
