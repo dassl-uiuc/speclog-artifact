@@ -78,6 +78,51 @@ func TestWriteAcrossSeg(t *testing.T) {
 	assert.Nil(t, os.RemoveAll("tmp"))
 }
 
+func TestWriteAcrossMultiSeg(t *testing.T) {
+	p, err := NewPartition("tmp", 10)
+	assert.Nil(t, err)
+	assert.NotNil(t, p)
+
+	hole := HolePrefix
+
+	l, err := p.Write(hole, 8)
+	assert.Nil(t, err)
+	assert.Equal(t, int64(0), l)
+
+	l, err = p.Write(hole, 20)
+	assert.Nil(t, err)
+	assert.Equal(t, int64(8), l)
+
+	r, err := p.ReadLSN(5)
+	assert.Nil(t, err)
+	assert.True(t, strings.HasPrefix(r, HolePrefix), "Read error: expect '%v*', get '%v'", HolePrefix, r)
+
+	r, err = p.ReadLSN(12)
+	assert.Nil(t, err)
+	assert.True(t, strings.HasPrefix(r, HolePrefix), "Read error: expect '%v*', get '%v'", HolePrefix, r)
+
+	r, err = p.ReadLSN(22)
+	assert.Nil(t, err)
+	assert.True(t, strings.HasPrefix(r, HolePrefix), "Read error: expect '%v*', get '%v'", HolePrefix, r)
+
+	assert.Nil(t, p.Assign(0, 28, 100))
+
+	r, err = p.ReadGSN(105)
+	assert.Nil(t, err)
+	assert.True(t, strings.HasPrefix(r, HolePrefix), "Read error: expect '%v*', get '%v'", HolePrefix, r)
+
+	r, err = p.ReadGSN(112)
+	assert.Nil(t, err)
+	assert.True(t, strings.HasPrefix(r, HolePrefix), "Read error: expect '%v*', get '%v'", HolePrefix, r)
+
+	r, err = p.ReadGSN(122)
+	assert.Nil(t, err)
+	assert.True(t, strings.HasPrefix(r, HolePrefix), "Read error: expect '%v*', get '%v'", HolePrefix, r)
+
+	assert.Nil(t, p.Close())
+	assert.Nil(t, os.RemoveAll("tmp"))
+}
+
 func TestWritePartitionMixed(t *testing.T) {
 	p, err := NewPartition("tmp", 10)
 	assert.Nil(t, err)

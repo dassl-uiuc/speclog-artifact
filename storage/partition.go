@@ -51,6 +51,17 @@ func (p *Partition) Write(record string, holeSkip int32) (int64, error) {
 					return lsn, err
 				}
 			}
+			for holeLeft > p.segLen {
+				err = p.CreateSegment()
+				if err != nil {
+					return 0, err
+				}
+				_, err = p.activeSegment.Write(record, p.segLen)
+				if err != nil {
+					return lsn, err
+				}
+				holeLeft -= p.segLen
+			}
 			err = p.CreateSegment()
 			if err != nil {
 				return 0, err
@@ -59,6 +70,7 @@ func (p *Partition) Write(record string, holeSkip int32) (int64, error) {
 		} else {
 			_, err = p.activeSegment.Write(record, holeSkip)
 		}
+
 	}
 
 	return lsn, err
