@@ -115,6 +115,7 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 	timeBeginCompute := make(map[int64]time.Time)
 	batchesReceived := 0
 	batchSize := 0
+	handleIntrusionLatencies := 0
 
 	// Wait for first record to come in before starting throughput timer
 	for {
@@ -142,7 +143,9 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 			fmt.Println("Length of committed records: ", len(committedRecords))
 			fmt.Println("Expected number of records: ", offset-prevOffset)
 
+			startHandleIntrusion := time.Now()
 			HandleIntrusion(committedRecords, db)
+			handleIntrusionLatencies += int(time.Since(startHandleIntrusion).Nanoseconds())
 
 			// duration := time.Duration(2) * time.Millisecond
 			// start := time.Now()
@@ -183,6 +186,19 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 	defer file.Close()
 
 	if _, err := file.WriteString(fmt.Sprintf("%d\n", recordsReceived)); err != nil {
+		log.Fatal(err)
+	}
+
+	// Record handle intrusion latencies
+	handleIntrusionLatenciesFilePath := "../../applications/vanilla_applications/intrusion_detection/data/handle_intrusion_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	file, err = os.OpenFile(handleIntrusionLatenciesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	averageHandleIntrusionLatencies := float64(handleIntrusionLatencies) / float64(batchesReceived)
+	if _, err := file.WriteString(fmt.Sprintf("%f\n", averageHandleIntrusionLatencies)); err != nil {
 		log.Fatal(err)
 	}
 
