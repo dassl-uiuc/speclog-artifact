@@ -7,12 +7,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/RobinUS2/golang-moving-average"
-	"github.com/scalog/scalog/scalog_api"
-	"github.com/scalog/scalog/client"
-	"github.com/spf13/viper"
 	"database/sql"
 	"strings"
+
+	movingaverage "github.com/RobinUS2/golang-moving-average"
+	"github.com/scalog/scalog/client"
+	"github.com/scalog/scalog/scalog_api"
+	"github.com/spf13/viper"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -34,7 +35,7 @@ func HandleIntrusion(committedRecords []client.CommittedRecord, db *sql.DB) {
 
 		// Add temperature to moving average
 		movingAverage.Add(float64(temperature))
-		
+
 		// Add to placeholder and values to input to DB later
 		placeholders = append(placeholders, "(?)")
 		values = append(values, record.Record)
@@ -111,6 +112,10 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 	prevOffset := int64(0)
 	recordsReceived := 0
 	computeE2eEndTimes := make(map[int64]int64)
+	timeBeginCompute := make(map[int64]time.Time)
+	batchesReceived := 0
+	batchSize := 0
+	handleIntrusionLatencies := 0
 
 	// Wait for first record to come in before starting throughput timer
 	for {
@@ -126,16 +131,21 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 		if offset != prevOffset {
 			committedRecords := make([]client.CommittedRecord, 0)
 
+			startComputeTime := time.Now()
 			for i := prevOffset; i < offset; i++ {
 				committedRecord := scalogApi.Read(i)
 
 				committedRecords = append(committedRecords, committedRecord)
+
+				timeBeginCompute[committedRecord.GSN] = startComputeTime
 			}
 
 			fmt.Println("Length of committed records: ", len(committedRecords))
 			fmt.Println("Expected number of records: ", offset-prevOffset)
 
+			startHandleIntrusion := time.Now()
 			HandleIntrusion(committedRecords, db)
+			handleIntrusionLatencies += int(time.Since(startHandleIntrusion).Nanoseconds())
 
 			// duration := time.Duration(2) * time.Millisecond
 			// start := time.Now()
@@ -150,6 +160,9 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 
 				recordsReceived++
 			}
+
+			batchesReceived++
+			batchSize += len(committedRecords)
 
 			prevOffset = offset
 		}
@@ -173,6 +186,19 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 	defer file.Close()
 
 	if _, err := file.WriteString(fmt.Sprintf("%d\n", recordsReceived)); err != nil {
+		log.Fatal(err)
+	}
+
+	// Record handle intrusion latencies
+	handleIntrusionLatenciesFilePath := "../../applications/vanilla_applications/intrusion_detection/data/handle_intrusion_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	file, err = os.OpenFile(handleIntrusionLatenciesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	averageHandleIntrusionLatencies := float64(handleIntrusionLatencies) / float64(batchesReceived)
+	if _, err := file.WriteString(fmt.Sprintf("%f\n", averageHandleIntrusionLatencies)); err != nil {
 		log.Fatal(err)
 	}
 
@@ -203,6 +229,33 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 		if _, err := file.WriteString(fmt.Sprintf("%d,%d\n", gsn, time.UnixNano())); err != nil {
 			log.Fatal(err)
 		}
+	}
+
+	// Dump start compute times
+	startComputeTimesFilePath := "../../applications/vanilla_applications/intrusion_detection/data/start_compute_times_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	file, err = os.OpenFile(startComputeTimesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	for gsn, time := range timeBeginCompute {
+		if _, err := file.WriteString(fmt.Sprintf("%d,%d\n", gsn, time.UnixNano())); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	// Dump batch sizes
+	avgBatchSize := float64(batchSize) / float64(batchesReceived)
+	batchSizesFilePath := "../../applications/vanilla_applications/intrusion_detection/data/batch_sizes_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	file, err = os.OpenFile(batchSizesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(fmt.Sprintf("%f\n", avgBatchSize)); err != nil {
+		log.Fatal(err)
 	}
 
 	// Dump confirm latencies with GSNs

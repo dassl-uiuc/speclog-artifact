@@ -7,6 +7,8 @@ read_throughput_file_path = "data/read_throughput_"
 append_records_produced_file_path = "data/append_records_produced_"
 records_received_file_path = "data/records_received_"
 stats_file_path = "analytics/stats.txt"
+start_compute_times_file_path = "data/start_compute_times_"
+avg_batch_size_file_path = "data/batch_sizes_"
 
 num_replicas = 2
 num_append_clients_per_replica = 10
@@ -57,6 +59,7 @@ def analyze():
                     num_append_timestamps += 1
 
     compute_e2e_latency = 0
+    compute_e2e_latencies_list = []
     line_count = 0
     for i in range(num_replicas):
         for j in range(num_read_clients_per_replica):
@@ -65,12 +68,12 @@ def analyze():
                 for line in file:
                     gsn, timestamp = line.strip().split(",")
                     compute_e2e_latency += int(timestamp) - append_start_timestamps[int(gsn)]
+                    compute_e2e_latencies_list.append(int(timestamp) - append_start_timestamps[int(gsn)])
                     line_count += 1
 
     avg_compute_e2e_latency = compute_e2e_latency / line_count / 1000
 
     delivery_e2e_latencies_map = {}
-    num_delivery_e2e_latencies = 0
     for i in range(num_replicas):
         for j in range(num_read_clients_per_replica):
             delivery_latencies_file_path_i = f"{delivery_latencies_file_path}{i}_{j}.txt"
@@ -78,7 +81,6 @@ def analyze():
                 for line in file:
                     gsn, timestamp = line.strip().split(",")
                     delivery_e2e_latencies_map[int(gsn)] = int(timestamp)
-                    num_delivery_e2e_latencies += 1
 
     confirm_e2e_latencies_map = {}
     for i in range(num_replicas):
@@ -90,13 +92,17 @@ def analyze():
                     confirm_e2e_latencies_map[int(gsn)] = int(timestamp)
     
     confirm_e2e_latencies = 0
+    confirm_e2e_latencies_list = []
     num_confirm_e2e_latencies = 0
     delivery_e2e_latencies = 0
+    delivery_e2e_latencies_list = []
     num_delivery_e2e_latencies = 0
     for gsn, timestamp in append_start_timestamps.items():
         if gsn in delivery_e2e_latencies_map and gsn in confirm_e2e_latencies_map:
             delivery_e2e_latencies += delivery_e2e_latencies_map[gsn] - timestamp
+            delivery_e2e_latencies_list.append(delivery_e2e_latencies_map[gsn] - timestamp)
             confirm_e2e_latencies += confirm_e2e_latencies_map[gsn] - timestamp
+            confirm_e2e_latencies_list.append(confirm_e2e_latencies_map[gsn] - timestamp)
             num_delivery_e2e_latencies += 1
             num_confirm_e2e_latencies += 1
 
@@ -104,16 +110,95 @@ def analyze():
     avg_confirm_e2e_latency = confirm_e2e_latencies / num_confirm_e2e_latencies / 1000
     avg_total_e2e_latency = max(avg_compute_e2e_latency, avg_confirm_e2e_latency)
 
+    # Queuing delay
+    compute_start_times_map = {}
+    for i in range(num_replicas):
+        for j in range(num_read_clients_per_replica):
+            start_compute_times_file_path_i = f"{start_compute_times_file_path}{i}_{j}.txt"
+            with open(start_compute_times_file_path_i, 'r') as file:
+                for line in file:
+                    gsn, timestamp = line.strip().split(",")
+                    compute_start_times_map[int(gsn)] = int(timestamp)
+
+    queuing_delay = 0
+    queuing_delays_list = []
+    num_queuing_delays = 0
+    for gsn, timestamp in compute_start_times_map.items():
+        if gsn in delivery_e2e_latencies_map:
+            queuing_delay += timestamp - delivery_e2e_latencies_map[gsn]
+            queuing_delays_list.append(timestamp - delivery_e2e_latencies_map[gsn])
+            num_queuing_delays += 1
+
+    avg_queuing_delay = queuing_delay / num_queuing_delays / 1000
+
+    # calculate std, p50, p99, and p99.99 for compute_e2e_latency,delivery_e2e_latency, and queuing_delay
+    import numpy as np
+    compute_e2e_latency_std = np.std(compute_e2e_latencies_list) / 1000
+    delivery_e2e_latency_std = np.std(delivery_e2e_latencies_list) / 1000
+    queuing_delay_std = np.std(queuing_delays_list) / 1000
+    confirm_e2e_latency_std = np.std(confirm_e2e_latencies_list) / 1000
+
+    p50_compute_e2e_latency = np.percentile(compute_e2e_latencies_list, 50) / 1000
+    p99_compute_e2e_latency = np.percentile(compute_e2e_latencies_list, 99) / 1000
+    p99_99_compute_e2e_latency = np.percentile(compute_e2e_latencies_list, 99.99) / 1000
+
+    p50_delivery_e2e_latency = np.percentile(delivery_e2e_latencies_list, 50) / 1000
+    p99_delivery_e2e_latency = np.percentile(delivery_e2e_latencies_list, 99) / 1000
+    p99_99_delivery_e2e_latency = np.percentile(delivery_e2e_latencies_list, 99.99) / 1000
+
+    p50_queuing_delay = np.percentile(queuing_delays_list, 50) / 1000
+    p99_queuing_delay = np.percentile(queuing_delays_list, 99) / 1000
+    p99_99_queuing_delay = np.percentile(queuing_delays_list, 99.99) / 1000
+
+    p50_confirm_e2e_latency = np.percentile(confirm_e2e_latencies_list, 50) / 1000
+    p99_confirm_e2e_latency = np.percentile(confirm_e2e_latencies_list, 99) / 1000
+    p99_99_confirm_e2e_latency = np.percentile(confirm_e2e_latencies_list, 99.99) / 1000
+
+    # Batch size
+    batch_size = 0
+    for i in range(num_replicas):
+        for j in range(num_read_clients_per_replica):
+            avg_batch_size_file_path_i = avg_batch_size_file_path + str(i) + "_" + str(j) + ".txt"
+            with open(avg_batch_size_file_path_i, 'r') as file:
+                for line in file:
+                    batch_size += float(line)
+
+    avg_batch_size = batch_size / num_replicas
+
+    # write compute_e2e_latency_list to a file
+    # with open("analytics/compute_e2e_latencies.txt", 'w') as file:
+    #     for latency in compute_e2e_latencies_list:
+    #         file.write(str(latency) + "\n")
+
     with open(stats_file_path, 'w') as file:
         file.write("compute_e2e_latency in microseconds: " + str(avg_compute_e2e_latency) + "\n")
         file.write("shared_log_e2e_latency in microseconds: " + str(avg_delivery_e2e_latency) + "\n")
         file.write("confirm_e2e_latency in microseconds: " + str(avg_confirm_e2e_latency) + "\n")
         file.write("total_e2e_latency in microseconds: " + str(avg_total_e2e_latency) + "\n")
+        file.write("queuing_delay in microseconds: " + str(avg_queuing_delay) + "\n")
         file.write("append_throughput (ops/s): " + str(append_throughput) + "\n")
         file.write("read_throughput (ops/s): " + str(read_throughput) + "\n")
         file.write("records_produced: " + str(records_produced) + "\n")
         file.write("records_consumed: " + str(records_consumed) + "\n")
         file.write("num append timestamps: " + str(num_append_timestamps) + "\n")
         file.write("num delivery e2e latencies: " + str(num_delivery_e2e_latencies) + "\n")
+        file.write("num compute start times: " + str(num_queuing_delays) + "\n")
+        file.write("std compute_e2e_latency: " + str(compute_e2e_latency_std) + "\n")
+        file.write("std delivery_e2e_latency: " + str(delivery_e2e_latency_std) + "\n")
+        file.write("std queuing_delay: " + str(queuing_delay_std) + "\n")
+        file.write("std confirm_e2e_latency: " + str(confirm_e2e_latency_std) + "\n")
+        file.write("p50 compute_e2e_latency: " + str(p50_compute_e2e_latency) + "\n")
+        file.write("p99 compute_e2e_latency: " + str(p99_compute_e2e_latency) + "\n")
+        file.write("p99.99 compute_e2e_latency: " + str(p99_99_compute_e2e_latency) + "\n")
+        file.write("p50 delivery_e2e_latency: " + str(p50_delivery_e2e_latency) + "\n")
+        file.write("p99 delivery_e2e_latency: " + str(p99_delivery_e2e_latency) + "\n")
+        file.write("p99.99 delivery_e2e_latency: " + str(p99_99_delivery_e2e_latency) + "\n")
+        file.write("p50 queuing_delay: " + str(p50_queuing_delay) + "\n")
+        file.write("p99 queuing_delay: " + str(p99_queuing_delay) + "\n")
+        file.write("p99.99 queuing_delay: " + str(p99_99_queuing_delay) + "\n")
+        file.write("p50 confirm_e2e_latency: " + str(p50_confirm_e2e_latency) + "\n")
+        file.write("p99 confirm_e2e_latency: " + str(p99_confirm_e2e_latency) + "\n")
+        file.write("p99.99 confirm_e2e_latency: " + str(p99_99_confirm_e2e_latency) + "\n")
+        file.write("avg_batch_size: " + str(avg_batch_size) + "\n")
 
 analyze()
