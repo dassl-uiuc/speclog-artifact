@@ -1,53 +1,98 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
 	"time"
 
+	"database/sql"
+	"strings"
+
+	movingaverage "github.com/RobinUS2/golang-moving-average"
+	"github.com/scalog/scalog/client"
 	"github.com/scalog/scalog/scalog_api"
 	"github.com/spf13/viper"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
-var intrusionDetectionConfigFilePath = "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/intrusion_detection_config.yaml"
-var processingTime = int64(2000)
-var detectionTimeRangeNs = int64(10000)
-var window = make([]map[string]interface{}, 1)
-var clickRateThreshold = 5
+var intrusionDetectionConfigFilePath = "../../applications/vanilla_applications/intrusion_detection/intrusion_detection_config.yaml"
+var movingAverage = movingaverage.New(10)
 
 // TODO: Add computation here
-// func HandleIntrusion(record map[string]interface{}) {
-// 	// fmt.Println("Handling intrusion")
-// 	processingStartTime := time.Now().UnixMicro()
+func HandleIntrusion(committedRecords []client.CommittedRecord, db *sql.DB) {
+	var placeholders []string
+	var values []interface{}
 
-// 	var timestamp int64 = int64(record["timestamp"].(float64))
+	for _, record := range committedRecords {
+		// Extract first two chars of record.Record and convert to int
+		temperature, err := strconv.Atoi(record.Record[:2])
+		if err != nil {
+			fmt.Println("Error converting temperature to int")
+		}
 
-// 	window = append(window, record)
-// 	var durationNs int64
-// 	for {
-// 		durationNs = timestamp - window[0]["timestamp"].(int64)
-// 		if durationNs > detectionTimeRangeNs {
-// 			window = window[1:] // remove the first element
-// 		} else {
-// 			break
-// 		}
-// 	}
+		// Add temperature to moving average
+		movingAverage.Add(float64(temperature))
 
-// 	var totalClick int = 0
-// 	for i := 0; i < len(window); i++ {
-// 		totalClick += window[i]["click"].(int)
-// 	}
+		// Add to placeholder and values to input to DB later
+		placeholders = append(placeholders, "(?)")
+		values = append(values, record.Record)
+	}
 
-// 	clickRate := totalClick / int(durationNs/1000000000)
-// 	if clickRate > clickRateThreshold {
-// 		fmt.Println("Intrusion detected")
-// 	}
-// }
+	fmt.Println("Length of placeholders: ", len(placeholders))
+	fmt.Println("Length of values: ", len(values))
+
+	// Get moving average
+	average := movingAverage.Avg()
+	if average > 90 {
+		fmt.Println("Intrusion detected")
+	}
+
+	// Build the SQL query
+	insertQuery := fmt.Sprintf("INSERT INTO records (temperature) VALUES %s", strings.Join(placeholders, ","))
+
+	// Insert the rows
+	_, err := db.Exec(insertQuery, values...)
+	if err != nil {
+		log.Fatalf("Failed to insert rows: %v", err)
+	}
+}
+
+func CreateDatabase() *sql.DB {
+	dbFile := "/data/records.db"
+	db, err := sql.Open("sqlite3", dbFile)
+	if err != nil {
+		log.Fatalf("Failed to open SQLite database: %v", err)
+	}
+
+	// Create table if it doesn't exist
+	createTableQuery := `
+	CREATE TABLE IF NOT EXISTS records (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		temperature TEXT NOT NULL
+	);`
+	_, err = db.Exec(createTableQuery)
+	if err != nil {
+		log.Fatalf("Failed to create table: %v", err)
+	}
+
+	return db
+}
+
+func DeleteDatabase(db *sql.DB) {
+	dbFile := "/data/records.db"
+	err := os.Remove(dbFile)
+	if err != nil {
+		log.Fatalf("Failed to delete SQLite database: %v", err)
+	}
+}
 
 func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
+	// Create database
+	db := CreateDatabase()
+
 	// read configuration file
 	viper.SetConfigFile(intrusionDetectionConfigFilePath)
 	viper.AutomaticEnv()
@@ -57,16 +102,19 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 	}
 	runTime := int64(viper.GetInt("consume-run-time"))
 
-	scalogApi := scalog_api.CreateClient()
+	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
 
-	scalogApi.SubscribeToAssignedShard(readerId)
+	scalogApi.SubscribeToAssignedShard(readerId, 0)
 
-	var record map[string]interface{}
+	// var record map[string]interface{}
 	// Time used to keep track of the time to run wordcount
 	startTimeInSeconds := time.Now().Unix()
 	prevOffset := int64(0)
 	recordsReceived := 0
-	e2eLatencies := make([]int64, 10000000)
+	computeE2eEndTimes := make(map[int64]int64)
+	timeBeginCompute := make(map[int64]time.Time)
+	batchesReceived := 0
+	batchSize := 0
 
 	// Wait for first record to come in before starting throughput timer
 	for {
@@ -80,34 +128,54 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 	for time.Now().Unix()-startTimeInSeconds < (runTime) {
 		offset := scalogApi.GetLatestOffset()
 		if offset != prevOffset {
+			committedRecords := make([]client.CommittedRecord, 0)
+
+			startComputeTime := time.Now()
 			for i := prevOffset; i < offset; i++ {
-				recordJson := scalogApi.Read(i)
+				committedRecord := scalogApi.Read(i)
 
-				err := json.Unmarshal([]byte(recordJson), &record)
-				if err != nil {
-					fmt.Println("Error unmarshalling record")
-					return
-				}
+				committedRecords = append(committedRecords, committedRecord)
 
-				// HandleIntrusion(record)
+				timeBeginCompute[committedRecord.GSN] = startComputeTime
+			}
 
-				// Calculate end-to-end latency
-				e2eLatencies[recordsReceived] = time.Now().UnixNano() - int64(record["timestamp"].(float64))
+			fmt.Println("Length of committed records: ", len(committedRecords))
+			fmt.Println("Expected number of records: ", offset-prevOffset)
+
+			HandleIntrusion(committedRecords, db)
+
+			// duration := time.Duration(2) * time.Millisecond
+			// start := time.Now()
+			// for time.Since(start) < duration {
+			// 	// Busy-waiting
+			// }
+
+			// Iterate through committed records
+			timestamp := time.Now().UnixNano()
+			for _, record := range committedRecords {
+				computeE2eEndTimes[record.GSN] = timestamp
 
 				recordsReceived++
 			}
+
+			batchesReceived++
+			batchSize += len(committedRecords)
 
 			prevOffset = offset
 		}
 	}
 
 	endThroughputTimer := time.Now().UnixNano()
-	
+
+	// Delete database
+	DeleteDatabase(db)
+
 	// Wait for everyone to finish their run
-	time.Sleep(15 * time.Second)
+	time.Sleep(30 * time.Second)
+	scalogApi.Stop <- true
 
 	// Record records received
-	recordsReceivedFilePath := "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data/records_received_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	recordsReceivedFilePath := "../../applications/vanilla_applications/intrusion_detection/data/records_received_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err := os.OpenFile(recordsReceivedFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -118,27 +186,65 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 		log.Fatal(err)
 	}
 
-	// Calculate latency
-	totalE2ELatency := int64(0)
-	for i := 0; i < recordsReceived; i++ {
-		totalE2ELatency += e2eLatencies[i]
-	}
-	avgE2ELatency := float64(totalE2ELatency) / float64(recordsReceived) / 1000
-
-	e2eLatenciesFilePath := "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data/e2e_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
-	file, err = os.OpenFile(e2eLatenciesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Dump compute e2e latencies
+	computeE2eEndTimesFilePath := "../../applications/vanilla_applications/intrusion_detection/data/compute_e2e_end_times_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	file, err = os.OpenFile(computeE2eEndTimesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer file.Close()
 
-	if _, err := file.WriteString(fmt.Sprintf("%f\n", avgE2ELatency)); err != nil {
+	for gsn, time := range computeE2eEndTimes {
+		if _, err := file.WriteString(fmt.Sprintf("%d,%d\n", gsn, time)); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	// Dump delivery latencies with GSNs
+	deliveryLatenciesFilePath := "../../applications/vanilla_applications/intrusion_detection/data/delivery_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	file, err = os.OpenFile(deliveryLatenciesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	deliveryTimes := scalogApi.Stats.DeliveryTime
+	for gsn, time := range deliveryTimes {
+		if _, err := file.WriteString(fmt.Sprintf("%d,%d\n", gsn, time.UnixNano())); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	// Dump start compute times
+	startComputeTimesFilePath := "../../applications/vanilla_applications/intrusion_detection/data/start_compute_times_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	file, err = os.OpenFile(startComputeTimesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	for gsn, time := range timeBeginCompute {
+		if _, err := file.WriteString(fmt.Sprintf("%d,%d\n", gsn, time.UnixNano())); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	// Dump batch sizes
+	avgBatchSize := float64(batchSize) / float64(batchesReceived)
+	batchSizesFilePath := "../../applications/vanilla_applications/intrusion_detection/data/batch_sizes_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	file, err = os.OpenFile(batchSizesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(fmt.Sprintf("%f\n", avgBatchSize)); err != nil {
 		log.Fatal(err)
 	}
 
 	// Calculate throughput
 	throughput := float64(recordsReceived) / float64((endThroughputTimer-startThroughputTimer)/1000000000)
-	readThroughputFilePath := "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data/read_throughput_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	readThroughputFilePath := "../../applications/vanilla_applications/intrusion_detection/data/read_throughput_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err = os.OpenFile(readThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)

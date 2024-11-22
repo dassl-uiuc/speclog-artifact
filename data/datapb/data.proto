@@ -22,7 +22,7 @@ message Record {
 	int32 viewID = 5;
 	int64 globalSN = 6; // global sequence number
 	string record = 7;
-	int32 appenderID = 8;
+    int32 appenderID = 8;
 }
 
 message Ack {

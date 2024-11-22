@@ -1,25 +1,31 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"os"
 	"strconv"
 	"time"
-	"context"
 
-	"github.com/scalog/scalog/scalog_api"
 	"github.com/scalog/scalog/benchmark/util"
+	"github.com/scalog/scalog/scalog_api"
+
 	// "sync"
 	"github.com/spf13/viper"
-	rateLimiter "golang.org/x/time/rate"
 )
 
-var intrusionDetectionConfigFilePath = "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/intrusion_detection_config.yaml"
+var intrusionDetectionConfigFilePath = "../../applications/vanilla_applications/intrusion_detection/intrusion_detection_config.yaml"
 
-func Append_One_Ping(appenderId int32) {
+func GenerateRecord(length int) string {
+	padding := util.GenerateRandomString(length - 2)
+	rand.Seed(time.Now().UnixNano())
+	temperature := rand.Intn(90) + 10
+	record := strconv.Itoa(temperature) + padding
+	return record
+}
+
+func Append_One_Ping(appenderId int32, clientNumber int) {
 	// read configuration file
 	viper.SetConfigFile(intrusionDetectionConfigFilePath)
 	viper.AutomaticEnv()
@@ -29,24 +35,19 @@ func Append_One_Ping(appenderId int32) {
 	}
 	runTime := int64(viper.GetInt("produce-run-time"))
 
-	scalogApi := scalog_api.CreateClient()
+	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
 
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
 	startThroughputTimer := time.Now().UnixNano()
 	for time.Now().Unix()-startTimeInSeconds < runTime {
-		record := map[string]interface{}{
-			"timestamp": time.Now().UnixNano(),
-			"message":   util.GenerateRandomString(1024),
-			"click":     rand.Intn(10),
-		}
-		recordJson, err := json.Marshal(record)
+		record := GenerateRecord(4096)
 		if err != nil {
 			fmt.Println("Error marshalling record")
 			return
 		}
 
-		scalogApi.AppendOneToAssignedShard(appenderId, string(recordJson))
+		scalogApi.AppendOneToAssignedShard(appenderId, record)
 
 		recordsProduced++
 	}
@@ -54,36 +55,7 @@ func Append_One_Ping(appenderId int32) {
 	// Calculate throughput
 	endThroughputTimer := time.Now().UnixNano()
 
-	// Wait for everyone to finish their run
-	time.Sleep(15 * time.Second)
-
-	throughput := float64(recordsProduced) / float64((endThroughputTimer-startThroughputTimer)/1000000000)
-	appendThroughputFilePath := "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data/append_throughput_" + strconv.Itoa(int(appenderId)) + ".txt"
-	file, err := os.OpenFile(appendThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	// write the throughput value
-	if _, err := file.WriteString(fmt.Sprintf("%f\n", throughput)); err != nil {
-		log.Fatal(err)
-	}
-
-	// Record records produced
-	appendRecordsProducedFilePath := "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data/append_records_produced_" + strconv.Itoa(int(appenderId)) + ".txt"
-	file, err = os.OpenFile(appendRecordsProducedFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	// write the records produced
-	if _, err := file.WriteString(fmt.Sprintf("%d\n", recordsProduced)); err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Produced ", recordsProduced, " records")
+	WriteStats(recordsProduced, startThroughputTimer, endThroughputTimer, appenderId, clientNumber, scalogApi)
 }
 
 func Append_Stream_Ping(appenderId int32, clientNumber int) {
@@ -96,47 +68,36 @@ func Append_Stream_Ping(appenderId int32, clientNumber int) {
 	}
 	runTime := int64(viper.GetInt("produce-run-time"))
 
-	scalogApi := scalog_api.CreateClient()
-	stop := make(chan bool)
-	go scalogApi.Ack(stop)
+	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
 
 	recordsProduced := 0
-	limiter := rateLimiter.NewLimiter(rateLimiter.Limit(300), 1)
 	startTimeInSeconds := time.Now().Unix()
 	startThroughputTimer := time.Now().UnixNano()
 	for time.Now().Unix()-startTimeInSeconds < runTime {
-		err := limiter.Wait(context.Background())
-		if err != nil {
-			fmt.Errorf("rate limiter error: ", err)
-			return
-		}
-
-		record := map[string]interface{}{
-			"timestamp": time.Now().UnixNano(),
-			"message":   util.GenerateRandomString(1024),
-			"click":     rand.Intn(10),
-		}
-		recordJson, err := json.Marshal(record)
+		record := GenerateRecord(4096)
 		if err != nil {
 			fmt.Println("Error marshalling record")
 			return
 		}
 
-		scalogApi.AppendToAssignedShard(appenderId, string(recordJson))
+		scalogApi.AppendToAssignedShard(appenderId, record)
 
 		recordsProduced++
 	}
 
-	close(stop)
-
 	// Calculate throughput
 	endThroughputTimer := time.Now().UnixNano()
 
+	scalogApi.StopAck <- true
+	WriteStats(recordsProduced, startThroughputTimer, endThroughputTimer, appenderId, clientNumber, scalogApi)
+}
+
+func WriteStats(recordsProduced int, startThroughputTimer int64, endThroughputTimer int64, appenderId int32, clientNumber int, scalogApi *scalog_api.Scalog) {
 	// Wait for everyone to finish their run
-	time.Sleep(15 * time.Second)
-	
+	time.Sleep(30 * time.Second)
+
 	throughput := float64(recordsProduced) / float64((endThroughputTimer-startThroughputTimer)/1000000000)
-	appendThroughputFilePath := "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data/append_throughput_" + strconv.Itoa(int(appenderId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	appendThroughputFilePath := "../../applications/vanilla_applications/intrusion_detection/data/append_throughput_" + strconv.Itoa(int(appenderId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err := os.OpenFile(appendThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -149,7 +110,7 @@ func Append_Stream_Ping(appenderId int32, clientNumber int) {
 	}
 
 	// Record records produced
-	appendRecordsProducedFilePath := "/proj/rasl-PG0/tshong/speclog/applications/vanilla_applications/intrusion_detection/data/append_records_produced_" + strconv.Itoa(int(appenderId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	appendRecordsProducedFilePath := "../../applications/vanilla_applications/intrusion_detection/data/append_records_produced_" + strconv.Itoa(int(appenderId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err = os.OpenFile(appendRecordsProducedFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -159,6 +120,20 @@ func Append_Stream_Ping(appenderId int32, clientNumber int) {
 	// write the records produced
 	if _, err := file.WriteString(fmt.Sprintf("%d\n", recordsProduced)); err != nil {
 		log.Fatal(err)
+	}
+
+	appendStartTimestampsFilePath := "../../applications/vanilla_applications/intrusion_detection/data/append_start_timestamps_" + strconv.Itoa(int(appenderId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	file, err = os.OpenFile(appendStartTimestampsFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	appendStartTimes := scalogApi.Stats.AppendStartTime
+	for gsn, time := range appendStartTimes {
+		if _, err := file.WriteString(fmt.Sprintf("%d,%d\n", gsn, time.UnixNano())); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	fmt.Println("Produced ", recordsProduced, " records")
@@ -191,7 +166,7 @@ func main() {
 	}
 
 	if appendType == 0 {
-		Append_One_Ping(int32(appenderId))
+		Append_One_Ping(int32(appenderId), clientNumber)
 	} else {
 		Append_Stream_Ping(int32(appenderId), clientNumber)
 	}

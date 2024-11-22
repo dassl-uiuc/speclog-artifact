@@ -23,7 +23,6 @@ func (s *DataServer) Append(stream datapb.Data_AppendServer) error {
 					log.Infof("Receive append stream closed.")
 					return nil
 				}
-				log.Errorf("Receive append error: %v", err)
 				return err
 			}
 			if !initialized {
