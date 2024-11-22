@@ -161,7 +161,7 @@ func (c *Client) subscribeView() {
 		v, err := (*c.discClient).Recv()
 		if err != nil {
 			log.Errorf("%v", err)
-			continue
+			return
 		}
 		log.Infof("View id: %v", v.ViewID)
 		log.Infof("Live shards: %v", v.LiveShards)
@@ -398,6 +398,14 @@ func (c *Client) AppendOne(record string) (int64, int32, error) {
 		return 0, 0, err
 	}
 	return ack.GlobalSN, ack.ShardID, nil
+}
+
+// hacky function just designed for the reconfiguration experiment
+// this is needed to ensure that the newly spawned clients are able to append to the correct shard
+func (c *Client) WaitForLiveShardSize(size int) {
+	for len(c.view.LiveShards) < int(size) {
+		// busy wait, FIWB
+	}
 }
 
 func (c *Client) processAssignedAppend() {

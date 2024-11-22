@@ -56,6 +56,25 @@ func (s *OrderServer) getLowestLocalCutNum(lcs map[int32]*orderpb.LocalCut, wind
 	return lowestLocalCutNum
 }
 
+type RealTimeTput struct {
+	count atomic.Int64
+}
+
+func (r *RealTimeTput) Add(delta int64) {
+	r.count.Add(delta)
+}
+
+func (r *RealTimeTput) LoggerThread() {
+	duration := 50 * time.Millisecond
+	ticker := time.NewTicker(duration)
+	prev := int64(0)
+	for range ticker.C {
+		count := r.count.Load()
+		log.Debugf("[real-time tput]: %v ops/sec", float64(count-prev)/duration.Seconds())
+		prev = count
+	}
+}
+
 type Stats struct {
 	timeToComputeCommittedCut int64
 	numCommittedCuts          int64
@@ -63,6 +82,7 @@ type Stats struct {
 	numQuotaDecisions         int64
 	diffCut                   float64
 	numLagFixes               map[int32]int64
+	RealTimeTput              RealTimeTput
 }
 
 func (s *Stats) printStats() {
@@ -179,6 +199,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.rnErrorC = errorC
 	s.rnSnapshotterReady = snapshotterReady
 	s.stats = Stats{}
+	go s.stats.RealTimeTput.LoggerThread()
 	s.stats.numLagFixes = make(map[int32]int64)
 	return s
 }
@@ -508,7 +529,7 @@ func (s *OrderServer) processReport() {
 						s.replicasFinalize[rid] = s.replicasFinalizeStandby[rid]
 						delete(s.replicasFinalizeStandby, rid)
 					}
-					log.Infof("Shard %v to be finalized in next avl window", shard.ShardID)
+					log.Debugf("Shard %v to be finalized in next avl window", shard.ShardID)
 				}
 			}
 		case <-ticker.C:
@@ -580,13 +601,14 @@ func (s *OrderServer) processReport() {
 					incrViewId := false
 					for rid := range s.quota[s.assignWindow] {
 						if _, ok := s.shards[rid/s.dataNumReplica]; !ok {
+							log.Debugf("Incrementing view ID as new shard added")
 							incrViewId = true
 							s.shards[rid/s.dataNumReplica] = true
 						}
 					}
 
 					if incrViewId || shardsFinalized {
-						log.Infof("Incrementing view ID because shardFinalized: %v, incrViewId: %v", shardsFinalized, incrViewId)
+						log.Debugf("Incrementing view ID because shardFinalized: %v, incrViewId: %v", shardsFinalized, incrViewId)
 						atomic.AddInt32(&s.viewID, 1)
 						vid = atomic.LoadInt32(&s.viewID)
 					}
@@ -642,6 +664,7 @@ func (s *OrderServer) processReport() {
 				}
 
 				s.proposeC <- ce
+				s.stats.RealTimeTput.Add(s.computeCutDiff(s.prevCut, ccut))
 				s.startGSN += s.computeCutDiff(s.prevCut, ccut)
 				s.prevCut = ccut
 			}
