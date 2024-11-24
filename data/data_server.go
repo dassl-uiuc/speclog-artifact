@@ -18,6 +18,7 @@ import (
 
 const backendOnly = false
 const measureOrderingInterval = false
+const reconfigExpt bool = true
 
 type clientSubscriber struct {
 	state    clientSubscriberState
@@ -102,6 +103,7 @@ type DataServer struct {
 	replMu        sync.Mutex
 
 	recordsInPipeline atomic.Int64
+	stopReport        chan bool
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -145,6 +147,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.avgOrderingLatencyMicros = 0
 	s.replStartTime = make(map[int64]time.Time)
 	s.recordsInPipeline.Store(0)
+	s.stopReport = make(chan bool, 1)
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -245,6 +248,9 @@ func (s *DataServer) Start() {
 		go s.receiveCommittedCut()
 		go s.processNewSubscribers()
 		go s.processLiveSubscribe()
+		if reconfigExpt {
+			go s.finalizeShardStandby()
+		}
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)
@@ -521,41 +527,80 @@ func (s *DataServer) processAck() {
 	}
 }
 
+// for reconfig expt
+func (s *DataServer) finalizeShardStandby() {
+	if s.shardID == 1 {
+		// Sleep for 30 seconds
+		time.Sleep(30 * time.Second)
+		// finalize shard
+		s.finalizeShard()
+	}
+}
+
+func (s *DataServer) finalizeShard() {
+	orderClient := orderpb.NewOrderClient(s.orderConn)
+	shard := &orderpb.FinalizeRequest{
+		ShardID:        s.shardID,
+		LocalReplicaID: s.replicaID,
+	}
+	maxRetries := 5
+	for i := 0; i < maxRetries; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, err := orderClient.Finalize(ctx, shard)
+		if err == nil {
+			fmt.Println("Successfully finalized shard")
+			return
+		}
+		fmt.Printf("Finalize shard failed: %v\n", err)
+		// Wait before retrying
+		backoff := time.Duration((1 << i)) * time.Second
+		fmt.Printf("Retrying in %v...\n", backoff)
+		time.Sleep(backoff)
+	}
+	log.Errorf("Max retries reached. Finalize failed.")
+}
+
 func (s *DataServer) reportLocalCut() {
 	tick := time.NewTicker(s.batchingInterval)
 	prevCut := int64(0)
-	for range tick.C {
-		lcs := &orderpb.LocalCuts{}
-		lcs.Cuts = make([]*orderpb.LocalCut, 1)
-		lcs.Cuts[0] = &orderpb.LocalCut{
-			ShardID:        s.shardID,
-			LocalReplicaID: s.replicaID,
-		}
-		s.localCutMu.Lock()
-		lcs.Cuts[0].Cut = make([]int64, len(s.localCut))
-		copy(lcs.Cuts[0].Cut, s.localCut)
-		s.localCutMu.Unlock()
+	for {
+		select {
+		case <-tick.C:
+			lcs := &orderpb.LocalCuts{}
+			lcs.Cuts = make([]*orderpb.LocalCut, 1)
+			lcs.Cuts[0] = &orderpb.LocalCut{
+				ShardID:        s.shardID,
+				LocalReplicaID: s.replicaID,
+			}
+			s.localCutMu.Lock()
+			lcs.Cuts[0].Cut = make([]int64, len(s.localCut))
+			copy(lcs.Cuts[0].Cut, s.localCut)
+			s.localCutMu.Unlock()
 
-		if measureOrderingInterval {
-			for _, c := range lcs.Cuts[0].Cut {
-				if c > 0 {
-					for j := s.prevSentLocalCut; j < c; j++ {
-						s.recordsMu.Lock()
-						s.timeOfEntry[j] = time.Now()
-						s.recordsMu.Unlock()
+			if measureOrderingInterval {
+				for _, c := range lcs.Cuts[0].Cut {
+					if c > 0 {
+						for j := s.prevSentLocalCut; j < c; j++ {
+							s.recordsMu.Lock()
+							s.timeOfEntry[j] = time.Now()
+							s.recordsMu.Unlock()
+						}
+						s.prevSentLocalCut = c
 					}
-					s.prevSentLocalCut = c
 				}
 			}
-		}
 
-		log.Debugf("records sent: %v", lcs.Cuts[0].Cut[s.replicaID]-prevCut)
-		prevCut = lcs.Cuts[0].Cut[s.replicaID]
+			log.Debugf("records sent: %v", lcs.Cuts[0].Cut[s.replicaID]-prevCut)
+			prevCut = lcs.Cuts[0].Cut[s.replicaID]
 
-		// log.Debugf("Data report: %v", lcs)
-		err := (*s.orderClient).Send(lcs)
-		if err != nil {
-			log.Errorf("%v", err)
+			// log.Debugf("Data report: %v", lcs)
+			err := (*s.orderClient).Send(lcs)
+			if err != nil {
+				log.Errorf("%v", err)
+			}
+		case <-s.stopReport:
+			return
 		}
 	}
 }
@@ -662,7 +707,12 @@ func (s *DataServer) processCommittedEntry() {
 			s.prevCommittedCut = entry.CommittedCut
 		}
 		if entry.FinalizeShards != nil { //nolint
-			// TODO
+			for _, shardID := range entry.FinalizeShards.ShardIDs {
+				if shardID == s.shardID {
+					// stop local reporting
+					s.stopReport <- true
+				}
+			}
 		}
 	}
 }

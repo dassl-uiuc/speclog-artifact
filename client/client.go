@@ -67,6 +67,9 @@ type Client struct {
 
 	outstandingRequestsLimit int32
 	outstandingRequestsChan  chan bool
+
+	shardsSubscribedTo map[int32]bool
+	isReader           bool
 }
 
 func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32, shardingHint int64) (*Client, error) {
@@ -92,6 +95,8 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 	c.dataAppendClient = make(map[int32]datapb.Data_AppendClient)
 	c.view = view.NewView()
 	c.committedRecords = make(map[int64]CommittedRecord)
+	c.shardsSubscribedTo = make(map[int32]bool)
+	c.isReader = false
 	err := c.UpdateDiscovery()
 	if err != nil {
 		return nil, err
@@ -123,6 +128,8 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 	c.dataAppendClient = make(map[int32]datapb.Data_AppendClient)
 	c.view = view.NewView()
 	c.committedRecords = make(map[int64]CommittedRecord)
+	c.shardsSubscribedTo = make(map[int32]bool)
+	c.isReader = false
 	err := c.UpdateDiscovery()
 	if err != nil {
 		return nil, err
@@ -141,11 +148,23 @@ func (c *Client) subscribeView() {
 		v, err := (*c.discClient).Recv()
 		if err != nil {
 			log.Errorf("%v", err)
-			continue
+			return
 		}
 		err = c.view.Update(v)
 		if err != nil {
 			log.Errorf("%v", err)
+		}
+
+		if c.isReader {
+			for _, shard := range v.LiveShards {
+				if _, ok := c.shardsSubscribedTo[shard]; !ok {
+					for replicaId := int32(0); replicaId < c.numReplica; replicaId++ {
+						go c.subscribeShardServer(shard, replicaId)
+					}
+					log.Printf("Subscribed to shard %v", shard)
+					c.shardsSubscribedTo[shard] = true
+				}
+			}
 		}
 	}
 }
@@ -272,11 +291,12 @@ func (c *Client) processAppend() {
 		client, err := c.getDataAppendClient(shard, replica)
 		if err != nil {
 			log.Errorf("%v", err)
-			continue
+			return
 		}
 		err = client.Send(r)
 		if err != nil {
 			log.Errorf("%v", err)
+			return
 		}
 	}
 }
@@ -332,6 +352,23 @@ func (c *Client) AppendOne(record string) (int64, int32, error) {
 		return 0, 0, err
 	}
 	return ack.GlobalSN, ack.ShardID, nil
+}
+
+// hacky function just designed for the reconfiguration experiment
+// this is needed to ensure that the newly spawned clients are able to append to the correct shard
+func (c *Client) WaitForLiveShardSize(size int) {
+	for len(c.view.LiveShards) < int(size) {
+		// busy wait, FIWB
+	}
+}
+
+func (c *Client) ShardLeft(shardId int32) bool {
+	for _, shard := range c.view.LiveShards {
+		if shard == shardId {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) processAssignedAppend() {
@@ -408,7 +445,10 @@ func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, error) {
 		for replicaId := int32(0); replicaId < c.numReplica; replicaId++ {
 			go c.subscribeShardServer(shard, replicaId)
 		}
+
+		c.shardsSubscribedTo[shard] = true
 	}
+	c.isReader = true
 
 	return c.subC, nil
 }
@@ -424,6 +464,9 @@ func (c *Client) SubscribeToAssignedShard(gsn int64, readerId int32) (chan Commi
 
 	shard := readerId / c.numReplica
 	replica := readerId % c.numReplica
+
+	c.shardsSubscribedTo[shard] = true
+	c.isReader = true
 
 	log.Infof("Subscribe to assigned shard %v replica %v", shard, replica)
 

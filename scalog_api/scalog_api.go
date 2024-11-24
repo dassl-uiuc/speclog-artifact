@@ -165,6 +165,15 @@ func (s *Scalog) SubscribeThread(startGsn int64) {
 	}
 }
 
+// read desc in client/client.go
+func (s *Scalog) WaitForLiveShardSize(size int) {
+	s.client.WaitForLiveShardSize(size)
+}
+
+func (s *Scalog) ShardLeft(shardId int32) bool {
+	return s.client.ShardLeft(shardId)
+}
+
 func (s *Scalog) Subscribe(startGsn int64) {
 	go s.SubscribeThread(startGsn)
 }

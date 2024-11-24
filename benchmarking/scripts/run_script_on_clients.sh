@@ -1,6 +1,6 @@
 #!/bin/bash
 
-remote_nodes=("node13" "node14" "node15")
+remote_nodes=("node13" "node14" "node15" "node12")
 PASSLESS_ENTRY="/users/sgbhat3/.ssh/id_rsa"
 
 # Check if the local script path is provided as a command line argument
