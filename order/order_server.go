@@ -15,6 +15,8 @@ import (
 	"go.etcd.io/etcd/raft/raftpb"
 )
 
+const reconfigExpt bool = false
+
 func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)
 	for _, lc := range lcs {
@@ -70,7 +72,7 @@ func (r *RealTimeTput) LoggerThread() {
 	prev := int64(0)
 	for range ticker.C {
 		count := r.count.Load()
-		log.Debugf("[real-time tput]: %v ops/sec", float64(count-prev)/duration.Seconds())
+		log.Printf("[real-time tput]: %v ops/sec", float64(count-prev)/duration.Seconds())
 		prev = count
 	}
 }
@@ -83,6 +85,7 @@ type Stats struct {
 	diffCut                   float64
 	numLagFixes               map[int32]int64
 	RealTimeTput              RealTimeTput
+	holesFilled               map[int32](map[int64]int64) // number of holes filled by each replica (1st int32) in each local cut id (1st int64)
 }
 
 func (s *Stats) printStats() {
@@ -144,6 +147,9 @@ type OrderServer struct {
 	startCommittedCut       map[int32]int64
 	// stats
 	stats Stats
+
+	prevLowestWindowNum   int64
+	prevLowestLocalCutNum int64
 }
 
 // fraction of the local cut window at which quota change decisions are made for a shard
@@ -184,6 +190,8 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.startCommittedCut = make(map[int32]int64)
 	s.windowStartGSN = make(map[int64]int64)
 	s.processWindow = -1
+	s.prevLowestWindowNum = -1
+	s.prevLowestLocalCutNum = s.localCutChangeWindow - 1
 
 	s.rnConfChangeC = make(chan raftpb.ConfChange)
 	s.rnProposeC = make(chan string)
@@ -199,7 +207,10 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.rnErrorC = errorC
 	s.rnSnapshotterReady = snapshotterReady
 	s.stats = Stats{}
-	go s.stats.RealTimeTput.LoggerThread()
+	if reconfigExpt {
+		go s.stats.RealTimeTput.LoggerThread()
+		s.stats.holesFilled = make(map[int32](map[int64]int64))
+	}
 	s.stats.numLagFixes = make(map[int32]int64)
 	return s
 }
@@ -317,6 +328,30 @@ func (s *OrderServer) getSignificantLags(lags *map[int32]int64) {
 	}
 }
 
+// for reconfig expt
+func (s *OrderServer) getNumHolesCommitted(lowestWindowNum int64, lowestLocalCutNum int64) int64 {
+	prevCutIndex := s.prevLowestWindowNum*s.localCutChangeWindow + s.prevLowestLocalCutNum
+	currCutIndex := lowestWindowNum*s.localCutChangeWindow + lowestLocalCutNum
+
+	numHolesCommitted := int64(0)
+	for i := prevCutIndex + 1; i <= currCutIndex; i++ {
+		currentWindow := i / s.localCutChangeWindow
+		for rid := range s.quota[currentWindow] {
+			if _, ok := s.stats.holesFilled[rid]; !ok {
+				log.Errorf("err, cannot happen")
+			}
+			if _, ok := s.stats.holesFilled[rid][i]; !ok {
+				log.Errorf("err, cannot happen")
+			}
+			numHolesCommitted += s.stats.holesFilled[rid][i]
+		}
+	}
+
+	s.prevLowestLocalCutNum = lowestLocalCutNum
+	s.prevLowestWindowNum = lowestWindowNum
+	return numHolesCommitted
+}
+
 func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
 	// find lowest numbered window across all replicas
 	lowestWindowNum := getLowestWindowNum(lcs)
@@ -356,24 +391,39 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 
 	// check if lcs num is equal to localCutChangeWindow-1
 	// If so we can clear some state
+	removableReplicas := make([]int32, 0)
 	for rid := range lcs {
 		wn, ok := s.replicasConfirmFinalize[rid]
 		if !ok {
 			continue
 		}
 
-		log.Infof("Wn: %v, lowestWindowNum: %v, lowestLocalCutNum: %v", wn, lowestWindowNum, lowestLocalCutNum)
+		log.Debugf("Wn: %v, lowestWindowNum: %v, lowestLocalCutNum: %v", wn, lowestWindowNum, lowestLocalCutNum)
 
 		if wn == lowestWindowNum && lowestLocalCutNum == s.localCutChangeWindow-1 {
 			// TODO: redundant check, delete this later
 			if _, ok := s.replicasConfirmFinalize[rid]; ok {
-				log.Infof("Replica %v finalized", rid)
-				delete(s.avgHoles, rid)
-				delete(s.avgDelta, rid)
-				delete(s.replicasConfirmFinalize, rid)
-				delete(lcs, rid)
+				removableReplicas = append(removableReplicas, rid)
 			}
 		}
+	}
+
+	for _, rid := range removableReplicas {
+		delete(s.avgHoles, rid)
+		delete(s.avgDelta, rid)
+		delete(s.replicasConfirmFinalize, rid)
+		delete(lcs, rid)
+		if reconfigExpt {
+			log.Printf("Replica %v finalized", rid) // uncomment for reconfig expt
+		}
+	}
+
+	// uncomment for reconfig expt
+	// update records stat
+	if reconfigExpt {
+		totalCommitted := s.computeCutDiff(s.prevCut, ccut)
+		holesCommitted := s.getNumHolesCommitted(lowestWindowNum, lowestLocalCutNum)
+		s.stats.RealTimeTput.Add(totalCommitted - holesCommitted)
 	}
 
 	if lowestWindowNum > s.processWindow {
@@ -452,7 +502,7 @@ func (s *OrderServer) processReport() {
 							s.lastCutTime[id] = time.Now()
 						}
 
-						if lc.LocalCutNum >= int64(float64(s.localCutChangeWindow)*quotaChangeFraction) {
+						if lc.LocalCutNum >= int64(float64(s.localCutChangeWindow)*quotaChangeFraction) && s.assignWindow == lc.WindowNum+1 {
 							// check if quota has already been assigned for next window
 							if _, ok := s.quota[lc.WindowNum+1]; !ok {
 								s.quota[lc.WindowNum+1] = make(map[int32]int64)
@@ -473,6 +523,14 @@ func (s *OrderServer) processReport() {
 						}
 
 						lcs[id] = lc
+
+						if reconfigExpt {
+							// update hole stats
+							if _, ok := s.stats.holesFilled[id]; !ok {
+								s.stats.holesFilled[id] = make(map[int64]int64)
+							}
+							s.stats.holesFilled[id][lc.LocalCutNum+lc.WindowNum*s.localCutChangeWindow] = lc.Feedback.NumHoles
+						}
 					}
 				}
 			} else {
@@ -504,7 +562,7 @@ func (s *OrderServer) processReport() {
 						s.avgHoles[rid] = movingaverage.New(int(s.localCutChangeWindow))
 						s.avgDelta[rid] = movingaverage.New(int(s.localCutChangeWindow))
 					}
-					log.Debugf("Shard %v to be added in next avl window", lc.ShardID)
+					log.Printf("Shard %v to be added in next avl window", lc.ShardID)
 				}
 			}
 		case shard := <-s.finalizeC:
@@ -513,7 +571,7 @@ func (s *OrderServer) processReport() {
 			if s.isLeader { // finalize replicas
 				id := shard.ShardID*s.dataNumReplica + shard.LocalReplicaID
 				s.replicasFinalizeStandby[id] = 0
-				log.Debugf("Replica %v requested to finalize", id)
+				log.Printf("Replica %v requested to finalize", id)
 				// check if all replicas from that shard have requested to finalize
 				allRequestedToFinalize := true
 				for i := int32(0); i < s.dataNumReplica; i++ {
@@ -524,12 +582,12 @@ func (s *OrderServer) processReport() {
 				if allRequestedToFinalize {
 					// all replicas from the shard have requested to finalize
 					for i := int32(0); i < s.dataNumReplica; i++ {
-						log.Infof("Replica %v requested to finalize", shard.ShardID*s.dataNumReplica+i)
+						log.Debugf("Replica %v requested to finalize", shard.ShardID*s.dataNumReplica+i)
 						rid := shard.ShardID*s.dataNumReplica + i
 						s.replicasFinalize[rid] = s.replicasFinalizeStandby[rid]
 						delete(s.replicasFinalizeStandby, rid)
 					}
-					log.Debugf("Shard %v to be finalized in next avl window", shard.ShardID)
+					log.Printf("Shard %v to be finalized in next avl window", shard.ShardID)
 				}
 			}
 		case <-ticker.C:
@@ -601,14 +659,14 @@ func (s *OrderServer) processReport() {
 					incrViewId := false
 					for rid := range s.quota[s.assignWindow] {
 						if _, ok := s.shards[rid/s.dataNumReplica]; !ok {
-							log.Debugf("Incrementing view ID as new shard added")
+							log.Printf("Incrementing view ID as new shard added")
 							incrViewId = true
 							s.shards[rid/s.dataNumReplica] = true
 						}
 					}
 
 					if incrViewId || shardsFinalized {
-						log.Debugf("Incrementing view ID because shardFinalized: %v, incrViewId: %v", shardsFinalized, incrViewId)
+						log.Printf("Incrementing view ID because shardFinalized: %v, incrViewId: %v", shardsFinalized, incrViewId)
 						atomic.AddInt32(&s.viewID, 1)
 						vid = atomic.LoadInt32(&s.viewID)
 					}
@@ -639,6 +697,12 @@ func (s *OrderServer) processReport() {
 						}
 					}
 
+					for rid := range s.startCommittedCut {
+						if _, ok := s.quota[s.assignWindow][rid]; !ok {
+							delete(s.startCommittedCut, rid)
+						}
+					}
+
 					prevCutHint := make(map[int32]int64)
 					for rid, cut := range s.startCommittedCut {
 						prevCutHint[rid] = cut
@@ -664,7 +728,6 @@ func (s *OrderServer) processReport() {
 				}
 
 				s.proposeC <- ce
-				s.stats.RealTimeTput.Add(s.computeCutDiff(s.prevCut, ccut))
 				s.startGSN += s.computeCutDiff(s.prevCut, ccut)
 				s.prevCut = ccut
 			}
@@ -688,7 +751,11 @@ func (s *OrderServer) processReport() {
 func (s *OrderServer) processCommit() {
 	for e := range s.commitC {
 		if s.isLeader {
-			log.Debugf("%v", e)
+			if reconfigExpt {
+				log.Printf("%v", e)
+			} else {
+				log.Debugf("%v", e)
+			}
 		}
 		s.subCMu.RLock()
 		for _, c := range s.subC {

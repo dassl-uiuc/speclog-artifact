@@ -408,6 +408,15 @@ func (c *Client) WaitForLiveShardSize(size int) {
 	}
 }
 
+func (c *Client) ShardLeft(shardId int32) bool {
+	for _, shard := range c.view.LiveShards {
+		if shard == shardId {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Client) processAssignedAppend() {
 	for r := range c.assignedAppendC {
 		shard, replica := c.shardingPolicy.AssignSpecificShard(c.view, r.Record, r.AppenderID)

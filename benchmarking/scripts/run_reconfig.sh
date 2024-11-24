@@ -8,6 +8,9 @@ num_shards=2
 # when does shard 1 join?
 shard_join_time=15
 
+# when does shard 1 leave
+# shard 1 leaves 30 seconds after joining, uncomment code in data_server.go to achieve this. 
+
 # parameters
 runtime_secs=60
 computation_time=(1000)

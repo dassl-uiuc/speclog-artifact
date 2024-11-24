@@ -19,6 +19,7 @@ import (
 )
 
 const backendOnly = false
+const reconfigExpt bool = false
 
 type clientSubscriber struct {
 	state    clientSubscriberState
@@ -361,7 +362,9 @@ func (s *DataServer) Start() {
 		go s.processNewSubscribers()
 		go s.processLiveSubscribe()
 		go s.processSpeculativeSubscribes()
-		// go s.finalizeShardStandby()
+		if reconfigExpt {
+			go s.finalizeShardStandby()
+		}
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)
@@ -826,14 +829,15 @@ func (s *DataServer) registerToOrderingLayer() {
 	log.Errorf("Max retries reached. Registration failed.")
 }
 
-// func (s *DataServer) finalizeShardStandby() {
-// 	if s.shardID == 0 {
-// 		// Sleep for 15 seconds
-// 		time.Sleep(15 * time.Second)
-// 		// finalize shard
-// 		s.finalizeShard()
-// 	}
-// }
+// for reconfig expt
+func (s *DataServer) finalizeShardStandby() {
+	if s.shardID == 1 {
+		// Sleep for 30 seconds
+		time.Sleep(30 * time.Second)
+		// finalize shard
+		s.finalizeShard()
+	}
+}
 
 func (s *DataServer) finalizeShard() {
 	orderClient := orderpb.NewOrderClient(s.orderConn)
@@ -1038,6 +1042,7 @@ func (s *DataServer) reportLocalCut() {
 				}
 				s.appendC <- holeRecord
 				s.recordsInSystem.Add(int64(diff))
+				lcs.Cuts[fixed-1].Feedback.NumHoles = diff
 				s.stats.numHolesGenerated += diff
 				s.holeWg.Wait()
 				s.stats.timeToFillHolesPerLFNs += time.Since(startTime).Nanoseconds()

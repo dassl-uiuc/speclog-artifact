@@ -54,6 +54,13 @@ func appendThread(scalog *scalog_api.Scalog, id int, shardId int, timeSecs int) 
 			log.Printf("[reconfig_e2e]: client %v appended %v records", id, numRecords)
 		}
 		numRecords++
+
+		if shardId/2 == 1 && scalog.ShardLeft(1) {
+			log.Printf("[reconfig_e2e]: stopping client %v", id)
+			scalog.StopAck <- true
+			return
+		}
+
 		select {
 		case <-ticker:
 			log.Printf("[reconfig_e2e]: stopping client %v", id)
