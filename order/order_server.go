@@ -13,7 +13,7 @@ import (
 	"go.etcd.io/etcd/raft/raftpb"
 )
 
-const reconfigExpt = true
+const reconfigExpt = false
 
 type RealTimeTput struct {
 	count atomic.Int64
@@ -221,7 +221,7 @@ func (s *OrderServer) processReport() {
 						if !allReplicasJoined {
 							continue
 						}
-						log.Printf("Shard %v sent first local cut", lc.ShardID)
+						log.Printf("Replica %v added", id)
 					}
 
 					valid := true
@@ -234,9 +234,6 @@ func (s *OrderServer) processReport() {
 						}
 					}
 					if valid {
-						if _, ok := lcs[id]; !ok {
-							log.Printf("Replica %v added", id)
-						}
 						lcs[id] = lc
 					}
 				}

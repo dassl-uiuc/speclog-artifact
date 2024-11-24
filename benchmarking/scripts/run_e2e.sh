@@ -5,7 +5,7 @@ source ./common.sh
 # parameters
 runtime_secs=120
 computation_time=(100 200 500 800 1000 1200 1500 2000 5000 4000 3800 3300 3000 2800 2500 2200)
-num_shards=1
+num_shards=2
 
 for computation_time in "${computation_time[@]}";
 do 

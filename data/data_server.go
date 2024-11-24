@@ -18,7 +18,7 @@ import (
 
 const backendOnly = false
 const measureOrderingInterval = false
-const reconfigExpt bool = true
+const reconfigExpt bool = false
 
 type clientSubscriber struct {
 	state    clientSubscriberState
