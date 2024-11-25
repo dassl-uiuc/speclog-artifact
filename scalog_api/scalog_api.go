@@ -277,3 +277,53 @@ func CreateClient(rateLimit int, shardingHint int, configFile string) *Scalog {
 
 	return scalogClient
 }
+
+func CreateBurstClient(shardingHint int, configFile string, burstSize int32) *Scalog {
+	var err error
+
+	// read configuration file
+	viper.SetConfigFile(configFile)
+	viper.AutomaticEnv()
+	err = viper.ReadInConfig()
+	if err != nil {
+		log.Errorf("read config file error: %v", err)
+	}
+
+	numReplica := int32(viper.GetInt("data-replication-factor"))
+	discPort := uint16(viper.GetInt("disc-port"))
+	discIp := viper.GetString(fmt.Sprintf("disc-ip"))
+	discAddr := address.NewGeneralDiscAddr(discIp, discPort)
+	dataPort := uint16(viper.GetInt("data-port"))
+	dataAddr := address.NewGeneralDataAddr("data-%v-%v-ip", numReplica, dataPort)
+
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+	}
+
+	var c *client.Client
+	c, err = client.NewClientForBurst(dataAddr, discAddr, numReplica, int64(shardingHint), burstSize)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+
+	records := make([]client.CommittedRecord, 10000000)
+
+	stats := BenchmarkStats{
+		DeliveryTime:        make(map[int64]time.Time),
+		ConfirmTime:         make(map[int64]time.Time),
+		AppendEndTime:       make(map[int64]time.Time),
+		AppendStartTime:     make(map[int64]time.Time),
+		AppendStartTimeChan: make(chan time.Time, 100), // do not need more than this
+	}
+	scalogClient := &Scalog{
+		client:    c,
+		records:   records,
+		atomicInt: 0,
+		rate:      1000000, // arbitrarily high
+		Stats:     stats,
+		Stop:      make(chan bool, 1),
+		StopAck:   make(chan bool, 1),
+	}
+
+	return scalogClient
+}

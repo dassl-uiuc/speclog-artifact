@@ -20,6 +20,7 @@ import (
 
 const backendOnly = false
 const reconfigExpt bool = false
+const lagfixExpt bool = false
 
 type clientSubscriber struct {
 	state    clientSubscriberState
@@ -247,7 +248,11 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.views = make(map[int64]int32)
 	// s.outstandingCuts = make(chan bool, 2)
 
-	s.quota = 10
+	if lagfixExpt {
+		s.quota = 3
+	} else {
+		s.quota = 10
+	}
 	s.localCutNum = -1
 	s.numLocalCutsThreshold = 100
 	s.waitForNewQuota = make(chan int64, 4096)
@@ -762,6 +767,12 @@ func (s *DataServer) processSelfReplicate() {
 		}
 		s.replMu.Unlock()
 
+		if lagfixExpt {
+			if record.ClientID != s.holeID && record.Record[0] == 'b' {
+				log.Printf("burst record with lsn %v", lsn)
+			}
+		}
+
 		// send the record on the speculative read channel
 		s.speculativeSubC <- record
 	}
@@ -970,7 +981,9 @@ func (s *DataServer) reportLocalCut() {
 
 		case lag := <-s.fixLag:
 			// need to send @lag number of local cuts, fill with holes
-			// log.Printf("fixing lag by sending %v local cuts", lag)
+			if lagfixExpt {
+				log.Printf("fixing lag by sending %v local cuts", lag)
+			}
 
 			// figure out how many entries to fill
 			lcs = &orderpb.LocalCuts{

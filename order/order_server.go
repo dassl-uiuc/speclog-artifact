@@ -16,6 +16,7 @@ import (
 )
 
 const reconfigExpt bool = false
+const lagfixExpt bool = false
 
 func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)
@@ -305,6 +306,10 @@ func (s *OrderServer) getLags(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
 // logs the avg lag in cuts and returns true if there is a significant lag in the cuts
 // significance is currently defined as a maximum lag of 5% of the localCutChangeWindow or more
 func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
+	lagfixThres := 0.03
+	if lagfixExpt {
+		lagfixThres = 0.1
+	}
 	maxLag := float64(0)
 	for _, lag := range lags {
 		if float64(lag) > maxLag {
@@ -312,12 +317,16 @@ func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
 		}
 	}
 	s.stats.diffCut += float64(maxLag)
-	return float64(maxLag) >= float64(0.03)*float64(s.localCutChangeWindow)
+	return float64(maxLag) >= float64(lagfixThres)*float64(s.localCutChangeWindow)
 }
 
 func (s *OrderServer) getSignificantLags(lags *map[int32]int64) {
+	lagfixThres := 0.03
+	if lagfixExpt {
+		lagfixThres = 0.1
+	}
 	for rid, lag := range *lags {
-		if float64(lag) < float64(0.03)*float64(s.localCutChangeWindow) {
+		if float64(lag) < float64(lagfixThres)*float64(s.localCutChangeWindow) {
 			delete(*lags, rid)
 		} else {
 			if _, ok := s.stats.numLagFixes[rid]; !ok {
@@ -450,15 +459,17 @@ func (s *OrderServer) isLastLagFixed(lastLag map[int32]int64) bool {
 
 func (s *OrderServer) getNewQuota(rid int32, lc *orderpb.LocalCut) int64 {
 	// the general idea here is to have very low tolerance for a higher period and moderate to high tolerance to a lower avg cut period
-	defaultFreq := float64(1e9 / s.batchingInterval.Nanoseconds())
-	currentFreq := float64(1e9 / s.avgDelta[rid].Avg())
+	if !lagfixExpt {
+		defaultFreq := float64(1e9 / s.batchingInterval.Nanoseconds())
+		currentFreq := float64(1e9 / s.avgDelta[rid].Avg())
 
-	if math.Abs(currentFreq-defaultFreq) > 0.05*defaultFreq {
-		newQuota := int64(math.Ceil(float64(lc.Quota) * currentFreq / defaultFreq))
-		if newQuota < 1 {
-			newQuota = 1
+		if math.Abs(currentFreq-defaultFreq) > 0.05*defaultFreq {
+			newQuota := int64(math.Ceil(float64(lc.Quota) * currentFreq / defaultFreq))
+			if newQuota < 1 {
+				newQuota = 1
+			}
+			return newQuota
 		}
-		return newQuota
 	}
 	return lc.Quota
 }
@@ -493,6 +504,9 @@ func (s *OrderServer) processReport() {
 						}
 					}
 					if valid {
+						if lagfixExpt {
+							log.Printf("%v", lc)
+						}
 						if !e.FixingLag {
 							// dividing average by difference in local cut numbers in case some are missing
 							if _, ok := s.lastCutTime[id]; ok {
@@ -718,8 +732,10 @@ func (s *OrderServer) processReport() {
 				}
 
 				if s.isSignificantLag(lags) {
-					// log.Printf("significant lag in cuts: %v", lags)
 					if lastLag == nil || s.isLastLagFixed(lastLag) {
+						if lagfixExpt {
+							log.Printf("significant lag in cuts: %v", lags)
+						}
 						ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
 						s.getSignificantLags(&lags)
 						ce.CommittedCut.AdjustmentSignal.Lag = lags
@@ -751,7 +767,7 @@ func (s *OrderServer) processReport() {
 func (s *OrderServer) processCommit() {
 	for e := range s.commitC {
 		if s.isLeader {
-			if reconfigExpt {
+			if reconfigExpt || lagfixExpt {
 				log.Printf("%v", e)
 			} else {
 				log.Debugf("%v", e)
