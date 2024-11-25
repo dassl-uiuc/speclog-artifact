@@ -18,10 +18,32 @@ import (
 var intrusionDetectionConfigFilePath = "../../applications/vanilla_applications/intrusion_detection/intrusion_detection_config.yaml"
 
 func GenerateRecord(length int) string {
-	padding := util.GenerateRandomString(length - 2)
+	padding := util.GenerateRandomString(length - 15)
 	rand.Seed(time.Now().UnixNano())
+
+	// Random temperature
 	temperature := rand.Intn(90) + 10
-	record := strconv.Itoa(temperature) + padding
+
+	// Motion detection
+	motionDetected := rand.Intn(2)
+
+	// Random vibration
+	vibration := float64(int(rand.Float64()*10)) / 10
+
+	// Random light intensity
+	lightIntensity := rand.Intn(90) + 10
+	// Random sound intensity
+	soundIntensity := rand.Intn(90) + 10
+
+	// Random humidity
+	humidity := rand.Intn(90) + 10
+
+	// Random air pressure change
+	airPressureChange := float64(int(rand.Float64()*10)) / 10
+
+	// Add padding at the end
+	// Ex: 1010.63040740.4
+	record := fmt.Sprintf("%02d%d%.1f%d%d%d%.1f%s", temperature, motionDetected, vibration, lightIntensity, soundIntensity, humidity, airPressureChange, padding)
 	return record
 }
 
