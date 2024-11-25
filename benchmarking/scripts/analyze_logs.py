@@ -50,18 +50,24 @@ def get_metrics(log_file):
     return np.array(latencies), np.array(cuts), np.array(queuelen), np.array(gctime)
 
 
-log_file = '../speclog_40K_100c/data-0-0.log'  
+log_file = '../logs/data-0-0.log'  
 startGSN_values, cuts = parse_log_file(log_file)
 
 data1 = cuts[0]
 data2 = cuts[1]
+data3 = cuts[2]
+data4 = cuts[3]
 # filter initial zeroes from difference
 first_non_zero = next((i for i, x in enumerate(data1) if x), None)
 data1 = data1[first_non_zero:]
 first_non_zero = next((i for i, x in enumerate(data2) if x), None)
 data2 = data2[first_non_zero:]
+first_non_zero = next((i for i, x in enumerate(data3) if x), None)
+data3 = data3[first_non_zero:]
+first_non_zero = next((i for i, x in enumerate(data4) if x), None)
+data4 = data4[first_non_zero:]
 
-differences = [np.diff(data1), np.diff(data2)]
+differences = [np.diff(data1), np.diff(data2), np.diff(data3), np.diff(data4)]
 
 for i, diff in enumerate(differences):
     print(f'Cut for {i} mean: {np.mean(diff)}')
@@ -72,26 +78,26 @@ for i, diff in enumerate(differences):
     print(f'Cut for {i} 50th percentile: {np.percentile(diff, 50)}')
     print(f'Cut for {i} frequent entries: {Counter(diff).most_common(4)}')
 
-    print('---')
+#     print('---')
 
 
-latencies, cuts, queuelen, gctime = get_metrics(log_file)
+# latencies, cuts, queuelen, gctime = get_metrics(log_file)
 
-print(f'mean latency ns: {np.mean(latencies)}')
-print(f'std latency ns: {np.std(latencies)}')
-print(f'p99 latency ns: {np.max(latencies)}')
+# print(f'mean latency ns: {np.mean(latencies)}')
+# print(f'std latency ns: {np.std(latencies)}')
+# print(f'p99 latency ns: {np.max(latencies)}')
 
-print(f'mean local cut: {np.mean(cuts)}')
-print(f'std local cut: {np.std(cuts)}')
-print(f'max local cut: {np.max(cuts)}')
-print(f'p99 local cut: {np.percentile(cuts, 99)}')
+# print(f'mean local cut: {np.mean(cuts)}')
+# print(f'std local cut: {np.std(cuts)}')
+# print(f'max local cut: {np.max(cuts)}')
+# print(f'p99 local cut: {np.percentile(cuts, 99)}')
 
-print(f'mean gctime: {np.mean(gctime)}')
-print(f'std gctime: {np.std(gctime)}')
-print(f'max gctime: {np.max(gctime)}')
-print(f'p99 gctime: {np.percentile(gctime, 99)}')
+# print(f'mean gctime: {np.mean(gctime)}')
+# print(f'std gctime: {np.std(gctime)}')
+# print(f'max gctime: {np.max(gctime)}')
+# print(f'p99 gctime: {np.percentile(gctime, 99)}')
 
-print(f'mean queuelen: {np.mean(queuelen)}')
-print(f'std queuelen: {np.std(queuelen)}')
-print(f'max queuelen: {np.max(queuelen)}')
-print(f'p99 queuelen: {np.percentile(queuelen, 99)}')
+# print(f'mean queuelen: {np.mean(queuelen)}')
+# print(f'std queuelen: {np.std(queuelen)}')
+# print(f'max queuelen: {np.max(queuelen)}')
+# print(f'p99 queuelen: {np.percentile(queuelen, 99)}')

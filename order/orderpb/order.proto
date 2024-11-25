@@ -5,7 +5,7 @@ package orderpb;
 service Order {
 	rpc Report(stream LocalCuts) returns (stream CommittedEntry) {}
 	rpc Forward(stream LocalCuts) returns (Empty) {}
-	rpc Finalize(FinalizeEntry) returns (Empty) {}
+	rpc Finalize(FinalizeRequest) returns (Empty) {}
 }
 
 message LocalCut {
@@ -38,3 +38,9 @@ message FinalizeEntry {
 }
 
 message Empty {}
+
+// added for speclog experiments
+message FinalizeRequest {
+	int32 shardID = 1;
+	int32 localReplicaID = 2;
+}

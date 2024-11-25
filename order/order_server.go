@@ -13,23 +13,52 @@ import (
 	"go.etcd.io/etcd/raft/raftpb"
 )
 
+const reconfigExpt = false
+
+type RealTimeTput struct {
+	count atomic.Int64
+}
+
+func (r *RealTimeTput) Add(delta int64) {
+	r.count.Add(delta)
+}
+
+func (r *RealTimeTput) LoggerThread() {
+	duration := 50 * time.Millisecond
+	ticker := time.NewTicker(duration)
+	prev := int64(0)
+	for range ticker.C {
+		count := r.count.Load()
+		log.Printf("[real-time tput]: %v ops/sec", float64(count-prev)/duration.Seconds())
+		prev = count
+	}
+}
+
+type Stats struct {
+	RealTimeTput RealTimeTput
+}
+
 type OrderServer struct {
-	index            int32
-	numReplica       int32
-	dataNumReplica   int32
-	clientID         int32
-	batchingInterval time.Duration
-	isLeader         bool
-	startGSN         int64
-	viewID           int32          // use sync/atomic to access viewID
-	shards           map[int32]bool // true for live shards, false for finalized ones
-	forwardC         chan *orderpb.LocalCuts
-	proposeC         chan *orderpb.CommittedEntry
-	commitC          chan *orderpb.CommittedEntry
-	finalizeC        chan *orderpb.FinalizeEntry
-	subC             map[int32]chan *orderpb.CommittedEntry
-	subCMu           sync.RWMutex
-	prevCut          map[int32]int64
+	index                   int32
+	numReplica              int32
+	dataNumReplica          int32
+	clientID                int32
+	batchingInterval        time.Duration
+	isLeader                bool
+	startGSN                int64
+	viewID                  int32          // use sync/atomic to access viewID
+	shards                  map[int32]bool // true for live shards, false for finalized ones
+	forwardC                chan *orderpb.LocalCuts
+	proposeC                chan *orderpb.CommittedEntry
+	commitC                 chan *orderpb.CommittedEntry
+	finalizeC               chan *orderpb.FinalizeRequest // changed structure for speclog experiments
+	subC                    map[int32]chan *orderpb.CommittedEntry
+	subCMu                  sync.RWMutex
+	prevCut                 map[int32]int64
+	replicasFinalizeStandby map[int32]int64 // replicas in standby for finalization, change for speclog
+	stats                   Stats
+	shardsFinalized         map[int32]bool
+	replicasAddingStandby   map[int32]bool // replicas in standby for adding, change for speclog
 
 	rnConfChangeC      chan raftpb.ConfChange
 	rnProposeC         chan string
@@ -51,8 +80,15 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.forwardC = make(chan *orderpb.LocalCuts, 4096)
 	s.proposeC = make(chan *orderpb.CommittedEntry, 4096)
 	s.commitC = make(chan *orderpb.CommittedEntry, 4096)
-	s.finalizeC = make(chan *orderpb.FinalizeEntry, 4096)
+	s.finalizeC = make(chan *orderpb.FinalizeRequest, 4096)
 	s.subC = make(map[int32]chan *orderpb.CommittedEntry)
+	s.replicasFinalizeStandby = make(map[int32]int64)
+	s.replicasAddingStandby = make(map[int32]bool)
+	s.stats = Stats{}
+	if reconfigExpt {
+		go s.stats.RealTimeTput.LoggerThread()
+	}
+	s.shardsFinalized = make(map[int32]bool)
 
 	s.rnConfChangeC = make(chan raftpb.ConfChange)
 	s.rnProposeC = make(chan string)
@@ -128,6 +164,7 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 			incrViewID = true
 			// clean finalized shards from lcs
 			delete(lcs, rid)
+			s.shardsFinalized[shard] = true
 			continue
 		}
 		localReplicaID := rid % s.dataNumReplica
@@ -144,6 +181,12 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		}
 		ccut[rid] = chosen
 	}
+
+	if reconfigExpt {
+		totalCommitted := s.computeCutDiff(s.prevCut, ccut)
+		s.stats.RealTimeTput.Add(totalCommitted)
+	}
+
 	if incrViewID {
 		atomic.AddInt32(&s.viewID, 1)
 	}
@@ -160,7 +203,27 @@ func (s *OrderServer) processReport() {
 			// log.Debugf("processReport forwardC")
 			if s.isLeader { // store local cuts
 				for _, lc := range e.Cuts {
+					if status, ok := s.shards[lc.ShardID]; ok {
+						if !status {
+							// this is a finalized shard, reject cuts
+							continue
+						}
+					}
 					id := lc.ShardID*s.dataNumReplica + lc.LocalReplicaID
+					if _, ok := lcs[id]; !ok {
+						s.replicasAddingStandby[id] = true
+						allReplicasJoined := true
+						for i := int32(0); i < s.dataNumReplica; i++ {
+							rid := lc.ShardID*s.dataNumReplica + i
+							_, ok := s.replicasAddingStandby[rid]
+							allReplicasJoined = allReplicasJoined && ok
+						}
+						if !allReplicasJoined {
+							continue
+						}
+						log.Printf("Replica %v added", id)
+					}
+
 					valid := true
 					// check if the received cut is up-to-date
 					if cut, ok := lcs[id]; ok {
@@ -178,13 +241,45 @@ func (s *OrderServer) processReport() {
 				// TODO: forward to the leader
 				log.Debugf("Cuts forward to the leader")
 			}
+		case shard := <-s.finalizeC:
+			// simply mark the shard as finalized
+			if s.isLeader { // finalize replicas
+				id := shard.ShardID*s.dataNumReplica + shard.LocalReplicaID
+				s.replicasFinalizeStandby[id] = 0
+				log.Printf("Replica %v requested to finalize", id)
+				// check if all replicas from that shard have requested to finalize
+				allRequestedToFinalize := true
+				for i := int32(0); i < s.dataNumReplica; i++ {
+					rid := shard.ShardID*s.dataNumReplica + i
+					_, ok := s.replicasFinalizeStandby[rid]
+					allRequestedToFinalize = allRequestedToFinalize && ok
+				}
+				if allRequestedToFinalize {
+					// all replicas from the shard have requested to finalize
+					for i := int32(0); i < s.dataNumReplica; i++ {
+						rid := shard.ShardID*s.dataNumReplica + i
+						delete(s.replicasFinalizeStandby, rid)
+					}
+					s.shards[shard.ShardID] = false
+					log.Printf("Shard %v to be finalized", shard.ShardID)
+				}
+			}
 		case <-ticker.C:
 			// TODO: check to make sure the key in lcs exist
 			// log.Debugf("processReport ticker")
 			if s.isLeader { // compute committedCut
 				ccut := s.computeCommittedCut(lcs)
 				vid := atomic.LoadInt32(&s.viewID)
-				ce := &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
+				// get list of finalized shards
+				var finalizeEntry *orderpb.FinalizeEntry = nil
+				if len(s.shardsFinalized) > 0 {
+					finalizeEntry = &orderpb.FinalizeEntry{ShardIDs: make([]int32, 0)}
+					for k := range s.shardsFinalized {
+						finalizeEntry.ShardIDs = append(finalizeEntry.ShardIDs, k)
+					}
+					s.shardsFinalized = make(map[int32]bool)
+				}
+				ce := &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: finalizeEntry}
 				s.proposeC <- ce
 				s.startGSN += s.computeCutDiff(s.prevCut, ccut)
 				s.prevCut = ccut
@@ -197,7 +292,11 @@ func (s *OrderServer) processReport() {
 func (s *OrderServer) processCommit() {
 	for e := range s.commitC {
 		if s.isLeader {
-			log.Debugf("%v", e)
+			if reconfigExpt {
+				log.Printf("%v", e)
+			} else {
+				log.Debugf("%v", e)
+			}
 		}
 		s.subCMu.RLock()
 		for _, c := range s.subC {

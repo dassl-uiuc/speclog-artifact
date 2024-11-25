@@ -1,6 +1,7 @@
 package client
 
 import (
+	"log"
 	"math/rand"
 	"sort"
 	"time"
