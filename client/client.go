@@ -67,12 +67,9 @@ type Client struct {
 
 	outstandingRequestsLimit int32
 	outstandingRequestsChan  chan bool
-<<<<<<< HEAD
-=======
 
 	shardsSubscribedTo map[int32]bool
 	isReader           bool
->>>>>>> 33d5009b4ababd8ffea4696a7a5583e6be904316
 }
 
 func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32, shardingHint int64) (*Client, error) {
@@ -438,58 +435,6 @@ func (c *Client) Read(gsn int64, shard, replica int32) (string, error) {
 		return "", err
 	}
 	return record.Record, nil
-}
-
-func (c *Client) SubscribeToAssignedShard(gsn int64, readerId int32) (chan CommittedRecord, error) {
-	c.committedRecordsMu.Lock()
-	c.nextGSN = gsn
-	c.committedRecordsMu.Unlock()
-
-	if readerId >= c.numReplica*int32(len(c.view.LiveShards)) {
-		return nil, fmt.Errorf("readerId %v is out of range", readerId)
-	}
-
-	shard := readerId / c.numReplica
-	replica := readerId % c.numReplica
-
-	log.Infof("Subscribe to assigned shard %v replica %v", shard, replica)
-
-	go c.SubscribeToAssignedShardServer(shard, replica)
-
-	return c.subC, nil
-}
-
-func (c *Client) SubscribeToAssignedShardServer(shard, replica int32) {
-	conn, err := c.getDataServerConn(shard, replica)
-	if err != nil {
-		log.Errorf("%v", err)
-		return
-	}
-	opts := []grpc.CallOption{}
-	dataClient := datapb.NewDataClient(conn)
-	globalSN := &datapb.GlobalSN{GSN: c.nextGSN}
-	stream, err := dataClient.Subscribe(context.Background(), globalSN, opts...)
-	if err != nil {
-		log.Errorf("%v", err)
-		return
-	}
-	for {
-		record, err := stream.Recv()
-		if err == io.EOF {
-			log.Infof("Receive subscribe stream closed.")
-			return
-		}
-		if err != nil {
-			log.Errorf("%v", err)
-			return
-		}
-
-		commitedRecord := CommittedRecord{
-			GSN:    record.GlobalSN,
-			Record: record.Record,
-		}
-		c.subC <- commitedRecord
-	}
 }
 
 func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, error) {

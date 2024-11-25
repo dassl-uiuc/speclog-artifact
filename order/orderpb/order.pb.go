@@ -520,20 +520,6 @@ func (*UnimplementedOrderServer) Finalize(ctx context.Context, req *FinalizeRequ
 	return nil, status.Errorf(codes.Unimplemented, "method Finalize not implemented")
 }
 
-// UnimplementedOrderServer can be embedded to have forward compatible implementations.
-type UnimplementedOrderServer struct {
-}
-
-func (*UnimplementedOrderServer) Report(srv Order_ReportServer) error {
-	return status.Errorf(codes.Unimplemented, "method Report not implemented")
-}
-func (*UnimplementedOrderServer) Forward(srv Order_ForwardServer) error {
-	return status.Errorf(codes.Unimplemented, "method Forward not implemented")
-}
-func (*UnimplementedOrderServer) Finalize(ctx context.Context, req *FinalizeEntry) (*Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Finalize not implemented")
-}
-
 func RegisterOrderServer(s *grpc.Server, srv OrderServer) {
 	s.RegisterService(&_Order_serviceDesc, srv)
 }
