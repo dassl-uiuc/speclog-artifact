@@ -14,18 +14,26 @@ import (
 	"github.com/scalog/scalog/client"
 	"github.com/scalog/scalog/scalog_api"
 	"github.com/spf13/viper"
+	"github.com/scalog/scalog/benchmark/util"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 var intrusionDetectionConfigFilePath = "../../applications/vanilla_applications/intrusion_detection/intrusion_detection_config.yaml"
-var movingAverage = movingaverage.New(10)
+var temperatureMovingAverage = movingaverage.New(10)
+var vibrationMovingAverage = movingaverage.New(10)
+var lightIntensityMovingAverage = movingaverage.New(10)
+var soundIntensityMovingAverage = movingaverage.New(10)
+var humidityMovingAverage = movingaverage.New(10)
+var airPressureChangeMovingAverage = movingaverage.New(10)
+var padding = util.GenerateRandomString(4081)
 
 // TODO: Add computation here
 func HandleIntrusion(committedRecords []client.CommittedRecord, db *sql.DB) {
 	var placeholders []string
 	var values []interface{}
 
+	// Ex: 1010.63040740.4
 	for _, record := range committedRecords {
 		// Extract first two chars of record.Record and convert to int
 		temperature, err := strconv.Atoi(record.Record[:2])
@@ -34,21 +42,79 @@ func HandleIntrusion(committedRecords []client.CommittedRecord, db *sql.DB) {
 		}
 
 		// Add temperature to moving average
-		movingAverage.Add(float64(temperature))
+		temperatureMovingAverage.Add(float64(temperature))
+		temperatureAverage := temperatureMovingAverage.Avg()
+		if temperatureAverage > 90 {
+			fmt.Println("Intrusion detected")
+		}
+
+		motionDetected, err := strconv.Atoi(record.Record[2:3])
+		if err != nil {
+			fmt.Println("Error converting motion detected to int")
+		}
+		if motionDetected == 1 {
+			fmt.Println("Intrusion detected")
+		}
+
+		vibration, err := strconv.ParseFloat(record.Record[3:6], 64)
+		if err != nil {
+			fmt.Println("Error converting vibration to float")
+		}
+		vibrationMovingAverage.Add(vibration)
+		vibrationAverage := vibrationMovingAverage.Avg()
+		if vibrationAverage > 0.5 {
+			fmt.Println("Intrusion detected")
+		}
+
+		lightIntensity, err := strconv.Atoi(record.Record[6:8])
+		if err != nil {
+			fmt.Println("Error converting light intensity to int")
+		}
+		lightIntensityMovingAverage.Add(float64(lightIntensity))
+		lightIntensityAverage := lightIntensityMovingAverage.Avg()
+		if lightIntensityAverage > 50 {
+			fmt.Println("Intrusion detected")
+		}
+
+		soundIntensity, err := strconv.Atoi(record.Record[8:10])
+		if err != nil {
+			fmt.Println("Error converting sound intensity to int")
+		}
+		soundIntensityMovingAverage.Add(float64(soundIntensity))
+		soundIntensityAverage := soundIntensityMovingAverage.Avg()
+		if soundIntensityAverage > 90 {
+			fmt.Println("Intrusion detected")
+		}
+
+		humidity, err := strconv.Atoi(record.Record[10:12])
+		if err != nil {
+			fmt.Println("Error converting humidity to int")
+		}
+		humidityMovingAverage.Add(float64(humidity))
+		humidityAverage := humidityMovingAverage.Avg()
+		if humidityAverage > 50 {
+			fmt.Println("Intrusion detected")
+		}
+
+		airPressureChange, err := strconv.ParseFloat(record.Record[12:15], 64)
+		if err != nil {
+			fmt.Println("Error converting air pressure change to float")
+		}
+		airPressureChangeMovingAverage.Add(airPressureChange)
+		airPressureChangeAverage := airPressureChangeMovingAverage.Avg()
+		if airPressureChangeAverage > 0.5 {
+			fmt.Println("Intrusion detected")
+		}
+
+		aggregatedRecord := fmt.Sprintf("%02d%d%.1f%d%d%d%.1f%s", int(temperatureAverage), motionDetected, vibrationAverage, int(lightIntensityAverage), int(soundIntensityAverage), int(humidityAverage), airPressureChangeAverage, padding)
 
 		// Add to placeholder and values to input to DB later
 		placeholders = append(placeholders, "(?)")
-		values = append(values, record.Record)
+		values = append(values, aggregatedRecord)
 	}
 
 	fmt.Println("Length of placeholders: ", len(placeholders))
 	fmt.Println("Length of values: ", len(values))
-
-	// Get moving average
-	average := movingAverage.Avg()
-	if average > 90 {
-		fmt.Println("Intrusion detected")
-	}
 
 	// Build the SQL query
 	insertQuery := fmt.Sprintf("INSERT INTO records (temperature) VALUES %s", strings.Join(placeholders, ","))
