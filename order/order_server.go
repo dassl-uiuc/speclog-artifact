@@ -17,6 +17,8 @@ import (
 
 const reconfigExpt bool = false
 const lagfixExpt bool = false
+const lagfixEnabled bool = true
+const lagfixThres float64 = 0.03
 
 func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)
@@ -306,10 +308,6 @@ func (s *OrderServer) getLags(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
 // logs the avg lag in cuts and returns true if there is a significant lag in the cuts
 // significance is currently defined as a maximum lag of 5% of the localCutChangeWindow or more
 func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
-	lagfixThres := 0.03
-	if lagfixExpt {
-		lagfixThres = 0.1
-	}
 	maxLag := float64(0)
 	for _, lag := range lags {
 		if float64(lag) > maxLag {
@@ -321,10 +319,6 @@ func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
 }
 
 func (s *OrderServer) getSignificantLags(lags *map[int32]int64) {
-	lagfixThres := 0.03
-	if lagfixExpt {
-		lagfixThres = 0.1
-	}
 	for rid, lag := range *lags {
 		if float64(lag) < float64(lagfixThres)*float64(s.localCutChangeWindow) {
 			delete(*lags, rid)
@@ -731,7 +725,7 @@ func (s *OrderServer) processReport() {
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
 				}
 
-				if s.isSignificantLag(lags) {
+				if lagfixEnabled && s.isSignificantLag(lags) {
 					if lastLag == nil || s.isLastLagFixed(lastLag) {
 						if lagfixExpt {
 							log.Printf("significant lag in cuts: %v", lags)
