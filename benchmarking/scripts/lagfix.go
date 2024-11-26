@@ -28,11 +28,12 @@ const readType = "subscribe"
 var wg sync.WaitGroup
 var runTimeSecs int
 
+var burstClient *scalog_api.Scalog = nil
+
 func appendThread(scalog *scalog_api.Scalog, id int, shardId int, timeSecs int) {
 	defer wg.Done()
 
 	burstTimer := time.NewTimer(10 * time.Second)
-	var burstClient *scalog_api.Scalog
 	burstSize := int32(30)
 	if shardId == 0 && id == 0 {
 		burstClient = scalog_api.CreateBurstClient(0, "../../.scalog.yaml", burstSize)
@@ -52,6 +53,12 @@ func appendThread(scalog *scalog_api.Scalog, id int, shardId int, timeSecs int) 
 		case <-ticker:
 			log.Printf("[lagfix]: stopping client %v", id)
 			scalog.StopAck <- true
+			if shardId == 0 && id == 0 {
+				log.Printf("printing burst record gsns")
+				for gsn := range burstClient.Stats.AppendStartTime {
+					log.Printf("gsn: %v", gsn)
+				}
+			}
 			return
 		case <-burstTimer.C:
 			if shardId == 0 && id == 0 {
@@ -97,7 +104,7 @@ func main() {
 	// start producer
 	wg.Add(numAppenders)
 	for i := 0; i < numAppenders; i++ {
-		c := scalog_api.CreateClient(500, shardId, "../../.scalog.yaml") // assuming that 5 clients will be spawned per producer node
+		c := scalog_api.CreateClient(1000, shardId, "../../.scalog.yaml") // assuming that 5 clients will be spawned per producer node
 		go appendThread(c, i, shardId, runTimeSecs)
 		appendClients = append(appendClients, c)
 	}
@@ -106,12 +113,19 @@ func main() {
 	// append latencies
 	appendLatencies := make([]LatencyTuple, 0)
 	appendStartTimeMap := make(map[int64]time.Time)
+	appendEndTimeMap := make(map[int64]time.Time)
 
 	appendMetrics, err := os.Create(filepath + "append_metrics_" + strconv.Itoa(shardId) + ".csv")
 	if err != nil {
 		log.Errorf("[lagfix]: failed to open csv file")
 	}
 	defer appendMetrics.Close()
+
+	appendLatencyTimestamp, err := os.Create(filepath + "append_latency_timestamp_" + strconv.Itoa(shardId) + ".csv")
+	if err != nil {
+		log.Errorf("[lagfix]: failed to open csv file")
+	}
+	defer appendLatencyTimestamp.Close()
 
 	appendTput := float64(0)
 	for _, appendClient := range appendClients {
@@ -120,9 +134,22 @@ func main() {
 			if ok {
 				appendLatencies = append(appendLatencies, LatencyTuple{gsn, appendEndTime.Sub(appendStartTime).Microseconds()})
 				appendStartTimeMap[gsn] = appendStartTime
+				appendEndTimeMap[gsn] = appendEndTime
 			}
 		}
 		appendTput += float64(len(appendClient.Stats.AppendEndTime)) / float64(runTimeSecs)
+	}
+
+	if burstClient != nil {
+		for gsn, appendStartTime := range burstClient.Stats.AppendStartTime {
+			appendEndTime, ok := burstClient.Stats.AppendEndTime[gsn]
+			if ok {
+				appendLatencies = append(appendLatencies, LatencyTuple{gsn, appendEndTime.Sub(appendStartTime).Microseconds()})
+				appendStartTimeMap[gsn] = appendStartTime
+				appendEndTimeMap[gsn] = appendEndTime
+			}
+		}
+		appendTput += float64(len(burstClient.Stats.AppendEndTime)) / float64(runTimeSecs)
 	}
 
 	// sort slices
@@ -138,6 +165,15 @@ func main() {
 		appendWriter.Write([]string{strconv.Itoa(int(latency.GSN)), strconv.Itoa(int(latency.Latency)), strconv.FormatFloat(appendTput, 'f', -1, 64)})
 	}
 	appendWriter.Flush()
+
+	appendTimestampWriter := csv.NewWriter(appendLatencyTimestamp)
+	header = []string{"gsn", "timestamp", "latency (us)"}
+	appendTimestampWriter.Write(header)
+	for _, latency := range appendLatencies {
+		formattedTime := appendEndTimeMap[latency.GSN].Format("15:04:05.000000")
+		appendTimestampWriter.Write([]string{strconv.Itoa(int(latency.GSN)), formattedTime, strconv.Itoa(int(latency.Latency))})
+	}
+	appendTimestampWriter.Flush()
 
 	log.Printf("[lagfix]: benchmark complete")
 }
