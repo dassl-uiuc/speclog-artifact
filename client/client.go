@@ -135,6 +135,7 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 		return nil, err
 	}
 	go c.subscribeView()
+	c.Start()
 	return c, nil
 }
 

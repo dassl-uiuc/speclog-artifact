@@ -17,7 +17,7 @@ import (
 )
 
 const NumberOfRequest = 10
-const NumberOfBytes = 100
+const NumberOfBytes = 1024
 const StreamName = "AppendBenchmark"
 
 type tuple struct {

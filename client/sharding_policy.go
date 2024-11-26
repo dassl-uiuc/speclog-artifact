@@ -1,10 +1,10 @@
 package client
 
 import (
-	"log"
 	"math/rand"
 	"sort"
 	"time"
+	log "github.com/scalog/scalog/logger"
 
 	"github.com/scalog/scalog/pkg/view"
 )
