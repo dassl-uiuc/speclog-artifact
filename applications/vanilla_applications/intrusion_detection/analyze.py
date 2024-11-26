@@ -62,7 +62,8 @@ def analyze():
 
         compute_e2e_latency = 0
         compute_e2e_latencies_list = []
-        line_count = 0
+        compute_e2e_latencies_map = {}
+        num_compute_e2e_latencies = 0
         for i in range(num_replicas):
             for j in range(num_read_clients_per_replica):
                 compute_e2e_end_times_file_path_i = f"{compute_e2e_end_times_file_path}{i}_{j}.txt"
@@ -71,9 +72,10 @@ def analyze():
                         gsn, timestamp = line.strip().split(",")
                         compute_e2e_latency += int(timestamp) - append_start_timestamps[int(gsn)]
                         compute_e2e_latencies_list.append(int(timestamp) - append_start_timestamps[int(gsn)])
-                        line_count += 1
+                        compute_e2e_latencies_map[int(gsn)] = int(timestamp) - append_start_timestamps[int(gsn)]
+                        num_compute_e2e_latencies += 1
 
-        avg_compute_e2e_latency = compute_e2e_latency / line_count / 1000
+        avg_compute_e2e_latency = compute_e2e_latency / num_compute_e2e_latencies / 1000
 
         delivery_e2e_latencies_map = {}
         for i in range(num_replicas):
@@ -88,7 +90,7 @@ def analyze():
         delivery_e2e_latencies_list = []
         num_delivery_e2e_latencies = 0
         for gsn, timestamp in append_start_timestamps.items():
-            if gsn in delivery_e2e_latencies_map:
+            if gsn in delivery_e2e_latencies_map and gsn in compute_e2e_latencies_map:
                 delivery_e2e_latencies += delivery_e2e_latencies_map[gsn] - timestamp
                 delivery_e2e_latencies_list.append(delivery_e2e_latencies_map[gsn] - timestamp)
                 num_delivery_e2e_latencies += 1
@@ -110,7 +112,7 @@ def analyze():
         queuing_delays_list = []
         num_queuing_delays = 0
         for gsn, timestamp in compute_start_times_map.items():
-            if gsn in delivery_e2e_latencies_map:
+            if gsn in delivery_e2e_latencies_map and gsn in compute_e2e_latencies_map:
                 queuing_delay += timestamp - delivery_e2e_latencies_map[gsn]
                 queuing_delays_list.append(timestamp - delivery_e2e_latencies_map[gsn])
                 num_queuing_delays += 1
@@ -162,7 +164,8 @@ def analyze():
             file.write("records_consumed: " + str(records_consumed) + "\n")
             file.write("num append timestamps: " + str(num_append_timestamps) + "\n")
             file.write("num delivery e2e latencies: " + str(num_delivery_e2e_latencies) + "\n")
-            file.write("num compute start times: " + str(num_queuing_delays) + "\n")
+            file.write("num queuing delays: " + str(num_queuing_delays) + "\n")
+            file.write("num compute e2e latencies: " + str(num_compute_e2e_latencies) + "\n")
             file.write("std compute_e2e_latency: " + str(compute_e2e_latency_std) + "\n")
             file.write("std delivery_e2e_latency: " + str(delivery_e2e_latency_std) + "\n")
             file.write("std queuing_delay: " + str(queuing_delay_std) + "\n")
