@@ -10,9 +10,9 @@ num_replica="$2"
 client_number="$3"
 reader_id="$4"
 
-echo "Running intrusion detection reader on node $client_id with reader id $reader_id"
+echo "Running transaction analysis reader on node $client_id with reader id $reader_id"
 for ((i=0; i<$client_number; i++)); do
-  cmd="sudo /usr/local/go/bin/go run ../../applications/vanilla_applications/intrusion_detection/intrusion_detection_devices.go $reader_id $i"
+  cmd="sudo /usr/local/go/bin/go run ../../applications/vanilla_applications/transaction_analysis/transaction_analysis.go $reader_id $i"
   $cmd &
 done
 

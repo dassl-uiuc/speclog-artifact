@@ -10,6 +10,7 @@ service Data {
 	rpc Replicate(stream Record) returns (stream Ack) {}
 	// the servers don't need to know the sources of the following requests
 	rpc Subscribe(GlobalSN) returns (stream Record) {}
+	rpc FilterSubscribe(FilterGlobalSN) returns (stream Record) {}
 	rpc Trim(GlobalSN) returns (Ack) {}
 	rpc Read(GlobalSN) returns (Record) {}
 }
@@ -23,6 +24,8 @@ message Record {
 	int64 globalSN = 6; // global sequence number
 	string record = 7;
     int32 appenderID = 8;
+	int32 recordID = 9; // For filtering
+	repeated int64 missedRecords = 10; // For filtering
 }
 
 message Ack {
@@ -36,6 +39,12 @@ message Ack {
 
 message GlobalSN {
 	int64 gSN = 1;
+}
+
+message FilterGlobalSN {
+	int64 gSN = 1;
+	int32 readerID = 2;
+	int32 filterValue = 3;
 }
 
 message Empty {}

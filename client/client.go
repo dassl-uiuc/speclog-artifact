@@ -401,6 +401,18 @@ func (c *Client) AppendToAssignedShard(appenderId int32, record string) (int64, 
 	return 0, 0, nil
 }
 
+func (c *Client) FilterAppend(record string, recordId int32) (int64, int32, error) {
+	c.outstandingRequestsChan <- true
+	r := &datapb.Record{
+		ClientID: c.clientID,
+		ClientSN: c.getNextClientSN(),
+		Record:   record,
+		RecordID: recordId,
+	}
+	c.appendC <- r
+	return 0, 0, nil
+}
+
 func (c *Client) AppendOneToAssignedShard(appenderId int32, record string) (int64, int32, error) {
 	r := &datapb.Record{
 		ClientID: c.clientID,
@@ -409,6 +421,28 @@ func (c *Client) AppendOneToAssignedShard(appenderId int32, record string) (int6
 	}
 
 	shard, replica := c.shardingPolicy.AssignSpecificShard(c.view, record, appenderId)
+	conn, err := c.getDataServerConn(shard, replica)
+	if err != nil {
+		return 0, 0, err
+	}
+	opts := []grpc.CallOption{}
+	dataClient := datapb.NewDataClient(conn)
+	ack, err := dataClient.AppendOne(context.TODO(), r, opts...)
+	if err != nil {
+		return 0, 0, err
+	}
+	return ack.GlobalSN, ack.ShardID, nil
+}
+
+func (c *Client) FilterAppendOne(record string, recordId int32) (int64, int32, error) {
+	r := &datapb.Record{
+		ClientID: c.clientID,
+		ClientSN: c.getNextClientSN(),
+		Record:   record,
+		RecordID: recordId,
+	}
+	shard, replica := c.shardingPolicy.Shard(c.view, record)
+	// log.Infof("shard: %v, replica: %v\n", shard, replica)
 	conn, err := c.getDataServerConn(shard, replica)
 	if err != nil {
 		return 0, 0, err
@@ -474,6 +508,70 @@ func (c *Client) SubscribeToAssignedShard(gsn int64, readerId int32) (chan Commi
 	go c.subscribeToAssignedShardServer(shard, replica)
 
 	return c.subC, nil
+}
+
+func (c *Client) FilterSubscribe(gsn int64, readerId int32, filterValue int32) (chan CommittedRecord, error) {
+	c.committedRecordsMu.Lock()
+	c.nextGSN = gsn
+	c.committedRecordsMu.Unlock()
+
+	for _, shard := range c.view.LiveShards {
+		for replicaId := int32(0); replicaId < c.numReplica; replicaId++ {
+			go c.filterSubscribeShardServer(shard, replicaId, readerId, filterValue)
+		}
+
+		c.shardsSubscribedTo[shard] = true
+	}
+	c.isReader = true
+
+	return c.subC, nil
+}
+
+func (c *Client) filterSubscribeShardServer(shard, replica int32, readerId int32, filterValue int32) {
+	conn, err := c.getDataServerConn(shard, replica)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	opts := []grpc.CallOption{}
+	dataClient := datapb.NewDataClient(conn)
+	globalSN := &datapb.FilterGlobalSN{GSN: c.nextGSN, ReaderID: readerId, FilterValue: filterValue}
+	stream, err := dataClient.FilterSubscribe(context.Background(), globalSN, opts...)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	for {
+		record, err := stream.Recv()
+		if err == io.EOF {
+			log.Infof("Receive subscribe stream closed.")
+			return
+		}
+		if err != nil {
+			log.Errorf("%v", err)
+			return
+		}
+		c.committedRecordsMu.Lock()
+		for _, gsn := range record.MissedRecords {
+			c.committedRecords[gsn] = CommittedRecord{
+				GSN:    gsn,
+				Record: "",
+			}
+			if gsn == c.nextGSN {
+				c.respondToClient()
+			}
+		}
+
+		c.committedRecords[record.GlobalSN] = CommittedRecord{
+			GSN:    record.GlobalSN,
+			Record: record.Record,
+		}
+		if record.GlobalSN == c.nextGSN {
+			c.respondToClient()
+		}
+		c.committedRecordsMu.Unlock()
+		// TODO(shreesha): handle view change
+	}
 }
 
 func (c *Client) subscribeToAssignedShardServer(shard, replica int32) {

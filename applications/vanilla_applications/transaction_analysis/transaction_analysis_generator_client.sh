@@ -11,9 +11,9 @@ client_number="$3"
 append_type="$4"
 appender_id="$5"
 
-echo "Running intrusion detection appender on node $client_id with appender id $appender_id"
+echo "Running transaction analysis appender on node $client_id with appender id $appender_id"
 for ((i=0; i<$client_number; i++)); do
-  cmd="sudo /usr/local/go/bin/go run ../../applications/vanilla_applications/intrusion_detection/intrusion_detection_generator.go $appender_id $append_type $i"
+  cmd="sudo /usr/local/go/bin/go run ../../applications/vanilla_applications/transaction_analysis/transaction_analysis_generator.go $appender_id $append_type $i"
   $cmd &
 done
 
