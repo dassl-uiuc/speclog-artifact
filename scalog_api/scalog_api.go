@@ -96,6 +96,18 @@ func (s *Scalog) AppendOne(record string) int64 {
 	return gsn
 }
 
+func (s *Scalog) FilterAppendOne(record string, recordId int32, nodeId string) int64 {
+	startTime := time.Now()
+	gsn, _, err := s.client.FilterAppendOne(record, recordId, nodeId)
+	if err != nil {
+		log.Errorf("%v", err)
+	}
+	s.Stats.AppendStartTime[gsn] = startTime
+	s.Stats.AppendEndTime[gsn] = time.Now()
+
+	return gsn
+}
+
 func (s *Scalog) Append(record string) error {
 	// first call creates rate limiter
 	if s.rateLimiter == nil {
@@ -110,6 +122,28 @@ func (s *Scalog) Append(record string) error {
 	}
 
 	_, _, err = s.client.Append(record)
+	if err != nil {
+		log.Errorf("%v", err)
+	}
+	s.Stats.AppendStartTimeChan <- time.Now()
+
+	return err
+}
+
+func (s *Scalog) FilterAppend(record string, recordId int32, nodeId string) error {
+	// first call creates rate limiter
+	if s.rateLimiter == nil {
+		s.rateLimiter = rateLimiter.NewLimiter(rateLimiter.Limit(s.rate), 1)
+		// start ack thread
+		go s.Ack()
+	}
+
+	err := s.rateLimiter.Wait(context.Background())
+	if err != nil {
+		return fmt.Errorf("rate limiter error: %v", err)
+	}
+
+	_, _, err = s.client.FilterAppend(record, recordId, nodeId)
 	if err != nil {
 		log.Errorf("%v", err)
 	}
@@ -163,8 +197,50 @@ func (s *Scalog) SubscribeToAssignedShardThread(readerId int32, startGsn int64) 
 	}
 }
 
+func (s *Scalog) FilterSubscribeThread(startGsn int64, readerId int32, filterValue int32, nodeId string) {
+	stream, conf, err := s.client.FilterSubscribe(startGsn, readerId, filterValue)
+	if err != nil {
+		log.Errorf("%v", err)
+	}
+	s.stopConf = make(chan bool)
+	go s.ConfirmationThread(conf)
+	prevGsn := int64(-1)
+
+	for {
+		select {
+		case <-s.Stop:
+			close(s.stopConf)
+			return
+		case r := <-stream:
+			if r.GSN != prevGsn+1 {
+				log.Errorf("[scalog_api]: out of order record: %v", r.GSN)
+			}
+			prevGsn = r.GSN
+
+			// This means we received a "dummy" record that was used for ordering or we received a hole
+			if r.Record == "" || r.Record == "0xDEADBEEF" {
+				continue
+			} else {
+				index := atomic.LoadInt64(&s.atomicInt)
+				s.records[index] = r
+				atomic.AddInt64(&s.atomicInt, 1)
+
+				if nodeId == r.NodeID {
+					s.Stats.DeliveryTime[r.GSN] = time.Now()
+				}
+
+				continue
+			}
+		}
+	}
+}
+
 func (s *Scalog) SubscribeToAssignedShard(readerId int32, startGsn int64) {
 	go s.SubscribeToAssignedShardThread(readerId, startGsn)
+}
+
+func (s *Scalog) FilterSubscribe(startGsn int64, readerId int32, filterValue int32, nodeId string) {
+	go s.FilterSubscribeThread(startGsn, readerId, filterValue, nodeId)
 }
 
 func (s *Scalog) SubscribeThread(startGsn int64) {

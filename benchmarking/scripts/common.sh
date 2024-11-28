@@ -12,6 +12,8 @@ data_pri=("node3" "node5" "node7" "node9" "node11")
 data_sec=("node4" "node6" "node8" "node10" "node12")
 
 client_nodes=("node13" "node14" "node15")
+intrusion_detection_dir="../../applications/vanilla_applications/intrusion_detection"
+transaction_analysis_dir="../../applications/vanilla_applications/transaction_analysis"
 
 batching_intervals=("1ms")
 
@@ -184,4 +186,12 @@ start_intrusion_detection_clients() {
 start_intrusion_detection_generator_clients() {
     # echo "Executing: ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 'cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_generator_client.sh $1 $2 $3 $4 $5> ${LOGDIR}/client_$1.log 2>&1'"
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $intrusion_detection_dir/intrusion_detection_generator_client.sh $1 $2 $3 $4 $5 > ${LOGDIR}/client_writer_$1 2>&1" &
+}
+
+start_transaction_analysis_clients() {
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $transaction_analysis_dir/transaction_analysis_client.sh $1 $2 $3 $4 > ${LOGDIR}/client_reader_$1_$4.log 2>&1" &
+}
+
+start_transaction_analysis_generator_clients() {
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $transaction_analysis_dir/transaction_analysis_generator_client.sh $1 $2 $3 $4 $5 > ${LOGDIR}/client_writer_$1_$5.log 2>&1" &
 }

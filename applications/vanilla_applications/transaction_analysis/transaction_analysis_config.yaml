@@ -1,0 +1,4 @@
+num-read-clients: 2
+num-append-clients: 20
+consume-run-time: 240
+produce-run-time: 245
