@@ -94,9 +94,9 @@ func (s *Scalog) AppendOne(record string) int64 {
 	return gsn
 }
 
-func (s *Scalog) FilterAppendOne(record string, recordId int32, nodeId string) int64 {
+func (s *Scalog) FilterAppendOne(record string, recordId int32) int64 {
 	startTime := time.Now()
-	gsn, _, err := s.client.FilterAppendOne(record, recordId, nodeId)
+	gsn, _, err := s.client.FilterAppendOne(record, recordId)
 	if err != nil {
 		log.Errorf("%v", err)
 	}
@@ -128,7 +128,7 @@ func (s *Scalog) Append(record string) error {
 	return err
 }
 
-func (s *Scalog) FilterAppend(record string, recordId int32, nodeId string) error {
+func (s *Scalog) FilterAppend(record string, recordId int32) error {
 	// first call creates rate limiter
 	if s.rateLimiter == nil {
 		s.rateLimiter = rateLimiter.NewLimiter(rateLimiter.Limit(s.rate), 1)
@@ -141,7 +141,7 @@ func (s *Scalog) FilterAppend(record string, recordId int32, nodeId string) erro
 		return fmt.Errorf("rate limiter error: %v", err)
 	}
 
-	_, _, err = s.client.FilterAppend(record, recordId, nodeId)
+	_, _, err = s.client.FilterAppend(record, recordId)
 	if err != nil {
 		log.Errorf("%v", err)
 	}
@@ -203,7 +203,7 @@ func (s *Scalog) Subscribe(startGsn int64) {
 	go s.SubscribeThread(startGsn)
 }
 
-func (s *Scalog) FilterSubscribeThread(startGsn int64, readerId int32, filterValue int32, nodeId string) {
+func (s *Scalog) FilterSubscribeThread(startGsn int64, readerId int32, filterValue int32) {
 	stream, err := s.client.FilterSubscribe(startGsn, readerId, filterValue)
 	if err != nil {
 		log.Errorf("%v", err)
@@ -227,10 +227,7 @@ func (s *Scalog) FilterSubscribeThread(startGsn int64, readerId int32, filterVal
 				index := atomic.LoadInt64(&s.atomicInt)
 				s.records[index] = r
 				atomic.AddInt64(&s.atomicInt, 1)
-
-				if nodeId == r.NodeID {
-					s.Stats.DeliveryTime[r.GSN] = time.Now()
-				}
+				s.Stats.DeliveryTime[r.GSN] = time.Now()
 				
 				continue
 			}
@@ -238,8 +235,8 @@ func (s *Scalog) FilterSubscribeThread(startGsn int64, readerId int32, filterVal
 	}
 }
 
-func (s *Scalog) FilterSubscribe(startGsn int64, readerId int32, filterValue int32, nodeId string) {
-	go s.FilterSubscribeThread(startGsn, readerId, filterValue, nodeId)
+func (s *Scalog) FilterSubscribe(startGsn int64, readerId int32, filterValue int32) {
+	go s.FilterSubscribeThread(startGsn, readerId, filterValue)
 }
 
 // read desc in client/client.go

@@ -13,7 +13,8 @@ appender_id="$5"
 
 echo "Running transaction analysis appender on node $client_id with appender id $appender_id"
 for ((i=0; i<$client_number; i++)); do
-  cmd="sudo /usr/local/go/bin/go run ../../applications/vanilla_applications/transaction_analysis/transaction_analysis_generator.go $appender_id $append_type $i $client_id"
+  offset_for_sharding_policy=$(( $appender_id * $client_number + $i ))
+  cmd="sudo /usr/local/go/bin/go run ../../applications/vanilla_applications/transaction_analysis/transaction_analysis_generator.go $appender_id $append_type $i $offset_for_sharding_policy"
   $cmd &
 done
 

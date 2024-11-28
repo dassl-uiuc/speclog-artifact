@@ -20,7 +20,7 @@ var transactionAnalysisConfigFilePath = "../../applications/vanilla_applications
 func Compute() {
 }
 
-func TransactionAnalysisProcessing(readerId int32, clientNumber int, nodeId string) {
+func TransactionAnalysisProcessing(readerId int32, clientNumber int) {
 	// read configuration file
 	viper.SetConfigFile(transactionAnalysisConfigFilePath)
 	viper.AutomaticEnv()
@@ -34,7 +34,7 @@ func TransactionAnalysisProcessing(readerId int32, clientNumber int, nodeId stri
 	filterValue := numReadClients
 	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
 
-	scalogApi.FilterSubscribe(0, readerId, filterValue, nodeId)
+	scalogApi.FilterSubscribe(0, readerId, filterValue)
 
 	// var record map[string]interface{}
 	// Time used to keep track of the time to run wordcount
@@ -86,9 +86,7 @@ func TransactionAnalysisProcessing(readerId int32, clientNumber int, nodeId stri
 			// Iterate through committed records
 			timestamp := time.Now().UnixNano()
 			for _, record := range committedRecords {
-				if record.NodeID == nodeId {
-					computeE2eEndTimes[record.GSN] = timestamp
-				}
+				computeE2eEndTimes[record.GSN] = timestamp
 
 				recordsReceived++
 			}
@@ -214,8 +212,8 @@ func TransactionAnalysisProcessing(readerId int32, clientNumber int, nodeId stri
 func main() {
 	fmt.Println("Running transaction analysis application")
 
-	if len(os.Args) < 4 {
-		fmt.Println("Usage: go run transaction_analysis.go <reader_id> <client_number> <node_id>")
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: go run transaction_analysis.go <reader_id> <client_number>")
 		return
 	}
 
@@ -231,7 +229,5 @@ func main() {
 		return
 	}
 
-	nodeId := os.Args[3]
-
-	TransactionAnalysisProcessing(int32(readerId), clientNumber, nodeId)
+	TransactionAnalysisProcessing(int32(readerId), clientNumber)
 }
