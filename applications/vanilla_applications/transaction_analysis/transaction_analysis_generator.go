@@ -17,7 +17,7 @@ import (
 
 var transactionAnalysisConfigFilePath = "../../applications/vanilla_applications/transaction_analysis/transaction_analysis_config.yaml"
 
-func Append_One_Ping(appenderId int32, clientNumber int) {
+func Append_One_Ping(appenderId int32, clientNumber int, nodeId string) {
 	// read configuration file
 	viper.SetConfigFile(transactionAnalysisConfigFilePath)
 	viper.AutomaticEnv()
@@ -39,7 +39,7 @@ func Append_One_Ping(appenderId int32, clientNumber int) {
 			return
 		}
 
-		scalogApi.FilterAppendOne(record, appenderId)
+		scalogApi.FilterAppendOne(record, appenderId, nodeId)
 
 		recordsProduced++
 	}
@@ -50,7 +50,7 @@ func Append_One_Ping(appenderId int32, clientNumber int) {
 	WriteStats(recordsProduced, startThroughputTimer, endThroughputTimer, appenderId, clientNumber, scalogApi)
 }
 
-func Append_Stream_Ping(appenderId int32, clientNumber int) {
+func Append_Stream_Ping(appenderId int32, clientNumber int, nodeId string) {
 	// read configuration file
 	viper.SetConfigFile(transactionAnalysisConfigFilePath)
 	viper.AutomaticEnv()
@@ -75,7 +75,7 @@ func Append_Stream_Ping(appenderId int32, clientNumber int) {
 		}
 
 		recordId := int32(rand.Int31n(numReadClients))
-		scalogApi.FilterAppend(record, recordId)
+		scalogApi.FilterAppend(record, recordId, nodeId)
 
 		recordsProduced++
 	}
@@ -137,8 +137,8 @@ func WriteStats(recordsProduced int, startThroughputTimer int64, endThroughputTi
 func main() {
 	fmt.Println("Running transaction analysis generator")
 
-	if len(os.Args) < 4 {
-		fmt.Println("Usage: go run transaction_analysis_generator.go <appender_id> <append_type> <client_number>")
+	if len(os.Args) < 5 {
+		fmt.Println("Usage: go run transaction_analysis_generator.go <appender_id> <append_type> <client_number> <node_id>")
 		return
 	}
 
@@ -160,9 +160,11 @@ func main() {
 		return
 	}
 
+	nodeId := os.Args[4]
+
 	if appendType == 0 {
-		Append_One_Ping(int32(appenderId), clientNumber)
+		Append_One_Ping(int32(appenderId), clientNumber, nodeId)
 	} else {
-		Append_Stream_Ping(int32(appenderId), clientNumber)
+		Append_Stream_Ping(int32(appenderId), clientNumber, nodeId)
 	}
 }

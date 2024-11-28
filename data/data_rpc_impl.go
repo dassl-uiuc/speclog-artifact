@@ -160,7 +160,7 @@ func (s *DataServer) FilterSubscribe(gsn *datapb.FilterGlobalSN, stream datapb.D
 	}
 	s.newClientSubscribersChan <- clientSub
 
-	missedRecords := make([]int64, 10000)
+	missedRecords := make([]int64, 10000000)
 	numMissedRecords := 0
 	for sub := range subC {
 		if (sub.RecordID % gsn.FilterValue) == gsn.ReaderID {

@@ -35,6 +35,7 @@ type tuple struct {
 type CommittedRecord struct {
 	GSN    int64
 	Record string
+	NodeID string
 }
 
 type Client struct {
@@ -401,13 +402,14 @@ func (c *Client) AppendToAssignedShard(appenderId int32, record string) (int64, 
 	return 0, 0, nil
 }
 
-func (c *Client) FilterAppend(record string, recordId int32) (int64, int32, error) {
+func (c *Client) FilterAppend(record string, recordId int32, nodeId string) (int64, int32, error) {
 	c.outstandingRequestsChan <- true
 	r := &datapb.Record{
 		ClientID: c.clientID,
 		ClientSN: c.getNextClientSN(),
 		Record:   record,
 		RecordID: recordId,
+		NodeID:  nodeId,
 	}
 	c.appendC <- r
 	return 0, 0, nil
@@ -434,12 +436,13 @@ func (c *Client) AppendOneToAssignedShard(appenderId int32, record string) (int6
 	return ack.GlobalSN, ack.ShardID, nil
 }
 
-func (c *Client) FilterAppendOne(record string, recordId int32) (int64, int32, error) {
+func (c *Client) FilterAppendOne(record string, recordId int32, nodeId string) (int64, int32, error) {
 	r := &datapb.Record{
 		ClientID: c.clientID,
 		ClientSN: c.getNextClientSN(),
 		Record:   record,
 		RecordID: recordId,
+		NodeID:  nodeId,
 	}
 	shard, replica := c.shardingPolicy.Shard(c.view, record)
 	// log.Infof("shard: %v, replica: %v\n", shard, replica)
@@ -565,6 +568,7 @@ func (c *Client) filterSubscribeShardServer(shard, replica int32, readerId int32
 		c.committedRecords[record.GlobalSN] = CommittedRecord{
 			GSN:    record.GlobalSN,
 			Record: record.Record,
+			NodeID: record.NodeID,
 		}
 		if record.GlobalSN == c.nextGSN {
 			c.respondToClient()

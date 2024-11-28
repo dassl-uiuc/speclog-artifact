@@ -12,7 +12,7 @@ reader_id="$4"
 
 echo "Running transaction analysis reader on node $client_id with reader id $reader_id"
 for ((i=0; i<$client_number; i++)); do
-  cmd="sudo /usr/local/go/bin/go run ../../applications/vanilla_applications/transaction_analysis/transaction_analysis.go $reader_id $i"
+  cmd="sudo /usr/local/go/bin/go run ../../applications/vanilla_applications/transaction_analysis/transaction_analysis.go $reader_id $i $client_id"
   $cmd &
 done
 
