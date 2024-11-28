@@ -28,7 +28,6 @@ message Record {
 	int32 appenderID = 10;
 	int32 recordID = 11; // For filtering
 	repeated int64 missedRecords = 12; // For filtering
-	string nodeID = 13; // For sampling
 }
 
 message Ack {

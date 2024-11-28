@@ -40,7 +40,6 @@ type SpeculationConf struct {
 type CommittedRecord struct {
 	GSN    int64
 	Record string
-	NodeID string // Used for sampling
 }
 
 type Client struct {
@@ -391,7 +390,7 @@ func (c *Client) Append(record string) (int64, int32, error) {
 	return 0, 0, nil
 }
 
-func (c *Client) FilterAppend(record string, recordId int32, nodeId string) (int64, int32, error) {
+func (c *Client) FilterAppend(record string, recordId int32) (int64, int32, error) {
 	select {
 	case c.outstandingRequestsChan <- true:
 	case <-time.After(1 * time.Second):
@@ -403,7 +402,6 @@ func (c *Client) FilterAppend(record string, recordId int32, nodeId string) (int
 		ClientSN: c.getNextClientSN(),
 		Record:   record,
 		RecordID: recordId,
-		NodeID:  nodeId,
 	}
 	c.appendC <- r
 	return 0, 0, nil
@@ -455,13 +453,12 @@ func (c *Client) AppendOne(record string) (int64, int32, error) {
 	return ack.GlobalSN, ack.ShardID, nil
 }
 
-func (c *Client) FilterAppendOne(record string, recordId int32, nodeId string) (int64, int32, error) {
+func (c *Client) FilterAppendOne(record string, recordId int32) (int64, int32, error) {
 	r := &datapb.Record{
 		ClientID: c.clientID,
 		ClientSN: c.getNextClientSN(),
 		Record:   record,
 		RecordID: recordId,
-		NodeID:  nodeId,
 	}
 	shard, replica := c.shardingPolicy.Shard(c.view, record)
 	// log.Infof("shard: %v, replica: %v\n", shard, replica)
@@ -681,7 +678,6 @@ func (c *Client) filterSubscribeShardServer(shard, replica int32, readerId int32
 			c.committedRecords[record.GlobalSN] = CommittedRecord{
 				GSN:    record.GlobalSN,
 				Record: record.Record,
-				NodeID: record.NodeID,
 			}
 			if record.GlobalSN == c.nextGSN {
 				c.respondToClient()

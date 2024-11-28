@@ -17,7 +17,7 @@ import (
 
 var transactionAnalysisConfigFilePath = "../../applications/vanilla_applications/transaction_analysis/transaction_analysis_config.yaml"
 
-func Append_One_Ping(appenderId int32, clientNumber int, nodeId string) {
+func Append_One_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy int) {
 	// read configuration file
 	viper.SetConfigFile(transactionAnalysisConfigFilePath)
 	viper.AutomaticEnv()
@@ -26,8 +26,9 @@ func Append_One_Ping(appenderId int32, clientNumber int, nodeId string) {
 		fmt.Println("read config file error: %v", err)
 	}
 	runTime := int64(viper.GetInt("produce-run-time"))
+	// numReadClients := int32(viper.GetInt("num-read-clients"))
 
-	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
 
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
@@ -39,7 +40,8 @@ func Append_One_Ping(appenderId int32, clientNumber int, nodeId string) {
 			return
 		}
 
-		scalogApi.FilterAppendOne(record, appenderId, nodeId)
+		// recordId := int32(rand.Int31n(numReadClients))
+		scalogApi.FilterAppendOne(record, appenderId)
 
 		recordsProduced++
 	}
@@ -50,7 +52,7 @@ func Append_One_Ping(appenderId int32, clientNumber int, nodeId string) {
 	WriteStats(recordsProduced, startThroughputTimer, endThroughputTimer, appenderId, clientNumber, scalogApi)
 }
 
-func Append_Stream_Ping(appenderId int32, clientNumber int, nodeId string) {
+func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy int) {
 	// read configuration file
 	viper.SetConfigFile(transactionAnalysisConfigFilePath)
 	viper.AutomaticEnv()
@@ -59,10 +61,10 @@ func Append_Stream_Ping(appenderId int32, clientNumber int, nodeId string) {
 		fmt.Println("read config file error: %v", err)
 	}
 	runTime := int64(viper.GetInt("produce-run-time"))
-	numReadClients := int32(viper.GetInt("num-read-clients"))
+	// numReadClients := int32(viper.GetInt("num-read-clients"))
 
 	rand.Seed(time.Now().UnixNano())
-	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
 
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
@@ -74,8 +76,9 @@ func Append_Stream_Ping(appenderId int32, clientNumber int, nodeId string) {
 			return
 		}
 
-		recordId := int32(rand.Int31n(numReadClients))
-		scalogApi.FilterAppend(record, recordId, nodeId)
+		// recordId := int32(rand.Int31n(numReadClients))
+		// scalogApi.FilterAppend(record, recordId)
+		scalogApi.FilterAppend(record, appenderId)
 
 		recordsProduced++
 	}
@@ -138,7 +141,7 @@ func main() {
 	fmt.Println("Running transaction analysis generator")
 
 	if len(os.Args) < 5 {
-		fmt.Println("Usage: go run transaction_analysis_generator.go <appender_id> <append_type> <client_number> <node_id>")
+		fmt.Println("Usage: go run transaction_analysis_generator.go <appender_id> <append_type> <client_number> <offset_for_sharding_policy>")
 		return
 	}
 
@@ -160,11 +163,17 @@ func main() {
 		return
 	}
 
-	nodeId := os.Args[4]
+	offsetForShardingPolicy, err := strconv.Atoi(os.Args[4])
+	if err != nil {
+		fmt.Println("Invalid offset for sharding policy. It should be a number, err: ", err)
+		return
+	}
+
+	fmt.Println("Offset for sharding policy for appender ", appenderId, " is ", offsetForShardingPolicy)
 
 	if appendType == 0 {
-		Append_One_Ping(int32(appenderId), clientNumber, nodeId)
+		Append_One_Ping(int32(appenderId), clientNumber, offsetForShardingPolicy)
 	} else {
-		Append_Stream_Ping(int32(appenderId), clientNumber, nodeId)
+		Append_Stream_Ping(int32(appenderId), clientNumber, offsetForShardingPolicy)
 	}
 }
