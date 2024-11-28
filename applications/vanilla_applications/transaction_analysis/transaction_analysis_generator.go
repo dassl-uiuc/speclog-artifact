@@ -39,7 +39,7 @@ func Append_One_Ping(appenderId int32, clientNumber int) {
 			return
 		}
 
-		scalogApi.AppendOneToAssignedShard(appenderId, record)
+		scalogApi.FilterAppendOne(record, appenderId)
 
 		recordsProduced++
 	}
