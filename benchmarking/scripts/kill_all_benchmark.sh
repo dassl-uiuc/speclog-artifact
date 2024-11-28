@@ -3,3 +3,7 @@
 sudo pkill -f "append_bench"
 sudo pkill -f "sequential_read_bench"
 sudo pkill -f "single_client_e2e"
+sudo pkill -f "intrusion_detection_generator"
+sudo pkill -f "intrusion_detection_devices"
+sudo pkill -f "transaction_analysis"
+sudo pkill -f "transaction_analysis_generator"
