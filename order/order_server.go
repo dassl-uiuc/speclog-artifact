@@ -16,7 +16,9 @@ import (
 )
 
 const reconfigExpt bool = false
+const qcExpt bool = false
 const lagfixExpt bool = false
+const qcEnabled bool = true
 const lagfixEnabled bool = true
 const lagfixThres float64 = 0.03
 
@@ -62,7 +64,8 @@ func (s *OrderServer) getLowestLocalCutNum(lcs map[int32]*orderpb.LocalCut, wind
 }
 
 type RealTimeTput struct {
-	count atomic.Int64
+	count  atomic.Int64
+	IsHole bool
 }
 
 func (r *RealTimeTput) Add(delta int64) {
@@ -75,7 +78,11 @@ func (r *RealTimeTput) LoggerThread() {
 	prev := int64(0)
 	for range ticker.C {
 		count := r.count.Load()
-		log.Printf("[real-time tput]: %v ops/sec", float64(count-prev)/duration.Seconds())
+		if r.IsHole {
+			log.Printf("[real-time total tput]: %v ops/sec", float64(count-prev)/duration.Seconds())
+		} else {
+			log.Printf("[real-time tput]: %v ops/sec", float64(count-prev)/duration.Seconds())
+		}
 		prev = count
 	}
 }
@@ -88,6 +95,7 @@ type Stats struct {
 	diffCut                   float64
 	numLagFixes               map[int32]int64
 	RealTimeTput              RealTimeTput
+	RealTimeTotalTput         RealTimeTput                // includes holes
 	holesFilled               map[int32](map[int64]int64) // number of holes filled by each replica (1st int32) in each local cut id (1st int64)
 }
 
@@ -184,6 +192,9 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.prevQueueLength = make(map[int32]int64)
 	s.quota = make(map[int64]map[int32]int64)
 	s.localCutChangeWindow = 100
+	if !qcEnabled {
+		s.localCutChangeWindow = 1e9
+	}
 	s.replicasInReserve = make(map[int32]int64)
 	s.replicasStandby = make(map[int32]int64)
 	s.replicasFinalize = make(map[int32]int64)
@@ -210,8 +221,11 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.rnErrorC = errorC
 	s.rnSnapshotterReady = snapshotterReady
 	s.stats = Stats{}
-	if reconfigExpt {
+	s.stats.RealTimeTput.IsHole = false
+	s.stats.RealTimeTotalTput.IsHole = true
+	if reconfigExpt || qcExpt {
 		go s.stats.RealTimeTput.LoggerThread()
+		go s.stats.RealTimeTotalTput.LoggerThread()
 		s.stats.holesFilled = make(map[int32](map[int64]int64))
 	}
 	s.stats.numLagFixes = make(map[int32]int64)
@@ -308,6 +322,10 @@ func (s *OrderServer) getLags(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
 // logs the avg lag in cuts and returns true if there is a significant lag in the cuts
 // significance is currently defined as a maximum lag of 5% of the localCutChangeWindow or more
 func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
+	limit := float64(lagfixThres) * float64(s.localCutChangeWindow)
+	if lagfixEnabled && !qcEnabled {
+		limit = float64(lagfixThres) * float64(100)
+	}
 	maxLag := float64(0)
 	for _, lag := range lags {
 		if float64(lag) > maxLag {
@@ -315,12 +333,16 @@ func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
 		}
 	}
 	s.stats.diffCut += float64(maxLag)
-	return float64(maxLag) >= float64(lagfixThres)*float64(s.localCutChangeWindow)
+	return float64(maxLag) >= limit
 }
 
 func (s *OrderServer) getSignificantLags(lags *map[int32]int64) {
+	limit := float64(lagfixThres) * float64(s.localCutChangeWindow)
+	if lagfixEnabled && !qcEnabled {
+		limit = float64(lagfixThres) * float64(100)
+	}
 	for rid, lag := range *lags {
-		if float64(lag) < float64(lagfixThres)*float64(s.localCutChangeWindow) {
+		if float64(lag) < limit {
 			delete(*lags, rid)
 		} else {
 			if _, ok := s.stats.numLagFixes[rid]; !ok {
@@ -423,10 +445,11 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 
 	// uncomment for reconfig expt
 	// update records stat
-	if reconfigExpt {
+	if reconfigExpt || qcExpt {
 		totalCommitted := s.computeCutDiff(s.prevCut, ccut)
 		holesCommitted := s.getNumHolesCommitted(lowestWindowNum, lowestLocalCutNum)
 		s.stats.RealTimeTput.Add(totalCommitted - holesCommitted)
+		s.stats.RealTimeTotalTput.Add(totalCommitted)
 	}
 
 	if lowestWindowNum > s.processWindow {
@@ -453,7 +476,7 @@ func (s *OrderServer) isLastLagFixed(lastLag map[int32]int64) bool {
 
 func (s *OrderServer) getNewQuota(rid int32, lc *orderpb.LocalCut) int64 {
 	// the general idea here is to have very low tolerance for a higher period and moderate to high tolerance to a lower avg cut period
-	if !lagfixExpt {
+	if qcEnabled {
 		defaultFreq := float64(1e9 / s.batchingInterval.Nanoseconds())
 		currentFreq := float64(1e9 / s.avgDelta[rid].Avg())
 
@@ -498,7 +521,7 @@ func (s *OrderServer) processReport() {
 						}
 					}
 					if valid {
-						if lagfixExpt {
+						if lagfixExpt || qcExpt {
 							log.Printf("%v", lc)
 						}
 						if !e.FixingLag {
@@ -532,7 +555,7 @@ func (s *OrderServer) processReport() {
 
 						lcs[id] = lc
 
-						if reconfigExpt {
+						if reconfigExpt || qcExpt {
 							// update hole stats
 							if _, ok := s.stats.holesFilled[id]; !ok {
 								s.stats.holesFilled[id] = make(map[int64]int64)
@@ -725,15 +748,17 @@ func (s *OrderServer) processReport() {
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
 				}
 
-				if lagfixEnabled && s.isSignificantLag(lags) {
-					if lastLag == nil || s.isLastLagFixed(lastLag) {
-						if lagfixExpt {
-							log.Printf("significant lag in cuts: %v", lags)
+				if lagfixEnabled {
+					if s.isSignificantLag(lags) {
+						if lastLag == nil || s.isLastLagFixed(lastLag) {
+							if lagfixExpt {
+								log.Printf("significant lag in cuts: %v", lags)
+							}
+							ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
+							s.getSignificantLags(&lags)
+							ce.CommittedCut.AdjustmentSignal.Lag = lags
+							lastLag = lags
 						}
-						ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
-						s.getSignificantLags(&lags)
-						ce.CommittedCut.AdjustmentSignal.Lag = lags
-						lastLag = lags
 					}
 				}
 
@@ -761,7 +786,7 @@ func (s *OrderServer) processReport() {
 func (s *OrderServer) processCommit() {
 	for e := range s.commitC {
 		if s.isLeader {
-			if reconfigExpt || lagfixExpt {
+			if lagfixExpt || reconfigExpt || qcExpt {
 				log.Printf("%v", e)
 			} else {
 				log.Debugf("%v", e)

@@ -21,6 +21,12 @@ import (
 const backendOnly = false
 const reconfigExpt bool = false
 const lagfixExpt bool = false
+const qcExpt bool = false
+const qcEnabled bool = true
+
+var qcBurstLSN int64 = -1
+var qcBurstLocalCutNumber int64 = -1
+var qcBurstWindowNumber int64 = -1
 
 type clientSubscriber struct {
 	state    clientSubscriberState
@@ -248,13 +254,17 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.views = make(map[int64]int32)
 	// s.outstandingCuts = make(chan bool, 2)
 
-	if lagfixExpt {
-		s.quota = 3
-	} else {
-		s.quota = 10
-	}
+	s.quota = 10
 	s.localCutNum = -1
 	s.numLocalCutsThreshold = 100
+	if !qcEnabled {
+		if lagfixExpt {
+			s.quota = 3
+		} else {
+			s.quota = 5
+		}
+		s.numLocalCutsThreshold = 1e9
+	}
 	s.waitForNewQuota = make(chan int64, 4096)
 
 	s.windowNumber = -1
@@ -773,6 +783,13 @@ func (s *DataServer) processSelfReplicate() {
 			}
 		}
 
+		if qcExpt {
+			if record.ClientID != s.holeID && record.Record[0] == 'b' && qcBurstLSN == -1 {
+				qcBurstLSN = lsn
+				log.Printf("first burst record stored with lsn %v", lsn)
+			}
+		}
+
 		// send the record on the speculative read channel
 		s.speculativeSubC <- record
 	}
@@ -922,6 +939,13 @@ func (s *DataServer) reportLocalCut() {
 				s.stats.numCuts += 1
 
 				s.localCutNum += 1
+				if qcExpt {
+					if qcBurstLSN != -1 && s.prevSentLocalCut+s.quota > qcBurstLSN && qcBurstLocalCutNumber == -1 {
+						qcBurstLocalCutNumber = s.localCutNum
+						qcBurstWindowNumber = s.windowNumber
+						log.Printf("burst local cut number %v, window num %v", qcBurstLocalCutNumber, qcBurstWindowNumber)
+					}
+				}
 				lcs.Cuts[0].LocalCutNum = s.localCutNum
 				lcs.Cuts[0].Quota = s.quota
 
@@ -1009,6 +1033,14 @@ func (s *DataServer) reportLocalCut() {
 				}
 				numEntries += int64(s.quota)
 				lcs.Cuts[i-1].Cut[s.replicaID] = s.prevSentLocalCut + numEntries
+
+				if qcExpt {
+					if qcBurstLSN != -1 && s.prevSentLocalCut+numEntries > qcBurstLSN && qcBurstLocalCutNumber == -1 {
+						qcBurstLocalCutNumber = s.localCutNum
+						qcBurstWindowNumber = s.windowNumber
+						log.Printf("burst local cut number %v, window num %v", qcBurstLocalCutNumber, qcBurstWindowNumber)
+					}
+				}
 
 				if i == lag {
 					lcs.Cuts[i-1].Feedback.FixedLag = true
