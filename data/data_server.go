@@ -15,6 +15,7 @@ import (
 	"github.com/scalog/scalog/order/orderpb"
 	"github.com/scalog/scalog/pkg/address"
 	"github.com/scalog/scalog/storage"
+	rateLimiter "golang.org/x/time/rate"
 	"google.golang.org/grpc"
 )
 
@@ -361,25 +362,26 @@ func (s *DataServer) ConnPeers() error {
 
 func (s *DataServer) Start() {
 	for i := 0; i < 100; i++ {
-		err := s.ConnPeers()
-		if err != nil {
-			log.Errorf("%v", err)
-			time.Sleep(time.Second)
-			continue
-		}
+		// err := s.ConnPeers()
+		// if err != nil {
+		// 	log.Errorf("%v", err)
+		// 	time.Sleep(time.Second)
+		// 	continue
+		// }
 		go s.processAppend()
-		go s.processReplicate()
+		// go s.processReplicate()
 		go s.processSelfReplicate()
-		go s.processAck()
+		// go s.processAck()
 		go s.processCommittedEntry()
 		go s.reportLocalCut()
 		go s.receiveCommittedCut()
 		go s.processNewSubscribers()
 		go s.processLiveSubscribe()
 		go s.processSpeculativeSubscribes()
-		if reconfigExpt {
-			go s.finalizeShardStandby()
-		}
+		// if reconfigExpt {
+		// 	go s.finalizeShardStandby()
+		// }
+		go s.emulationLoadGenerator(10000, 120)
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)
@@ -561,6 +563,20 @@ func (s *DataServer) confirmReplication(client *datapb.Data_ReplicateClient) {
 	}
 }
 
+// simulate writing to storage and replication
+func (s *DataServer) mockStorageAndReplication(recordID int64) {
+	// TODO: sleep for here to simulate disk write and replication
+	// currently sleeping for 0.6ms
+	sleepDuration := 600 * time.Microsecond
+	startTS := time.Now()
+	for time.Since(startTS) < sleepDuration {
+	}
+
+	s.replicateConfMu.RLock()
+	s.replicateConfWg[recordID].Done()
+	s.replicateConfMu.RUnlock()
+}
+
 // processAppend sends records to replicateC and replicates them to peers
 func (s *DataServer) processAppend() {
 	for record := range s.appendC {
@@ -570,7 +586,7 @@ func (s *DataServer) processAppend() {
 		id := int64(record.ClientID)<<32 + int64(record.ClientSN)
 		s.replicateConfMu.Lock()
 		s.replicateConfWg[id] = &sync.WaitGroup{}
-		s.replicateConfWg[id].Add(int(s.numReplica - 1))
+		s.replicateConfWg[id].Add(1)
 		if record.ClientID == s.holeID {
 			s.replicateCountDown[id] = int(record.NumHoles)
 		}
@@ -580,12 +596,14 @@ func (s *DataServer) processAppend() {
 		s.replStartTime[id] = time.Now()
 		s.replMu.Unlock()
 
-		for i, c := range s.replicateSendC {
-			if int32(i) != s.replicaID {
-				log.Debugf("Data forward to %v", i)
-				c <- record
-			}
-		}
+		// for i, c := range s.replicateSendC {
+		// 	if int32(i) != s.replicaID {
+		// 		log.Debugf("Data forward to %v", i)
+		// 		c <- record
+		// 	}
+		// }
+		go s.mockStorageAndReplication(id)
+
 		// only write one record even if there are multiple holes
 		s.selfReplicateC <- record
 	}
@@ -691,14 +709,15 @@ func (s *DataServer) processSpeculativeSubscribes() {
 
 // processSelfReplicate writes my own records to local storage
 func (s *DataServer) processSelfReplicate() {
+	var lsn int64
+	lsn = 0
 	for record := range s.selfReplicateC {
-		// log.Debugf("Data %v,%v process", s.shardID, s.replicaID)
-		var lsn int64
-		var err error
-		lsn, err = s.storage.WriteToPartition(record.LocalReplicaID, record.Record, record.NumHoles)
-		if err != nil {
-			log.Fatalf("Write to storage failed: %v", err)
-		}
+		// var lsn int64
+		// var err error
+		// lsn, err = s.storage.WriteToPartition(record.LocalReplicaID, record.Record, record.NumHoles)
+		// if err != nil {
+		// 	log.Fatalf("Write to storage failed: %v", err)
+		// }
 
 		// wait for confirmation from all peers
 		if record.ClientID == s.holeID {
@@ -730,23 +749,23 @@ func (s *DataServer) processSelfReplicate() {
 			s.replicateConfMu.Unlock()
 		}
 
-		if backendOnly {
-			id := int64(record.ClientID)<<32 + int64(record.ClientSN)
-			s.waitMu.RLock()
-			c, ok := s.wait[id]
-			s.waitMu.RUnlock()
-			if ok {
-				ack := &datapb.Ack{
-					ClientID:       record.ClientID,
-					ClientSN:       record.ClientSN,
-					ShardID:        s.shardID,
-					LocalReplicaID: s.replicaID,
-					ViewID:         s.viewID,
-					GlobalSN:       0,
-				}
-				c <- ack
-			}
-		}
+		// if backendOnly {
+		// 	id := int64(record.ClientID)<<32 + int64(record.ClientSN)
+		// 	s.waitMu.RLock()
+		// 	c, ok := s.wait[id]
+		// 	s.waitMu.RUnlock()
+		// 	if ok {
+		// 		ack := &datapb.Ack{
+		// 			ClientID:       record.ClientID,
+		// 			ClientSN:       record.ClientSN,
+		// 			ShardID:        s.shardID,
+		// 			LocalReplicaID: s.replicaID,
+		// 			ViewID:         s.viewID,
+		// 			GlobalSN:       0,
+		// 		}
+		// 		c <- ack
+		// 	}
+		// }
 
 		s.recordsMu.Lock()
 		if record.NumHoles == 0 {
@@ -792,6 +811,8 @@ func (s *DataServer) processSelfReplicate() {
 
 		// send the record on the speculative read channel
 		s.speculativeSubC <- record
+
+		lsn = s.localCut.Load()
 	}
 }
 
@@ -1292,11 +1313,12 @@ func (s *DataServer) processCommittedEntry() {
 						}
 						if diff > 0 {
 							diff := int32(s.quotas[s.nextExpectedWindowNum][rid])
-							err := s.storage.Assign(i, start, diff, startGSN)
-							if err != nil {
-								log.Errorf("Assign GSN to storage error: %v", err)
-								continue
-							}
+							// TODO: maybe add a sleep here?
+							// err := s.storage.Assign(i, start, diff, startGSN)
+							// if err != nil {
+							// 	log.Errorf("Assign GSN to storage error: %v", err)
+							// 	continue
+							// }
 							if i == s.replicaID {
 								for j := int32(0); j < diff; j++ {
 									s.recordsMu.Lock()
@@ -1311,18 +1333,18 @@ func (s *DataServer) processCommittedEntry() {
 									}
 
 									// reply back to clients only for non-holes
-									if record.ClientID != s.holeID {
-										ack := &datapb.Ack{
-											ClientID:       record.ClientID,
-											ClientSN:       record.ClientSN,
-											ShardID:        s.shardID,
-											LocalReplicaID: s.replicaID,
-											ViewID:         s.viewID,
-											GlobalSN:       startGSN + int64(j),
-										}
+									// if record.ClientID != s.holeID {
+									// 	ack := &datapb.Ack{
+									// 		ClientID:       record.ClientID,
+									// 		ClientSN:       record.ClientSN,
+									// 		ShardID:        s.shardID,
+									// 		LocalReplicaID: s.replicaID,
+									// 		ViewID:         s.viewID,
+									// 		GlobalSN:       startGSN + int64(j),
+									// 	}
 
-										s.ackC <- ack
-									}
+									// 	s.ackC <- ack
+									// }
 
 									// verify speculated records
 									s.committedRecordsMu.RLock()
@@ -1446,4 +1468,31 @@ func (s *DataServer) WaitForAck(cid, csn int32) *datapb.Ack {
 	delete(s.wait, id)
 	s.waitMu.Unlock()
 	return ack
+}
+
+func (s *DataServer) emulationLoadGenerator(rate int, runtimeSecs int) {
+	// sleep for 10s before starting anything
+	time.Sleep(10 * time.Second)
+
+	timer := time.NewTimer(time.Duration(runtimeSecs) * time.Second)
+	rlim := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 1)
+	clientID := s.generateClientIDForHole() // generate a new random id
+	clientSN := int32(0)                    // start with 0
+	for {
+		select {
+		case <-timer.C:
+			return
+		default:
+			rlim.WaitN(context.Background(), 1)
+			record := &datapb.Record{
+				ClientID: clientID,
+				ClientSN: clientSN,
+				Record:   "", // does not matter
+				NumHoles: 0,  // does not matter
+			}
+			s.appendC <- record
+			s.recordsInSystem.Add(1)
+			clientSN++
+		}
+	}
 }

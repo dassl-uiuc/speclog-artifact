@@ -21,6 +21,7 @@ const lagfixExpt bool = false
 const qcEnabled bool = true
 const lagfixEnabled bool = true
 const lagfixThres float64 = 0.03
+const emulation bool = false
 
 func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)
@@ -223,7 +224,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.stats = Stats{}
 	s.stats.RealTimeTput.IsHole = false
 	s.stats.RealTimeTotalTput.IsHole = true
-	if reconfigExpt || qcExpt {
+	if reconfigExpt || qcExpt || emulation {
 		go s.stats.RealTimeTput.LoggerThread()
 		go s.stats.RealTimeTotalTput.LoggerThread()
 		s.stats.holesFilled = make(map[int32](map[int64]int64))
@@ -445,7 +446,7 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 
 	// uncomment for reconfig expt
 	// update records stat
-	if reconfigExpt || qcExpt {
+	if reconfigExpt || qcExpt || emulation {
 		totalCommitted := s.computeCutDiff(s.prevCut, ccut)
 		holesCommitted := s.getNumHolesCommitted(lowestWindowNum, lowestLocalCutNum)
 		s.stats.RealTimeTput.Add(totalCommitted - holesCommitted)
@@ -476,18 +477,18 @@ func (s *OrderServer) isLastLagFixed(lastLag map[int32]int64) bool {
 
 func (s *OrderServer) getNewQuota(rid int32, lc *orderpb.LocalCut) int64 {
 	// the general idea here is to have very low tolerance for a higher period and moderate to high tolerance to a lower avg cut period
-	if qcEnabled {
-		defaultFreq := float64(1e9 / s.batchingInterval.Nanoseconds())
-		currentFreq := float64(1e9 / s.avgDelta[rid].Avg())
+	// if qcEnabled {
+	// 	defaultFreq := float64(1e9 / s.batchingInterval.Nanoseconds())
+	// 	currentFreq := float64(1e9 / s.avgDelta[rid].Avg())
 
-		if math.Abs(currentFreq-defaultFreq) > 0.05*defaultFreq {
-			newQuota := int64(math.Ceil(float64(lc.Quota) * currentFreq / defaultFreq))
-			if newQuota < 1 {
-				newQuota = 1
-			}
-			return newQuota
-		}
-	}
+	// 	if math.Abs(currentFreq-defaultFreq) > 0.05*defaultFreq {
+	// 		newQuota := int64(math.Ceil(float64(lc.Quota) * currentFreq / defaultFreq))
+	// 		if newQuota < 1 {
+	// 			newQuota = 1
+	// 		}
+	// 		return newQuota
+	// 	}
+	// }
 	return lc.Quota
 }
 
@@ -555,7 +556,7 @@ func (s *OrderServer) processReport() {
 
 						lcs[id] = lc
 
-						if reconfigExpt || qcExpt {
+						if reconfigExpt || qcExpt || emulation {
 							// update hole stats
 							if _, ok := s.stats.holesFilled[id]; !ok {
 								s.stats.holesFilled[id] = make(map[int64]int64)
