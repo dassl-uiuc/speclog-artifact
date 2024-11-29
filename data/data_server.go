@@ -59,8 +59,10 @@ type Stats struct {
 	totalCutsSent int64
 	numCuts       int64
 
-	totalReplicationTime int64
-	numRepl              int64
+	totalRecReplicationTime  float64
+	numRecRepl               float64
+	totalHoleReplicationTime float64
+	numHoleRepl              float64
 
 	avgLocalCutInterreportNs int64
 
@@ -86,8 +88,11 @@ func (s *Stats) printStats() {
 	if s.numCuts > 0 {
 		log.Printf("avg number of batches sent in each cut: %v", float64(s.totalCutsSent)/float64(s.numCuts))
 	}
-	if s.numRepl > 0 {
-		log.Printf("avg replication time in ms: %v", float64(s.totalReplicationTime)/float64(s.numRepl)/1e6)
+	if s.numRecRepl > 0 {
+		log.Printf("avg record replication time in ms: %v", float64(s.totalRecReplicationTime)/float64(s.numRecRepl)/1e6)
+	}
+	if s.numHoleRepl > 0 {
+		log.Printf("avg hole replication time in ms: %v", float64(s.totalHoleReplicationTime)/float64(s.numHoleRepl)/1e6)
 	}
 	if s.numCuts > 0 {
 		log.Printf("avg time between local cut reports in ms: %v", float64(s.avgLocalCutInterreportNs)/float64(s.numCuts)/1e6)
@@ -771,8 +776,13 @@ func (s *DataServer) processSelfReplicate() {
 		s.replMu.Lock()
 		id := int64(record.ClientID)<<32 + int64(record.ClientSN)
 		if startTime, ok := s.replStartTime[id]; ok {
-			s.stats.totalReplicationTime += time.Since(startTime).Nanoseconds()
-			s.stats.numRepl++
+			if record.ClientID != s.holeID {
+				s.stats.totalRecReplicationTime += float64(time.Since(startTime).Nanoseconds())
+				s.stats.numRecRepl++
+			} else {
+				s.stats.totalHoleReplicationTime += float64(time.Since(startTime).Nanoseconds())
+				s.stats.numHoleRepl++
+			}
 			delete(s.replStartTime, id)
 		}
 		s.replMu.Unlock()
