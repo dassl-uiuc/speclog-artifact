@@ -19,6 +19,7 @@ const reconfigExpt bool = false
 const lagfixExpt bool = false
 const lagfixEnabled bool = true
 const lagfixThres float64 = 0.03
+const lagfixTimeThresMs int64 = 50
 
 func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)
@@ -147,7 +148,8 @@ type OrderServer struct {
 	replicasConfirmFinalize map[int32]int64 // replicas waiting to be confirmed finalized
 	processWindow           int64           // window number till which quota has been processed
 	prevCutTime             map[int32]time.Time
-	startCommittedCut       map[int32]int64
+	startCommittedCut       map[int32]int64             // first committed cut in the window for each replica
+	committedCutInWindow    map[int64](map[int32]int64) // number of committed cuts in the window for each replica
 	// stats
 	stats Stats
 
@@ -191,6 +193,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.replicasConfirmFinalize = make(map[int32]int64)
 	s.assignWindow = 0
 	s.startCommittedCut = make(map[int32]int64)
+	s.committedCutInWindow = make(map[int64]map[int32]int64)
 	s.windowStartGSN = make(map[int64]int64)
 	s.processWindow = -1
 	s.prevLowestWindowNum = -1
@@ -279,11 +282,11 @@ func (s *OrderServer) adjustToMinimums(rid int32, lc *orderpb.LocalCut, windowNu
 	return adjustedCut
 }
 
-func (s *OrderServer) isReadyToAssignQuota() bool {
+func (s *OrderServer) isReadyToAssignQuota(failedNum int) bool {
 	if s.assignWindow == 0 {
 		return len(s.replicasInReserve) >= 2
 	}
-	return s.numQuotaChanged == int64(len(s.quota[s.assignWindow-1]))
+	return s.numQuotaChanged == int64(len(s.quota[s.assignWindow-1])-failedNum)
 }
 
 // this function finds the amount of lag in the cuts across all replicas
@@ -477,6 +480,7 @@ func (s *OrderServer) processReport() {
 	// if I send a lag signal, I should not send another one until the lag is resolved
 	// wait for 5 windows before sending another lag signal
 	var lastLag map[int32]int64
+	lastLagTime := make(map[int32]time.Time)
 	numCommittedCuts := int64(0)
 	ticker := time.NewTicker(s.batchingInterval)
 	var quotaStartTime time.Time
@@ -528,6 +532,8 @@ func (s *OrderServer) processReport() {
 						// when replica fixes lag, mark last lag as zero
 						if lc.Feedback.FixedLag {
 							lastLag[id] = 0
+							log.Debugf("replica %v lag fix takes %v ms", id, time.Since(lastLagTime[id]).Milliseconds())
+							delete(lastLagTime, id)
 						}
 
 						lcs[id] = lc
@@ -604,14 +610,46 @@ func (s *OrderServer) processReport() {
 			if s.isLeader { // compute committedCut
 				numCommittedCuts++
 				start := time.Now()
+				failedReplicas := make([]int32, 0)
+
+				for rid, t := range lastLagTime {
+					if time.Since(t).Milliseconds() >= lagfixTimeThresMs {
+						log.Printf("replica %v is DOWN! overtime %v", rid, time.Since(t).Milliseconds())
+						failedReplicas = append(failedReplicas, rid)
+						delete(lcs, rid)
+						delete(s.replicasInReserve, rid) // don't know if this is required, do it for safe
+						delete(lastLagTime, rid)
+					}
+				}
+
 				ccut := s.computeCommittedCut(lcs)
+				if s.assignWindow == 0 {
+					if _, ok := s.committedCutInWindow[0]; !ok {
+						s.committedCutInWindow[0] = make(map[int32]int64)
+					}
+					for rid, cut := range ccut {
+						s.committedCutInWindow[0][rid] = cut
+					}
+				} else {
+					if _, ok := s.committedCutInWindow[s.assignWindow]; !ok {
+						s.committedCutInWindow[s.assignWindow] = make(map[int32]int64)
+					}
+					for rid, cut := range ccut {
+						if _, ok := s.committedCutInWindow[s.assignWindow-1]; !ok {
+							s.committedCutInWindow[s.assignWindow][rid] = cut
+						} else {
+							s.committedCutInWindow[s.assignWindow][rid] = cut - s.committedCutInWindow[s.assignWindow-1][rid]
+						}
+					}
+				}
+
 				lags := s.getLags(lcs)
 				s.stats.timeToComputeCommittedCut += time.Since(start).Nanoseconds()
 				s.stats.numCommittedCuts++
 				vid := atomic.LoadInt32(&s.viewID)
 				var ce *orderpb.CommittedEntry
 
-				if s.isReadyToAssignQuota() {
+				if s.isReadyToAssignQuota(len(failedReplicas)) {
 					if s.assignWindow != 0 {
 						s.stats.timeToDecideQuota += time.Since(quotaStartTime).Nanoseconds()
 						s.stats.numQuotaDecisions++
@@ -683,11 +721,12 @@ func (s *OrderServer) processReport() {
 					if s.assignWindow == 0 {
 						s.windowStartGSN[s.assignWindow] = 0
 					} else {
-						sumQuotas := 0
-						for _, q := range s.quota[s.assignWindow-1] {
-							sumQuotas += int(q)
+						sumCommittedCutsPrevWindow := int64(0)
+						log.Printf("committed cuts in window %v: %v", s.assignWindow-1, s.committedCutInWindow[s.assignWindow-1])
+						for _, c := range s.committedCutInWindow[s.assignWindow-1] {
+							sumCommittedCutsPrevWindow += c
 						}
-						s.windowStartGSN[s.assignWindow] = s.windowStartGSN[s.assignWindow-1] + int64(sumQuotas)*s.localCutChangeWindow
+						s.windowStartGSN[s.assignWindow] = s.windowStartGSN[s.assignWindow-1] + sumCommittedCutsPrevWindow
 					}
 
 					// update start committed cut
@@ -719,10 +758,34 @@ func (s *OrderServer) processReport() {
 					// increment window
 					s.assignWindow++
 
-					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid, WindowStartGSN: s.windowStartGSN[s.assignWindow-1], PrevCut: prevCutHint}, FinalizeShards: finalizeEntry}
+					ce = &orderpb.CommittedEntry{
+						Seq:    0,
+						ViewID: vid,
+						CommittedCut: &orderpb.CommittedCut{
+							StartGSN:            s.startGSN,
+							Cut:                 ccut,
+							ShardQuotas:         quota,
+							IsShardQuotaUpdated: true,
+							WindowNum:           s.assignWindow - 1,
+							ViewID:              vid,
+							WindowStartGSN:      s.windowStartGSN[s.assignWindow-1],
+							PrevCut:             prevCutHint,
+						},
+						FinalizeShards: finalizeEntry,
+						FailedShards:   failedReplicas,
+					}
 					log.Printf("quota: %v", s.quota[s.assignWindow-1])
 				} else {
-					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
+					ce = &orderpb.CommittedEntry{
+						Seq:    0,
+						ViewID: vid,
+						CommittedCut: &orderpb.CommittedCut{
+							StartGSN: s.startGSN,
+							Cut:      ccut,
+						},
+						FinalizeShards: nil,
+						FailedShards:   failedReplicas,
+					}
 				}
 
 				if lagfixEnabled && s.isSignificantLag(lags) {
@@ -733,12 +796,18 @@ func (s *OrderServer) processReport() {
 						ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
 						s.getSignificantLags(&lags)
 						ce.CommittedCut.AdjustmentSignal.Lag = lags
+						log.Debugf("shards with significant lag: %v", lags)
 						lastLag = lags
+						now := time.Now()
+						for rid := range lags {
+							lastLagTime[rid] = now
+						}
 					}
 				}
 
 				s.proposeC <- ce
-				s.startGSN += s.computeCutDiff(s.prevCut, ccut)
+				// log.Printf("commit cut")
+				s.startGSN += s.computeCutDiff(s.prevCut, ccut) //?
 				s.prevCut = ccut
 			}
 		case <-printTicker.C:

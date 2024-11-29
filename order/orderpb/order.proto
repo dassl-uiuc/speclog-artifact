@@ -53,6 +53,7 @@ message CommittedEntry {
 	int32 viewID = 2;
 	CommittedCut committedCut = 3;
 	FinalizeEntry finalizeShards = 4;
+	repeated int32 failedShards = 5;
 }
 
 message FinalizeEntry {
