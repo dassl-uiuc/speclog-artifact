@@ -80,9 +80,9 @@ if [ "$mode" -eq 0 ]; then # append one experiment mode
         done
     done
 elif [ "$mode" -eq 1 ]; then # append experiment mode
-    clients=("20" "80" "80")
-    num_shards=("1" "4" "4")
-    rates=("1000" "1000" "1050")
+    clients=("40")
+    num_shards=("2")
+    rates=("1000")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
@@ -297,6 +297,10 @@ elif [ "$mode" -eq 6 ]; then
             collect_logs
         done
     done
+elif [ "$mode" -eq 7 ]; then
+    # kill shard 0 and 1
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY luoxh@${data_pri[0]} "sudo bash -s" < ./kill_all_goreman.sh
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY luoxh@${data_sec[0]} "sudo bash -s" < ./kill_all_goreman.sh
 else # cleanup logs
     clear_server_logs
     clear_client_logs

@@ -1,3 +1,3 @@
-sudo mkdir /users/sgbhat3/scalog-storage
-sudo /usr/local/etc/emulab/mkextrafs.pl -f /users/sgbhat3/scalog-storage
-sudo chown -R sgbhat3 /users/sgbhat3/scalog-storage
+sudo mkdir /users/luoxh/scalog-storage
+sudo /usr/local/etc/emulab/mkextrafs.pl -f /users/luoxh/scalog-storage
+sudo chown -R luoxh /users/luoxh/scalog-storage
