@@ -64,6 +64,9 @@ github.com/json-iterator/go
 # github.com/magiconair/properties v1.8.1
 ## explicit
 github.com/magiconair/properties
+# github.com/mattn/go-sqlite3 v1.14.24
+## explicit; go 1.19
+github.com/mattn/go-sqlite3
 # github.com/matttproud/golang_protobuf_extensions v1.0.1
 ## explicit
 github.com/matttproud/golang_protobuf_extensions/pbutil
@@ -119,6 +122,8 @@ github.com/spf13/pflag
 # github.com/spf13/viper v1.4.0
 ## explicit
 github.com/spf13/viper
+# github.com/tecbot/gorocksdb v0.0.0-20191217155057-f0fad39f321c
+## explicit
 # github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2
 ## explicit
 github.com/xiang90/probing
