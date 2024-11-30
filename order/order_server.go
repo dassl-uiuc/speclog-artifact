@@ -623,25 +623,6 @@ func (s *OrderServer) processReport() {
 				}
 
 				ccut := s.computeCommittedCut(lcs)
-				if s.assignWindow == 0 {
-					if _, ok := s.committedCutInWindow[0]; !ok {
-						s.committedCutInWindow[0] = make(map[int32]int64)
-					}
-					for rid, cut := range ccut {
-						s.committedCutInWindow[0][rid] = cut
-					}
-				} else {
-					if _, ok := s.committedCutInWindow[s.assignWindow]; !ok {
-						s.committedCutInWindow[s.assignWindow] = make(map[int32]int64)
-					}
-					for rid, cut := range ccut {
-						if _, ok := s.committedCutInWindow[s.assignWindow-1]; !ok {
-							s.committedCutInWindow[s.assignWindow][rid] = cut
-						} else {
-							s.committedCutInWindow[s.assignWindow][rid] = cut - s.committedCutInWindow[s.assignWindow-1][rid]
-						}
-					}
-				}
 
 				lags := s.getLags(lcs)
 				s.stats.timeToComputeCommittedCut += time.Since(start).Nanoseconds()
@@ -715,6 +696,27 @@ func (s *OrderServer) processReport() {
 						log.Printf("Incrementing view ID because shardFinalized: %v, incrViewId: %v", shardsFinalized, incrViewId)
 						atomic.AddInt32(&s.viewID, 1)
 						vid = atomic.LoadInt32(&s.viewID)
+					}
+
+					if s.assignWindow == 0 {
+						s.committedCutInWindow[0] = make(map[int32]int64)
+						for rid, cut := range ccut {
+							s.committedCutInWindow[0][rid] = cut
+						}
+					} else {
+						if _, ok := s.committedCutInWindow[s.assignWindow]; !ok {
+							s.committedCutInWindow[s.assignWindow] = make(map[int32]int64)
+						}
+
+						if _, ok := s.committedCutInWindow[s.assignWindow-1]; !ok {
+							for rid, cut := range ccut {
+								s.committedCutInWindow[s.assignWindow][rid] = cut
+							}
+						} else {
+							for rid, cut := range ccut {
+								s.committedCutInWindow[s.assignWindow][rid] = cut - s.prevCut[rid]
+							}
+						}
 					}
 
 					// update window start GSN
