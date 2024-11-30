@@ -263,7 +263,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.views = make(map[int64]int32)
 	// s.outstandingCuts = make(chan bool, 2)
 
-	s.emulationOutstandingLimit = 10000
+	s.emulationOutstandingLimit = 150
 	s.emulationOutstanding = make(chan bool, s.emulationOutstandingLimit)
 
 	s.quota = 10
@@ -392,7 +392,7 @@ func (s *DataServer) Start() {
 		// if reconfigExpt {
 		// 	go s.finalizeShardStandby()
 		// }
-		go s.emulationLoadGenerator(10100, 120)
+		go s.emulationLoadGenerator(15000, 120)
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)

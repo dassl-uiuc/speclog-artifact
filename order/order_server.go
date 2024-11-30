@@ -21,7 +21,7 @@ const lagfixExpt bool = false
 const qcEnabled bool = true
 const lagfixEnabled bool = true
 const lagfixThres float64 = 0.03
-const emulation bool = true
+const emulation bool = false
 
 func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)
@@ -477,18 +477,18 @@ func (s *OrderServer) isLastLagFixed(lastLag map[int32]int64) bool {
 
 func (s *OrderServer) getNewQuota(rid int32, lc *orderpb.LocalCut) int64 {
 	// the general idea here is to have very low tolerance for a higher period and moderate to high tolerance to a lower avg cut period
-	// if qcEnabled {
-	// 	defaultFreq := float64(1e9 / s.batchingInterval.Nanoseconds())
-	// 	currentFreq := float64(1e9 / s.avgDelta[rid].Avg())
+	if qcEnabled {
+		defaultFreq := float64(1e9 / s.batchingInterval.Nanoseconds())
+		currentFreq := float64(1e9 / s.avgDelta[rid].Avg())
 
-	// 	if math.Abs(currentFreq-defaultFreq) > 0.05*defaultFreq {
-	// 		newQuota := int64(math.Ceil(float64(lc.Quota) * currentFreq / defaultFreq))
-	// 		if newQuota < 1 {
-	// 			newQuota = 1
-	// 		}
-	// 		return newQuota
-	// 	}
-	// }
+		if math.Abs(currentFreq-defaultFreq) > 0.05*defaultFreq {
+			newQuota := int64(math.Ceil(float64(lc.Quota) * currentFreq / defaultFreq))
+			if newQuota < 1 {
+				newQuota = 1
+			}
+			return newQuota
+		}
+	}
 	return lc.Quota
 }
 
@@ -744,7 +744,7 @@ func (s *OrderServer) processReport() {
 					s.assignWindow++
 
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid, WindowStartGSN: s.windowStartGSN[s.assignWindow-1], PrevCut: prevCutHint}, FinalizeShards: finalizeEntry}
-					log.Debugf("quota: %v", s.quota[s.assignWindow-1])
+					log.Printf("quota: %v", s.quota[s.assignWindow-1])
 				} else {
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
 				}

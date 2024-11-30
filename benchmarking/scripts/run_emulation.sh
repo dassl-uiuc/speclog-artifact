@@ -2,7 +2,7 @@
 
 source ./common.sh
 
-num_shards=(5 10 15 20)
+num_shards=(15)
 for num_shard in "${num_shards[@]}"
 do
     echo "Running emulation for $num_shard shards"
