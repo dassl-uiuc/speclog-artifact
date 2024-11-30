@@ -286,6 +286,7 @@ func (s *OrderServer) isReadyToAssignQuota(failedNum int) bool {
 	if s.assignWindow == 0 {
 		return len(s.replicasInReserve) >= 2
 	}
+	// log.Printf("%v, %v, %v", s.numQuotaChanged, len(s.quota[s.assignWindow-1]), failedNum)
 	return s.numQuotaChanged == int64(len(s.quota[s.assignWindow-1])-failedNum)
 }
 
@@ -481,6 +482,7 @@ func (s *OrderServer) processReport() {
 	// wait for 5 windows before sending another lag signal
 	var lastLag map[int32]int64
 	lastLagTime := make(map[int32]time.Time)
+	numFailed := int(0)
 	numCommittedCuts := int64(0)
 	ticker := time.NewTicker(s.batchingInterval)
 	var quotaStartTime time.Time
@@ -616,9 +618,13 @@ func (s *OrderServer) processReport() {
 					if time.Since(t).Milliseconds() >= lagfixTimeThresMs {
 						log.Printf("replica %v is DOWN! overtime %v", rid, time.Since(t).Milliseconds())
 						failedReplicas = append(failedReplicas, rid)
+						numFailed++
 						delete(lcs, rid)
 						delete(s.replicasInReserve, rid) // don't know if this is required, do it for safe
 						delete(lastLagTime, rid)
+						if _, ok := s.quota[s.assignWindow][rid]; ok {
+							s.numQuotaChanged--
+						}
 					}
 				}
 
@@ -630,7 +636,7 @@ func (s *OrderServer) processReport() {
 				vid := atomic.LoadInt32(&s.viewID)
 				var ce *orderpb.CommittedEntry
 
-				if s.isReadyToAssignQuota(len(failedReplicas)) {
+				if s.isReadyToAssignQuota(numFailed) {
 					if s.assignWindow != 0 {
 						s.stats.timeToDecideQuota += time.Since(quotaStartTime).Nanoseconds()
 						s.stats.numQuotaDecisions++
@@ -759,6 +765,8 @@ func (s *OrderServer) processReport() {
 
 					// increment window
 					s.assignWindow++
+
+					numFailed = 0
 
 					ce = &orderpb.CommittedEntry{
 						Seq:    0,
