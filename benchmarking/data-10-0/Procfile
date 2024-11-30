@@ -1,0 +1,3 @@
+# Use goreman to run `go get github.com/mattn/goreman`
+
+data-10-0: ../../scalog data --config=../../.scalog.yaml --sid=10 --rid=0

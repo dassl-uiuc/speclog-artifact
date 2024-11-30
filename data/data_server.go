@@ -60,8 +60,10 @@ type Stats struct {
 	totalCutsSent int64
 	numCuts       int64
 
-	totalReplicationTime int64
-	numRepl              int64
+	totalRecReplicationTime  float64
+	numRecRepl               float64
+	totalHoleReplicationTime float64
+	numHoleRepl              float64
 
 	avgLocalCutInterreportNs int64
 
@@ -87,8 +89,11 @@ func (s *Stats) printStats() {
 	if s.numCuts > 0 {
 		log.Printf("avg number of batches sent in each cut: %v", float64(s.totalCutsSent)/float64(s.numCuts))
 	}
-	if s.numRepl > 0 {
-		log.Printf("avg replication time in ms: %v", float64(s.totalReplicationTime)/float64(s.numRepl)/1e6)
+	if s.numRecRepl > 0 {
+		log.Printf("avg record replication time in ms: %v", float64(s.totalRecReplicationTime)/float64(s.numRecRepl)/1e6)
+	}
+	if s.numHoleRepl > 0 {
+		log.Printf("avg hole replication time in ms: %v", float64(s.totalHoleReplicationTime)/float64(s.numHoleRepl)/1e6)
 	}
 	if s.numCuts > 0 {
 		log.Printf("avg time between local cut reports in ms: %v", float64(s.avgLocalCutInterreportNs)/float64(s.numCuts)/1e6)
@@ -205,6 +210,9 @@ type DataServer struct {
 	// this is needed in case the confirmation records are accessible before the actual records have been speculated on
 	// in such a case we buffer the confirmation records in the subsequent array @confirmationRecords and send them only after the actual records have been submitted to the clients
 	confirmationRecords map[int64]*datapb.Record
+
+	emulationOutstandingLimit int64
+	emulationOutstanding      chan bool
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -254,6 +262,9 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.confirmationRecords = make(map[int64]*datapb.Record)
 	s.views = make(map[int64]int32)
 	// s.outstandingCuts = make(chan bool, 2)
+
+	s.emulationOutstandingLimit = 10000
+	s.emulationOutstanding = make(chan bool, s.emulationOutstandingLimit)
 
 	s.quota = 10
 	s.localCutNum = -1
@@ -381,7 +392,7 @@ func (s *DataServer) Start() {
 		// if reconfigExpt {
 		// 	go s.finalizeShardStandby()
 		// }
-		go s.emulationLoadGenerator(10000, 120)
+		go s.emulationLoadGenerator(10100, 120)
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)
@@ -564,14 +575,20 @@ func (s *DataServer) confirmReplication(client *datapb.Data_ReplicateClient) {
 }
 
 // simulate writing to storage and replication
-func (s *DataServer) mockStorageAndReplication(recordID int64) {
+func (s *DataServer) mockStorageAndReplication(clientID int32, clientSN int32) {
 	// TODO: sleep for here to simulate disk write and replication
 	// currently sleeping for 0.6ms
-	sleepDuration := 600 * time.Microsecond
+	var sleepDuration time.Duration
+	if clientID == s.holeID {
+		sleepDuration = 350 * time.Microsecond
+	} else {
+		sleepDuration = 750 * time.Microsecond
+	}
 	startTS := time.Now()
 	for time.Since(startTS) < sleepDuration {
 	}
 
+	recordID := int64(clientID)<<32 + int64(clientSN)
 	s.replicateConfMu.RLock()
 	s.replicateConfWg[recordID].Done()
 	s.replicateConfMu.RUnlock()
@@ -602,7 +619,7 @@ func (s *DataServer) processAppend() {
 		// 		c <- record
 		// 	}
 		// }
-		go s.mockStorageAndReplication(id)
+		go s.mockStorageAndReplication(record.ClientID, record.ClientSN)
 
 		// only write one record even if there are multiple holes
 		s.selfReplicateC <- record
@@ -790,8 +807,13 @@ func (s *DataServer) processSelfReplicate() {
 		s.replMu.Lock()
 		id := int64(record.ClientID)<<32 + int64(record.ClientSN)
 		if startTime, ok := s.replStartTime[id]; ok {
-			s.stats.totalReplicationTime += time.Since(startTime).Nanoseconds()
-			s.stats.numRepl++
+			if record.ClientID == s.holeID {
+				s.stats.totalHoleReplicationTime += float64(time.Since(startTime).Nanoseconds())
+				s.stats.numHoleRepl++
+			} else {
+				s.stats.totalRecReplicationTime += float64(time.Since(startTime).Nanoseconds())
+				s.stats.numRecRepl++
+			}
 			delete(s.replStartTime, id)
 		}
 		s.replMu.Unlock()
@@ -1327,34 +1349,35 @@ func (s *DataServer) processCommittedEntry() {
 										delete(s.records, start+int64(j))
 									}
 									s.recordsMu.Unlock()
-									if !ok {
-										log.Errorf("error, not able to find records")
-										continue
-									}
-
-									// reply back to clients only for non-holes
-									// if record.ClientID != s.holeID {
-									// 	ack := &datapb.Ack{
-									// 		ClientID:       record.ClientID,
-									// 		ClientSN:       record.ClientSN,
-									// 		ShardID:        s.shardID,
-									// 		LocalReplicaID: s.replicaID,
-									// 		ViewID:         s.viewID,
-									// 		GlobalSN:       startGSN + int64(j),
-									// 	}
-
-									// 	s.ackC <- ack
+									// if !ok {
+									// 	log.Errorf("error, not able to find records")
+									// 	continue
 									// }
 
-									// verify speculated records
-									s.committedRecordsMu.RLock()
-									if r, ok := s.committedRecords[startGSN+int64(j)]; ok {
-										if r.ClientID != record.ClientID || r.ClientSN != record.ClientSN {
-											log.Errorf("error, speculated record does not match")
-											log.Errorf("Speculated record: %v, Actual record: %v, Correct GSN: %v", r, record, startGSN+int64(j))
-										}
+									// reply back to clients only for non-holes
+									if record.ClientID != s.holeID {
+										// ack := &datapb.Ack{
+										// 	ClientID:       record.ClientID,
+										// 	ClientSN:       record.ClientSN,
+										// 	ShardID:        s.shardID,
+										// 	LocalReplicaID: s.replicaID,
+										// 	ViewID:         s.viewID,
+										// 	GlobalSN:       startGSN + int64(j),
+										// }
+
+										// s.ackC <- ack
+										<-s.emulationOutstanding
 									}
-									s.committedRecordsMu.RUnlock()
+
+									// verify speculated records
+									// s.committedRecordsMu.RLock()
+									// if r, ok := s.committedRecords[startGSN+int64(j)]; ok {
+									// 	if r.ClientID != record.ClientID || r.ClientSN != record.ClientSN {
+									// 		log.Errorf("error, speculated record does not match")
+									// 		log.Errorf("Speculated record: %v, Actual record: %v, Correct GSN: %v", r, record, startGSN+int64(j))
+									// 	}
+									// }
+									// s.committedRecordsMu.RUnlock()
 
 									// send record on exposable records channel
 									// record.GlobalSN = startGSN + int64(j)
@@ -1490,6 +1513,7 @@ func (s *DataServer) emulationLoadGenerator(rate int, runtimeSecs int) {
 				Record:   "", // does not matter
 				NumHoles: 0,  // does not matter
 			}
+			s.emulationOutstanding <- true
 			s.appendC <- record
 			s.recordsInSystem.Add(1)
 			clientSN++

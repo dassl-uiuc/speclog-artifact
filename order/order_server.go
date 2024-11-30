@@ -21,7 +21,7 @@ const lagfixExpt bool = false
 const qcEnabled bool = true
 const lagfixEnabled bool = true
 const lagfixThres float64 = 0.03
-const emulation bool = false
+const emulation bool = true
 
 func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)
@@ -744,7 +744,7 @@ func (s *OrderServer) processReport() {
 					s.assignWindow++
 
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid, WindowStartGSN: s.windowStartGSN[s.assignWindow-1], PrevCut: prevCutHint}, FinalizeShards: finalizeEntry}
-					log.Printf("quota: %v", s.quota[s.assignWindow-1])
+					log.Debugf("quota: %v", s.quota[s.assignWindow-1])
 				} else {
 					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
 				}
