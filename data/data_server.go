@@ -16,7 +16,6 @@ import (
 	"github.com/scalog/scalog/order/orderpb"
 	"github.com/scalog/scalog/pkg/address"
 	"github.com/scalog/scalog/storage"
-	rateLimiter "golang.org/x/time/rate"
 	"google.golang.org/grpc"
 )
 
@@ -980,7 +979,8 @@ func (s *DataServer) finalizeShard() {
 
 func (s *DataServer) incrementWindowNumber() {
 	s.windowNumber++
-	if s.windowNumber == 30 {
+	if s.windowNumber == 50 {
+		log.Printf("window number reached 50")
 		s.startLoad <- true
 	}
 }
@@ -1550,25 +1550,39 @@ func (s *DataServer) WaitForAck(cid, csn int32) *datapb.Ack {
 	return ack
 }
 
+func (s *DataServer) printStats(stop chan bool) {
+	ticker := time.NewTicker(5 * time.Second)
+	for {
+		select {
+		case <-ticker.C:
+			s.emulationStats.emulationMapMu.Lock()
+			log.Printf("emulation statistics/metric, append/confirmation latency (us), delivery latency (us), confirmation latency (us)")
+			log.Printf("mean, %v, %v", s.emulationStats.emulationAppendLatency.Mean()/1e3, s.emulationStats.emulationDeliveryLatency.Mean()/1e3)
+			log.Printf("p50, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(50.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(50.0)/1e3)
+			log.Printf("p99, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(99.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(99.0)/1e3)
+			s.emulationStats.emulationMapMu.Unlock()
+		case <-stop:
+			return
+		}
+	}
+}
 func (s *DataServer) emulationLoadGenerator(rate int, runtimeSecs int) {
 	// wait for start load signal
 	<-s.startLoad
 
+	stop := make(chan bool)
+	go s.printStats(stop)
 	timer := time.NewTimer(time.Duration(runtimeSecs) * time.Second)
-	rlim := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 10)
+	// rlim := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 10)
 	clientID := s.generateClientIDForHole() // generate a new random id
 	clientSN := int32(0)                    // start with 0
 	for {
 		select {
 		case <-timer.C:
-			time.Sleep(5 * time.Second)
-			log.Printf("emulation statistics/metric, append/confirmation latency (us), delivery latency (us), confirmation latency (us)")
-			log.Printf("mean, %v, %v", s.emulationStats.emulationAppendLatency.Mean()/1e3, s.emulationStats.emulationDeliveryLatency.Mean()/1e3)
-			log.Printf("p50, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(50.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(50.0)/1e3)
-			log.Printf("p99, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(99.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(99.0)/1e3)
+			stop <- true
 			return
 		default:
-			rlim.WaitN(context.Background(), 10)
+			// rlim.WaitN(context.Background(), 10)
 			for i := 0; i < 10; i++ {
 				record := &datapb.Record{
 					ClientID: clientID,
@@ -1580,6 +1594,11 @@ func (s *DataServer) emulationLoadGenerator(rate int, runtimeSecs int) {
 				s.appendC <- record
 				s.recordsInSystem.Add(1)
 				clientSN++
+			}
+			startTs := time.Now()
+			sleepTime := time.Millisecond
+			for time.Since(startTs) < sleepTime {
+				// wait
 			}
 		}
 	}
