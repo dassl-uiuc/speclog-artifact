@@ -483,6 +483,8 @@ func (s *OrderServer) processReport() {
 	var lastLag map[int32]int64
 	lastLagTime := make(map[int32]time.Time)
 	numFailed := int(0)
+
+	failedReplicas := make(map[int32]int64, 0) // committed cut number at the time of failure
 	numCommittedCuts := int64(0)
 	ticker := time.NewTicker(s.batchingInterval)
 	var quotaStartTime time.Time
@@ -534,7 +536,7 @@ func (s *OrderServer) processReport() {
 						// when replica fixes lag, mark last lag as zero
 						if lc.Feedback.FixedLag {
 							lastLag[id] = 0
-							log.Printf("replica %v lag fix takes %v ms", id, time.Since(lastLagTime[id]).Milliseconds())
+							log.Debugf("replica %v lag fix takes %v ms", id, time.Since(lastLagTime[id]).Milliseconds())
 							delete(lastLagTime, id)
 						}
 
@@ -612,25 +614,31 @@ func (s *OrderServer) processReport() {
 			if s.isLeader { // compute committedCut
 				numCommittedCuts++
 				start := time.Now()
-				failedReplicas := make(map[int32]int64, 0)
-				failedReplicasSlice := make([]int32, 0)
-				for rid := range failedReplicas {
-					failedReplicasSlice = append(failedReplicasSlice, rid)
-				}
+
+				failedReplicasSlice := make([]int32, 0) //xxx
 
 				ccut := s.computeCommittedCut(lcs)
 
 				for rid, t := range lastLagTime {
 					if time.Since(t).Milliseconds() >= lagfixTimeThresMs {
 						log.Printf("replica %v is DOWN! overtime %v", rid, time.Since(t).Milliseconds())
-						failedReplicas[rid] = ccut[rid]
-						numFailed++
-						delete(lcs, rid)
-						delete(s.replicasInReserve, rid) // don't know if this is required, do it for safe
-						delete(lastLagTime, rid)
-						if _, ok := s.quota[s.assignWindow][rid]; ok {
-							s.numQuotaChanged--
+						sid := rid / s.dataNumReplica
+						if _, ok := failedReplicas[rid]; ok {
+							continue
 						}
+						for i := int32(0); i < s.dataNumReplica; i++ { // then all replicas in the same physical shard are failed
+							rid := sid*s.dataNumReplica + i
+							failedReplicas[rid] = ccut[rid]
+							numFailed++
+							delete(lcs, rid)
+							delete(s.replicasInReserve, rid) // don't know if this is required, do it for safe
+							delete(lastLagTime, rid)
+							failedReplicasSlice = append(failedReplicasSlice, rid)
+							if _, ok := s.quota[s.assignWindow][rid]; ok {
+								s.numQuotaChanged--
+							}
+						}
+						log.Printf("replicas failed together: %v", failedReplicasSlice)
 					}
 				}
 
@@ -708,6 +716,17 @@ func (s *OrderServer) processReport() {
 						vid = atomic.LoadInt32(&s.viewID)
 					}
 
+					// update window start GSN
+					if s.assignWindow == 0 {
+						s.windowStartGSN[s.assignWindow] = 0
+					} else {
+						sumQuotas := 0
+						for _, q := range s.quota[s.assignWindow-1] {
+							sumQuotas += int(q)
+						}
+						s.windowStartGSN[s.assignWindow] = s.windowStartGSN[s.assignWindow-1] + int64(sumQuotas)*s.localCutChangeWindow
+					}
+
 					// update start committed cut
 					// this will be considered by the newly starting replicas to be the expected previous committed cut
 					for rid := range s.quota[s.assignWindow] {
@@ -721,22 +740,6 @@ func (s *OrderServer) processReport() {
 								s.startCommittedCut[rid] = 0
 							}
 						}
-					}
-
-					// update window start GSN
-					if s.assignWindow == 0 {
-						s.windowStartGSN[s.assignWindow] = 0
-					} else {
-						sumQuotas := 0
-						sumIncompleteCuts := int64(0)
-						for rid, q := range s.quota[s.assignWindow-1] {
-							if cut, ok := failedReplicas[rid]; !ok {
-								sumQuotas += int(q) // don't count in those failed replicas because they don't have complete cuts in the window
-							} else {
-								sumIncompleteCuts += cut - s.startCommittedCut[rid]
-							}
-						}
-						s.windowStartGSN[s.assignWindow] = s.windowStartGSN[s.assignWindow-1] + int64(sumQuotas)*s.localCutChangeWindow + sumIncompleteCuts
 					}
 
 					for rid := range s.startCommittedCut {
@@ -793,7 +796,7 @@ func (s *OrderServer) processReport() {
 						ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
 						s.getSignificantLags(&lags)
 						ce.CommittedCut.AdjustmentSignal.Lag = lags
-						log.Printf("shards with significant lag: %v", lags)
+						log.Debugf("shards with significant lag: %v", lags)
 						lastLag = lags
 						now := time.Now()
 						for rid := range lags {
