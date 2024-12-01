@@ -2,7 +2,7 @@
 
 source ./common.sh
 
-num_shards=(15)
+num_shards=(20)
 for num_shard in "${num_shards[@]}"
 do
     echo "Running emulation for $num_shard shards"
@@ -15,7 +15,7 @@ do
     start_discovery
     start_data_nodes ${num_shard}
 
-    sleep 130
+    sleep 140
 
     cleanup_clients
     cleanup_servers

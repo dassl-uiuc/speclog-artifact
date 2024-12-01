@@ -21,7 +21,7 @@ const lagfixExpt bool = false
 const qcEnabled bool = true
 const lagfixEnabled bool = true
 const lagfixThres float64 = 0.03
-const emulation bool = false
+const emulation bool = true
 
 func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)

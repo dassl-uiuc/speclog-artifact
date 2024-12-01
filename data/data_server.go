@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/HdrHistogram/hdrhistogram-go"
 	movingaverage "github.com/RobinUS2/golang-moving-average"
 	"github.com/scalog/scalog/data/datapb"
 	log "github.com/scalog/scalog/logger"
@@ -24,6 +25,7 @@ const reconfigExpt bool = false
 const lagfixExpt bool = false
 const qcExpt bool = false
 const qcEnabled bool = true
+const postReplicationLoad bool = true
 
 var qcBurstLSN int64 = -1
 var qcBurstLocalCutNumber int64 = -1
@@ -70,6 +72,14 @@ type Stats struct {
 	timeToOrderCut *movingaverage.ConcurrentMovingAverage
 
 	prevNumHoles int64
+}
+
+type EmulationStats struct {
+	emulationAppendLatency   *hdrhistogram.Histogram
+	emulationDeliveryLatency *hdrhistogram.Histogram
+
+	emulationAppendStart map[int64]time.Time
+	emulationMapMu       sync.Mutex
 }
 
 func (s *Stats) printStats() {
@@ -211,6 +221,11 @@ type DataServer struct {
 	// in such a case we buffer the confirmation records in the subsequent array @confirmationRecords and send them only after the actual records have been submitted to the clients
 	confirmationRecords map[int64]*datapb.Record
 
+	startLoad chan bool
+
+	// emulation stats
+	emulationStats EmulationStats
+
 	emulationOutstandingLimit int64
 	emulationOutstanding      chan bool
 }
@@ -261,10 +276,15 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.nextAssignableWindowAndQuotas = make(chan *WindowAndQuota, 4096)
 	s.confirmationRecords = make(map[int64]*datapb.Record)
 	s.views = make(map[int64]int32)
+	s.startLoad = make(chan bool, 1)
 	// s.outstandingCuts = make(chan bool, 2)
 
-	s.emulationOutstandingLimit = 150
+	s.emulationOutstandingLimit = 50
 	s.emulationOutstanding = make(chan bool, s.emulationOutstandingLimit)
+
+	s.emulationStats.emulationAppendLatency = hdrhistogram.New(1, 1000000000, 5)
+	s.emulationStats.emulationDeliveryLatency = hdrhistogram.New(1, 1000000000, 5)
+	s.emulationStats.emulationAppendStart = make(map[int64]time.Time)
 
 	s.quota = 10
 	s.localCutNum = -1
@@ -386,13 +406,13 @@ func (s *DataServer) Start() {
 		go s.processCommittedEntry()
 		go s.reportLocalCut()
 		go s.receiveCommittedCut()
-		go s.processNewSubscribers()
-		go s.processLiveSubscribe()
+		// go s.processNewSubscribers()
+		// go s.processLiveSubscribe()
 		go s.processSpeculativeSubscribes()
 		// if reconfigExpt {
 		// 	go s.finalizeShardStandby()
 		// }
-		go s.emulationLoadGenerator(15000, 120)
+		go s.emulationLoadGenerator(10000, 120)
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)
@@ -583,6 +603,9 @@ func (s *DataServer) mockStorageAndReplication(clientID int32, clientSN int32) {
 		sleepDuration = 350 * time.Microsecond
 	} else {
 		sleepDuration = 750 * time.Microsecond
+		if postReplicationLoad {
+			sleepDuration = 0
+		}
 	}
 	startTS := time.Now()
 	for time.Since(startTS) < sleepDuration {
@@ -597,6 +620,15 @@ func (s *DataServer) mockStorageAndReplication(clientID int32, clientSN int32) {
 // processAppend sends records to replicateC and replicates them to peers
 func (s *DataServer) processAppend() {
 	for record := range s.appendC {
+		// update stats for real records
+		if record.ClientID != s.holeID {
+			startTime := time.Now()
+			recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
+			s.emulationStats.emulationMapMu.Lock()
+			s.emulationStats.emulationAppendStart[recordID] = startTime
+			s.emulationStats.emulationMapMu.Unlock()
+		}
+
 		record.LocalReplicaID = s.replicaID
 		record.ShardID = s.shardID
 		// create wait group to confirm the replication of the record
@@ -687,7 +719,15 @@ func (s *DataServer) processSingleRecord(record *datapb.Record, nextGsn *int64, 
 	s.committedRecords[*nextGsn] = record
 	s.committedRecordsMu.Unlock()
 
-	s.liveSubscribeC <- record.GlobalSN
+	// update stats for delivery
+	if record.ClientID != s.holeID {
+		recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
+		s.emulationStats.emulationMapMu.Lock()
+		s.emulationStats.emulationDeliveryLatency.RecordValue(int64(time.Since(s.emulationStats.emulationAppendStart[recordID]).Nanoseconds()))
+		s.emulationStats.emulationMapMu.Unlock()
+	}
+
+	// s.liveSubscribeC <- record.GlobalSN
 
 	*nextGsn++
 	*avlInQuota--
@@ -934,6 +974,13 @@ func (s *DataServer) finalizeShard() {
 	log.Errorf("Max retries reached. Finalize failed.")
 }
 
+func (s *DataServer) incrementWindowNumber() {
+	s.windowNumber++
+	if s.windowNumber == 30 {
+		s.startLoad <- true
+	}
+}
+
 func (s *DataServer) reportLocalCut() {
 	// register to ordering layer
 	// TODO(shreesha00): Add timeout here and retry here
@@ -1027,7 +1074,7 @@ func (s *DataServer) reportLocalCut() {
 					s.quota = <-s.waitForNewQuota
 					s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
 					s.stats.numQuotas++
-					s.windowNumber++
+					s.incrementWindowNumber()
 					s.localCutNum = -1
 				}
 
@@ -1096,7 +1143,7 @@ func (s *DataServer) reportLocalCut() {
 					case s.quota = <-s.waitForNewQuota:
 						s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
 						s.stats.numQuotas++
-						s.windowNumber++
+						s.incrementWindowNumber()
 						s.localCutNum = -1
 					case <-time.After(s.batchingInterval):
 						log.Printf("timed out waiting for new quota")
@@ -1177,7 +1224,7 @@ func (s *DataServer) reportLocalCut() {
 				s.quota = <-s.waitForNewQuota
 				s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
 				s.stats.numQuotas++
-				s.windowNumber++
+				s.incrementWindowNumber()
 				s.localCutNum = -1
 			}
 
@@ -1367,6 +1414,12 @@ func (s *DataServer) processCommittedEntry() {
 
 										// s.ackC <- ack
 										<-s.emulationOutstanding
+
+										// update stats for real records
+										recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
+										s.emulationStats.emulationMapMu.Lock()
+										s.emulationStats.emulationAppendLatency.RecordValue(time.Since(s.emulationStats.emulationAppendStart[recordID]).Nanoseconds())
+										s.emulationStats.emulationMapMu.Unlock()
 									}
 
 									// verify speculated records
@@ -1394,12 +1447,12 @@ func (s *DataServer) processCommittedEntry() {
 
 								log.Debugf("Sending confirmations for records %v to %v", startGSN, startGSN+int64(diff)-1)
 								// send a batch of acks for all these records on the spec confirmation channel
-								s.speculationConfC <- &datapb.Record{
-									ClientID:  -1, // mark this as a confirmation record
-									ViewID:    s.views[s.nextExpectedWindowNum],
-									GlobalSN:  startGSN,
-									GlobalSN1: startGSN + int64(diff) - 1,
-								}
+								// s.speculationConfC <- &datapb.Record{
+								// 	ClientID:  -1, // mark this as a confirmation record
+								// 	ViewID:    s.views[s.nextExpectedWindowNum],
+								// 	GlobalSN:  startGSN,
+								// 	GlobalSN1: startGSN + int64(diff) - 1,
+								// }
 							}
 							startGSN += int64(diff)
 						}
@@ -1494,29 +1547,36 @@ func (s *DataServer) WaitForAck(cid, csn int32) *datapb.Ack {
 }
 
 func (s *DataServer) emulationLoadGenerator(rate int, runtimeSecs int) {
-	// sleep for 10s before starting anything
-	time.Sleep(10 * time.Second)
+	// wait for start load signal
+	<-s.startLoad
 
 	timer := time.NewTimer(time.Duration(runtimeSecs) * time.Second)
-	rlim := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 1)
+	rlim := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 10)
 	clientID := s.generateClientIDForHole() // generate a new random id
 	clientSN := int32(0)                    // start with 0
 	for {
 		select {
 		case <-timer.C:
+			time.Sleep(5 * time.Second)
+			log.Printf("emulation statistics/metric, append/confirmation latency (us), delivery latency (us), confirmation latency (us)")
+			log.Printf("mean, %v, %v", s.emulationStats.emulationAppendLatency.Mean()/1e3, s.emulationStats.emulationDeliveryLatency.Mean()/1e3)
+			log.Printf("p50, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(50.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(50.0)/1e3)
+			log.Printf("p99, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(99.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(99.0)/1e3)
 			return
 		default:
-			rlim.WaitN(context.Background(), 1)
-			record := &datapb.Record{
-				ClientID: clientID,
-				ClientSN: clientSN,
-				Record:   "", // does not matter
-				NumHoles: 0,  // does not matter
+			rlim.WaitN(context.Background(), 10)
+			for i := 0; i < 10; i++ {
+				record := &datapb.Record{
+					ClientID: clientID,
+					ClientSN: clientSN,
+					Record:   "", // does not matter
+					NumHoles: 0,  // does not matter
+				}
+				s.emulationOutstanding <- true
+				s.appendC <- record
+				s.recordsInSystem.Add(1)
+				clientSN++
 			}
-			s.emulationOutstanding <- true
-			s.appendC <- record
-			s.recordsInSystem.Add(1)
-			clientSN++
 		}
 	}
 }
