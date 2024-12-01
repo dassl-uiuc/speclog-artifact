@@ -14,6 +14,7 @@ import (
 )
 
 const reconfigExpt = false
+const emulation = true
 
 type RealTimeTput struct {
 	count atomic.Int64
@@ -85,7 +86,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.replicasFinalizeStandby = make(map[int32]int64)
 	s.replicasAddingStandby = make(map[int32]bool)
 	s.stats = Stats{}
-	if reconfigExpt {
+	if reconfigExpt || emulation {
 		go s.stats.RealTimeTput.LoggerThread()
 	}
 	s.shardsFinalized = make(map[int32]bool)
@@ -182,7 +183,7 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		ccut[rid] = chosen
 	}
 
-	if reconfigExpt {
+	if reconfigExpt || emulation {
 		totalCommitted := s.computeCutDiff(s.prevCut, ccut)
 		s.stats.RealTimeTput.Add(totalCommitted)
 	}

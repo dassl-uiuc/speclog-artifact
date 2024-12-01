@@ -4,21 +4,25 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/scalog/scalog/data/datapb"
 	log "github.com/scalog/scalog/logger"
 	"github.com/scalog/scalog/order/orderpb"
 	"github.com/scalog/scalog/pkg/address"
 	"github.com/scalog/scalog/storage"
+	rateLimiter "golang.org/x/time/rate"
 	"google.golang.org/grpc"
 )
 
 const backendOnly = false
 const measureOrderingInterval = false
 const reconfigExpt bool = false
+const postReplicationLoad bool = true
 
 type clientSubscriber struct {
 	state    clientSubscriberState
@@ -33,6 +37,14 @@ const (
 	UPDATED clientSubscriberState = 1
 	CLOSED  clientSubscriberState = 2
 )
+
+type EmulationStats struct {
+	emulationAppendLatency   *hdrhistogram.Histogram
+	emulationDeliveryLatency *hdrhistogram.Histogram
+
+	emulationAppendStart map[int64]time.Time
+	emulationMapMu       sync.Mutex
+}
 
 type DataServer struct {
 	// data s configurations
@@ -104,6 +116,12 @@ type DataServer struct {
 
 	recordsInPipeline atomic.Int64
 	stopReport        chan bool
+
+	// emulation stats
+	emulationStats EmulationStats
+
+	emulationOutstandingLimit int64
+	emulationOutstanding      chan bool
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -148,6 +166,13 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.replStartTime = make(map[int64]time.Time)
 	s.recordsInPipeline.Store(0)
 	s.stopReport = make(chan bool, 1)
+
+	s.emulationOutstandingLimit = 50
+	s.emulationOutstanding = make(chan bool, s.emulationOutstandingLimit)
+
+	s.emulationStats.emulationAppendLatency = hdrhistogram.New(1, 1000000000, 5)
+	s.emulationStats.emulationDeliveryLatency = hdrhistogram.New(1, 1000000000, 5)
+	s.emulationStats.emulationAppendStart = make(map[int64]time.Time)
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -233,24 +258,25 @@ func (s *DataServer) ConnPeers() error {
 
 func (s *DataServer) Start() {
 	for i := 0; i < 100; i++ {
-		err := s.ConnPeers()
-		if err != nil {
-			log.Errorf("%v", err)
-			time.Sleep(time.Second)
-			continue
-		}
+		// err := s.ConnPeers()
+		// if err != nil {
+		// 	log.Errorf("%v", err)
+		// 	time.Sleep(time.Second)
+		// 	continue
+		// }
 		go s.processAppend()
-		go s.processReplicate()
+		// go s.processReplicate()
 		go s.processSelfReplicate()
-		go s.processAck()
+		// go s.processAck()
 		go s.processCommittedEntry()
 		go s.reportLocalCut()
 		go s.receiveCommittedCut()
-		go s.processNewSubscribers()
-		go s.processLiveSubscribe()
+		// go s.processNewSubscribers()
+		// go s.processLiveSubscribe()
 		if reconfigExpt {
 			go s.finalizeShardStandby()
 		}
+		go s.emulationLoadGenerator(10000, 120)
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)
@@ -405,27 +431,35 @@ func (s *DataServer) confirmReplication(client *datapb.Data_ReplicateClient) {
 // processAppend sends records to replicateC and replicates them to peers
 func (s *DataServer) processAppend() {
 	for record := range s.appendC {
+		// update stats for real records
+		startTime := time.Now()
+		recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
+		s.emulationStats.emulationMapMu.Lock()
+		s.emulationStats.emulationAppendStart[recordID] = startTime
+		s.emulationStats.emulationMapMu.Unlock()
+
 		record.LocalReplicaID = s.replicaID
 		record.ShardID = s.shardID
+
 		// create wait group to confirm the replication of the record
-		id := int64(record.ClientID)<<32 + int64(record.ClientSN)
-		s.replicateConfMu.Lock()
-		s.replicateConfWg[id] = &sync.WaitGroup{}
-		s.replicateConfWg[id].Add(int(s.numReplica - 1))
-		s.replicateConfMu.Unlock()
+		// id := int64(record.ClientID)<<32 + int64(record.ClientSN)
+		// s.replicateConfMu.Lock()
+		// s.replicateConfWg[id] = &sync.WaitGroup{}
+		// s.replicateConfWg[id].Add(int(s.numReplica - 1))
+		// s.replicateConfMu.Unlock()
 
 		s.recordsInPipeline.Add(1)
 
-		s.replMu.Lock()
-		s.replStartTime[id] = time.Now()
-		s.replMu.Unlock()
+		// s.replMu.Lock()
+		// s.replStartTime[id] = time.Now()
+		// s.replMu.Unlock()
 
-		for i, c := range s.replicateSendC {
-			if int32(i) != s.replicaID {
-				log.Debugf("Data forward to %v", i)
-				c <- record
-			}
-		}
+		// for i, c := range s.replicateSendC {
+		// 	if int32(i) != s.replicaID {
+		// 		log.Debugf("Data forward to %v", i)
+		// 		c <- record
+		// 	}
+		// }
 		s.selfReplicateC <- record
 	}
 }
@@ -453,41 +487,43 @@ func (s *DataServer) processReplicate() {
 
 // processSelfReplicate writes my own records to local storage
 func (s *DataServer) processSelfReplicate() {
+	var lsn int64
+	lsn = 0
 	for record := range s.selfReplicateC {
 		// log.Debugf("Data %v,%v process", s.shardID, s.replicaID)
-		lsn, err := s.storage.WriteToPartition(record.LocalReplicaID, record.Record)
-		if err != nil {
-			log.Fatalf("Write to storage failed: %v", err)
-		}
+		// lsn, err := s.storage.WriteToPartition(record.LocalReplicaID, record.Record)
+		// if err != nil {
+		// 	log.Fatalf("Write to storage failed: %v", err)
+		// }
 
 		// wait for confirmation from all peers
-		s.replicateConfMu.RLock()
-		recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
-		wg := s.replicateConfWg[recordID]
-		s.replicateConfMu.RUnlock()
-		wg.Wait()
-		s.replicateConfMu.Lock()
-		s.replicateConfWg[recordID] = nil
-		delete(s.replicateConfWg, recordID)
-		s.replicateConfMu.Unlock()
+		// s.replicateConfMu.RLock()
+		// recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
+		// wg := s.replicateConfWg[recordID]
+		// s.replicateConfMu.RUnlock()
+		// wg.Wait()
+		// s.replicateConfMu.Lock()
+		// s.replicateConfWg[recordID] = nil
+		// delete(s.replicateConfWg, recordID)
+		// s.replicateConfMu.Unlock()
 
-		if backendOnly {
-			id := int64(record.ClientID)<<32 + int64(record.ClientSN)
-			s.waitMu.RLock()
-			c, ok := s.wait[id]
-			s.waitMu.RUnlock()
-			if ok {
-				ack := &datapb.Ack{
-					ClientID:       record.ClientID,
-					ClientSN:       record.ClientSN,
-					ShardID:        s.shardID,
-					LocalReplicaID: s.replicaID,
-					ViewID:         s.viewID,
-					GlobalSN:       0,
-				}
-				c <- ack
-			}
-		}
+		// if backendOnly {
+		// 	id := int64(record.ClientID)<<32 + int64(record.ClientSN)
+		// 	s.waitMu.RLock()
+		// 	c, ok := s.wait[id]
+		// 	s.waitMu.RUnlock()
+		// 	if ok {
+		// 		ack := &datapb.Ack{
+		// 			ClientID:       record.ClientID,
+		// 			ClientSN:       record.ClientSN,
+		// 			ShardID:        s.shardID,
+		// 			LocalReplicaID: s.replicaID,
+		// 			ViewID:         s.viewID,
+		// 			GlobalSN:       0,
+		// 		}
+		// 		c <- ack
+		// 	}
+		// }
 
 		s.recordsMu.Lock()
 		s.records[lsn] = record
@@ -501,9 +537,10 @@ func (s *DataServer) processSelfReplicate() {
 
 		s.recordsInPipeline.Add(-1)
 
-		s.replMu.Lock()
-		log.Debugf("replication latency: %v", time.Since(s.replStartTime[recordID]).Nanoseconds())
-		s.replMu.Unlock()
+		lsn += 1
+		// s.replMu.Lock()
+		// log.Debugf("replication latency: %v", time.Since(s.replStartTime[recordID]).Nanoseconds())
+		// s.replMu.Unlock()
 	}
 }
 
@@ -650,11 +687,11 @@ func (s *DataServer) processCommittedEntry() {
 					diff = int32(lsn - l)
 				}
 				if diff > 0 {
-					err := s.storage.Assign(i, start, diff, startGSN)
-					if err != nil {
-						log.Errorf("Assign GSN to storage error: %v", err)
-						continue
-					}
+					// err := s.storage.Assign(i, start, diff, startGSN)
+					// if err != nil {
+					// 	log.Errorf("Assign GSN to storage error: %v", err)
+					// 	continue
+					// }
 					if i == s.replicaID {
 						for j := int32(0); j < diff; j++ {
 							s.recordsMu.Lock()
@@ -676,15 +713,22 @@ func (s *DataServer) processCommittedEntry() {
 								log.Errorf("error, not able to find records")
 								continue
 							}
-							ack := &datapb.Ack{
-								ClientID:       record.ClientID,
-								ClientSN:       record.ClientSN,
-								ShardID:        s.shardID,
-								LocalReplicaID: s.replicaID,
-								ViewID:         s.viewID,
-								GlobalSN:       startGSN + int64(j),
-							}
-							s.ackC <- ack
+							// ack := &datapb.Ack{
+							// 	ClientID:       record.ClientID,
+							// 	ClientSN:       record.ClientSN,
+							// 	ShardID:        s.shardID,
+							// 	LocalReplicaID: s.replicaID,
+							// 	ViewID:         s.viewID,
+							// 	GlobalSN:       startGSN + int64(j),
+							// }
+							// s.ackC <- ack
+							<-s.emulationOutstanding
+
+							// update stats for real records
+							recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
+							s.emulationStats.emulationMapMu.Lock()
+							s.emulationStats.emulationAppendLatency.RecordValue(time.Since(s.emulationStats.emulationAppendStart[recordID]).Nanoseconds())
+							s.emulationStats.emulationMapMu.Unlock()
 
 							// send record on exposable records channel
 							record.GlobalSN = startGSN + int64(j)
@@ -696,7 +740,12 @@ func (s *DataServer) processCommittedEntry() {
 							s.committedRecords[startGSN+int64(j)] = record
 							s.committedRecordsMu.Unlock()
 
-							s.liveSubscribeC <- record.GlobalSN
+							// s.liveSubscribeC <- record.GlobalSN
+							// update stats for delivery
+							// only doing this here for sake of comparison with speclog, this is not going to be different from the append latency
+							s.emulationStats.emulationMapMu.Lock()
+							s.emulationStats.emulationDeliveryLatency.RecordValue(int64(time.Since(s.emulationStats.emulationAppendStart[recordID]).Nanoseconds()))
+							s.emulationStats.emulationMapMu.Unlock()
 						}
 					}
 					startGSN += int64(diff)
@@ -738,4 +787,37 @@ func (s *DataServer) WaitForAck(cid, csn int32) *datapb.Ack {
 	delete(s.wait, id)
 	s.waitMu.Unlock()
 	return ack
+}
+
+func (s *DataServer) emulationLoadGenerator(rate int, runtimeSecs int) {
+	// wait for start load signal
+	time.Sleep(10 * time.Second) // wait for all shards to connect
+
+	timer := time.NewTimer(time.Duration(runtimeSecs) * time.Second)
+	rlim := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 10)
+	clientID := rand.Int31() // random client id
+	clientSN := int32(0)     // start with 0
+	for {
+		select {
+		case <-timer.C:
+			time.Sleep(5 * time.Second)
+			log.Printf("emulation statistics/metric, append/confirmation latency (us), delivery latency (us), confirmation latency (us)")
+			log.Printf("mean, %v, %v", s.emulationStats.emulationAppendLatency.Mean()/1e3, s.emulationStats.emulationDeliveryLatency.Mean()/1e3)
+			log.Printf("p50, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(50.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(50.0)/1e3)
+			log.Printf("p99, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(99.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(99.0)/1e3)
+			return
+		default:
+			rlim.WaitN(context.Background(), 10)
+			for i := 0; i < 10; i++ {
+				record := &datapb.Record{
+					ClientID: clientID,
+					ClientSN: clientSN,
+					Record:   "", // does not matter
+				}
+				s.emulationOutstanding <- true
+				s.appendC <- record
+				clientSN++
+			}
+		}
+	}
 }
