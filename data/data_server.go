@@ -603,9 +603,6 @@ func (s *DataServer) mockStorageAndReplication(clientID int32, clientSN int32) {
 		sleepDuration = 350 * time.Microsecond
 	} else {
 		sleepDuration = 750 * time.Microsecond
-		if postReplicationLoad {
-			sleepDuration = 0
-		}
 	}
 	startTS := time.Now()
 	for time.Since(startTS) < sleepDuration {
@@ -651,7 +648,14 @@ func (s *DataServer) processAppend() {
 		// 		c <- record
 		// 	}
 		// }
-		go s.mockStorageAndReplication(record.ClientID, record.ClientSN)
+
+		if record.ClientID == s.holeID || !postReplicationLoad {
+			go s.mockStorageAndReplication(record.ClientID, record.ClientSN)
+		} else {
+			s.replicateConfMu.RLock()
+			s.replicateConfWg[id].Done()
+			s.replicateConfMu.RUnlock()
+		}
 
 		// only write one record even if there are multiple holes
 		s.selfReplicateC <- record
