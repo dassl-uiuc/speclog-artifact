@@ -97,6 +97,8 @@ type Stats struct {
 	RealTimeTput              RealTimeTput
 	RealTimeTotalTput         RealTimeTput                // includes holes
 	holesFilled               map[int32](map[int64]int64) // number of holes filled by each replica (1st int32) in each local cut id (1st int64)
+	quotaStartTime            time.Time
+	prevNumCommittedCuts      int64
 }
 
 func (s *Stats) printStats() {
@@ -112,6 +114,8 @@ func (s *Stats) printStats() {
 	for rid, num := range s.numLagFixes {
 		log.Printf("replica %v: num lag fixes: %v", rid, num)
 	}
+	log.Printf("num committed cuts: %v [+%v]", s.numCommittedCuts, s.numCommittedCuts-s.prevNumCommittedCuts)
+	s.prevNumCommittedCuts = s.numCommittedCuts
 }
 
 type OrderServer struct {
@@ -158,6 +162,8 @@ type OrderServer struct {
 	startCommittedCut       map[int32]int64
 	// stats
 	stats Stats
+
+	lastLag map[int32]int64
 
 	prevLowestWindowNum   int64
 	prevLowestLocalCutNum int64
@@ -229,6 +235,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 		s.stats.holesFilled = make(map[int32](map[int64]int64))
 	}
 	s.stats.numLagFixes = make(map[int32]int64)
+	s.lastLag = make(map[int32]int64)
 	return s
 }
 
@@ -371,9 +378,6 @@ func (s *OrderServer) getNumHolesCommitted(lowestWindowNum int64, lowestLocalCut
 			numHolesCommitted += s.stats.holesFilled[rid][i]
 		}
 	}
-
-	s.prevLowestLocalCutNum = lowestLocalCutNum
-	s.prevLowestWindowNum = lowestWindowNum
 	return numHolesCommitted
 }
 
@@ -452,6 +456,9 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		s.stats.RealTimeTotalTput.Add(totalCommitted)
 	}
 
+	s.prevLowestLocalCutNum = lowestLocalCutNum
+	s.prevLowestWindowNum = lowestWindowNum
+
 	if lowestWindowNum > s.processWindow {
 		// TODO: delete old quota and unneccesary state
 		// if s.processWindow != -1 {
@@ -465,8 +472,9 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 	return ccut
 }
 
-func (s *OrderServer) isLastLagFixed(lastLag map[int32]int64) bool {
-	for _, lag := range lastLag {
+// if I send a lag signal, I should not send another one until the lag is resolved
+func (s *OrderServer) isLastLagFixed() bool {
+	for _, lag := range s.lastLag {
 		if lag != 0 {
 			return false
 		}
@@ -491,18 +499,159 @@ func (s *OrderServer) getNewQuota(rid int32, lc *orderpb.LocalCut) int64 {
 	return lc.Quota
 }
 
+func (s *OrderServer) evalCommittedCut(lcs map[int32]*orderpb.LocalCut) {
+	if s.isLeader { // compute committedCut
+		start := time.Now()
+		ccut := s.computeCommittedCut(lcs)
+		lags := s.getLags(lcs)
+		s.stats.timeToComputeCommittedCut += time.Since(start).Nanoseconds()
+		s.stats.numCommittedCuts++
+		vid := atomic.LoadInt32(&s.viewID)
+		var ce *orderpb.CommittedEntry
+
+		if s.isReadyToAssignQuota() {
+			if s.assignWindow != 0 {
+				s.stats.timeToDecideQuota += time.Since(s.stats.quotaStartTime).Nanoseconds()
+				s.stats.numQuotaDecisions++
+			}
+
+			log.Debugf("Deciding quota for window %v", s.assignWindow)
+			// reset num quota changed
+			s.numQuotaChanged = 0
+
+			// if next window quota does not exist, create it
+			if _, ok := s.quota[s.assignWindow]; !ok {
+				s.quota[s.assignWindow] = make(map[int32]int64)
+			}
+
+			// assign quota to replicas in reserve
+			for rid, q := range s.replicasInReserve {
+				s.quota[s.assignWindow][rid] = q
+			}
+
+			shardsFinalized := false
+			finalizeEntry := &orderpb.FinalizeEntry{ShardIDs: make([]int32, 0)}
+			// iterate over s.replicasFinalize and remove them from the quota for the next window
+			for rid := range s.replicasFinalize {
+				delete(s.quota[s.assignWindow], rid)
+				s.replicasConfirmFinalize[rid] = s.assignWindow - 1
+				shardsFinalized = true
+
+				found := false
+				for _, sid := range finalizeEntry.ShardIDs {
+					if sid == rid/s.dataNumReplica {
+						found = true
+						break
+					}
+				}
+				if !found {
+					finalizeEntry.ShardIDs = append(finalizeEntry.ShardIDs, rid/s.dataNumReplica)
+				}
+			}
+
+			// clear replicas in finalize
+			s.replicasFinalize = make(map[int32]int64)
+
+			// clear replicas in reserve
+			s.replicasInReserve = make(map[int32]int64)
+
+			quota := make(map[int32]int64)
+			for rid, q := range s.quota[s.assignWindow] {
+				quota[rid] = q
+			}
+
+			// increment view ID if new shards
+			// increment view ID if shards leave as well
+			incrViewId := false
+			for rid := range s.quota[s.assignWindow] {
+				if _, ok := s.shards[rid/s.dataNumReplica]; !ok {
+					log.Printf("Incrementing view ID as new shard added")
+					incrViewId = true
+					s.shards[rid/s.dataNumReplica] = true
+				}
+			}
+
+			if incrViewId || shardsFinalized {
+				log.Printf("Incrementing view ID because shardFinalized: %v, incrViewId: %v", shardsFinalized, incrViewId)
+				atomic.AddInt32(&s.viewID, 1)
+				vid = atomic.LoadInt32(&s.viewID)
+			}
+
+			// update window start GSN
+			if s.assignWindow == 0 {
+				s.windowStartGSN[s.assignWindow] = 0
+			} else {
+				sumQuotas := 0
+				for _, q := range s.quota[s.assignWindow-1] {
+					sumQuotas += int(q)
+				}
+				s.windowStartGSN[s.assignWindow] = s.windowStartGSN[s.assignWindow-1] + int64(sumQuotas)*s.localCutChangeWindow
+			}
+
+			// update start committed cut
+			// this will be considered by the newly starting replicas to be the expected previous committed cut
+			for rid := range s.quota[s.assignWindow] {
+				if s.assignWindow == 0 {
+					s.startCommittedCut[rid] = 0
+				} else {
+					_, ok := s.quota[s.assignWindow-1][rid]
+					if ok {
+						s.startCommittedCut[rid] = s.startCommittedCut[rid] + s.quota[s.assignWindow-1][rid]*s.localCutChangeWindow
+					} else {
+						s.startCommittedCut[rid] = 0
+					}
+				}
+			}
+
+			for rid := range s.startCommittedCut {
+				if _, ok := s.quota[s.assignWindow][rid]; !ok {
+					delete(s.startCommittedCut, rid)
+				}
+			}
+
+			prevCutHint := make(map[int32]int64)
+			for rid, cut := range s.startCommittedCut {
+				prevCutHint[rid] = cut
+			}
+
+			// increment window
+			s.assignWindow++
+
+			ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid, WindowStartGSN: s.windowStartGSN[s.assignWindow-1], PrevCut: prevCutHint}, FinalizeShards: finalizeEntry}
+			log.Printf("quota: %v", s.quota[s.assignWindow-1])
+		} else {
+			ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
+		}
+
+		if lagfixEnabled {
+			if s.isSignificantLag(lags) {
+				if s.lastLag == nil || s.isLastLagFixed() {
+					if lagfixExpt {
+						log.Printf("significant lag in cuts: %v", lags)
+					}
+					ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
+					s.getSignificantLags(&lags)
+					ce.CommittedCut.AdjustmentSignal.Lag = lags
+					s.lastLag = lags
+				}
+			}
+		}
+
+		s.proposeC <- ce
+		s.startGSN += s.computeCutDiff(s.prevCut, ccut)
+		s.prevCut = ccut
+	}
+}
+
 // proposeCommit broadcasts entries in commitC to all subCs.
 func (s *OrderServer) processReport() {
 	lcs := make(map[int32]*orderpb.LocalCut) // all local cuts
 	printTicker := time.NewTicker(5 * time.Second)
 	prevPrintCut := make(map[int32]int64)
 
-	// if I send a lag signal, I should not send another one until the lag is resolved
-	// wait for 5 windows before sending another lag signal
-	var lastLag map[int32]int64
-	numCommittedCuts := int64(0)
-	ticker := time.NewTicker(s.batchingInterval)
-	var quotaStartTime time.Time
+	// worst-case periodic committed cuts are triggered by this timer
+	worstCasePeriod := time.Duration(1.5 * float64(s.batchingInterval))
+	timer := time.NewTimer(worstCasePeriod)
 	for {
 		select {
 		case e := <-s.forwardC:
@@ -543,14 +692,14 @@ func (s *OrderServer) processReport() {
 								s.quota[lc.WindowNum+1][id] = s.getNewQuota(id, lc)
 								s.numQuotaChanged++
 								if s.numQuotaChanged == 1 {
-									quotaStartTime = time.Now()
+									s.stats.quotaStartTime = time.Now()
 								}
 							}
 						}
 
 						// when replica fixes lag, mark last lag as zero
 						if lc.Feedback.FixedLag {
-							lastLag[id] = 0
+							s.lastLag[id] = 0
 						}
 
 						lcs[id] = lc
@@ -563,6 +712,25 @@ func (s *OrderServer) processReport() {
 							s.stats.holesFilled[id][lc.LocalCutNum+lc.WindowNum*s.localCutChangeWindow] = lc.Feedback.NumHoles
 						}
 					}
+				}
+
+				// try to see if I can commit a cut
+				lowestWindowNum := getLowestWindowNum(lcs)
+				if lowestWindowNum == math.MaxInt64 {
+					continue
+				}
+				lowestLocalCutNum := s.getLowestLocalCutNum(lcs, lowestWindowNum)
+				if lowestLocalCutNum == math.MaxInt64 {
+					continue
+				}
+				if lowestLocalCutNum != s.prevLowestLocalCutNum || lowestWindowNum != s.prevLowestWindowNum {
+					// log.Printf("Lowest window num, local cut num: %v, %v", lowestWindowNum, lowestLocalCutNum)
+					s.evalCommittedCut(lcs)
+
+					if !timer.Stop() {
+						<-timer.C
+					}
+					timer.Reset(worstCasePeriod)
 				}
 			} else {
 				// TODO: forward to the leader
@@ -621,151 +789,11 @@ func (s *OrderServer) processReport() {
 					log.Printf("Shard %v to be finalized in next avl window", shard.ShardID)
 				}
 			}
-		case <-ticker.C:
+		case <-timer.C:
 			// TODO: check to make sure the key in lcs exist
 			// This thread is responsible for computing the committed cut and proposing it to the Raft node
-			if s.isLeader { // compute committedCut
-				numCommittedCuts++
-				start := time.Now()
-				ccut := s.computeCommittedCut(lcs)
-				lags := s.getLags(lcs)
-				s.stats.timeToComputeCommittedCut += time.Since(start).Nanoseconds()
-				s.stats.numCommittedCuts++
-				vid := atomic.LoadInt32(&s.viewID)
-				var ce *orderpb.CommittedEntry
-
-				if s.isReadyToAssignQuota() {
-					if s.assignWindow != 0 {
-						s.stats.timeToDecideQuota += time.Since(quotaStartTime).Nanoseconds()
-						s.stats.numQuotaDecisions++
-					}
-
-					log.Debugf("Deciding quota for window %v", s.assignWindow)
-					// reset num quota changed
-					s.numQuotaChanged = 0
-
-					// if next window quota does not exist, create it
-					if _, ok := s.quota[s.assignWindow]; !ok {
-						s.quota[s.assignWindow] = make(map[int32]int64)
-					}
-
-					// assign quota to replicas in reserve
-					for rid, q := range s.replicasInReserve {
-						s.quota[s.assignWindow][rid] = q
-					}
-
-					shardsFinalized := false
-					finalizeEntry := &orderpb.FinalizeEntry{ShardIDs: make([]int32, 0)}
-					// iterate over s.replicasFinalize and remove them from the quota for the next window
-					for rid := range s.replicasFinalize {
-						delete(s.quota[s.assignWindow], rid)
-						s.replicasConfirmFinalize[rid] = s.assignWindow - 1
-						shardsFinalized = true
-
-						found := false
-						for _, sid := range finalizeEntry.ShardIDs {
-							if sid == rid/s.dataNumReplica {
-								found = true
-								break
-							}
-						}
-						if !found {
-							finalizeEntry.ShardIDs = append(finalizeEntry.ShardIDs, rid/s.dataNumReplica)
-						}
-					}
-
-					// clear replicas in finalize
-					s.replicasFinalize = make(map[int32]int64)
-
-					// clear replicas in reserve
-					s.replicasInReserve = make(map[int32]int64)
-
-					quota := make(map[int32]int64)
-					for rid, q := range s.quota[s.assignWindow] {
-						quota[rid] = q
-					}
-
-					// increment view ID if new shards
-					// increment view ID if shards leave as well
-					incrViewId := false
-					for rid := range s.quota[s.assignWindow] {
-						if _, ok := s.shards[rid/s.dataNumReplica]; !ok {
-							log.Printf("Incrementing view ID as new shard added")
-							incrViewId = true
-							s.shards[rid/s.dataNumReplica] = true
-						}
-					}
-
-					if incrViewId || shardsFinalized {
-						log.Printf("Incrementing view ID because shardFinalized: %v, incrViewId: %v", shardsFinalized, incrViewId)
-						atomic.AddInt32(&s.viewID, 1)
-						vid = atomic.LoadInt32(&s.viewID)
-					}
-
-					// update window start GSN
-					if s.assignWindow == 0 {
-						s.windowStartGSN[s.assignWindow] = 0
-					} else {
-						sumQuotas := 0
-						for _, q := range s.quota[s.assignWindow-1] {
-							sumQuotas += int(q)
-						}
-						s.windowStartGSN[s.assignWindow] = s.windowStartGSN[s.assignWindow-1] + int64(sumQuotas)*s.localCutChangeWindow
-					}
-
-					// update start committed cut
-					// this will be considered by the newly starting replicas to be the expected previous committed cut
-					for rid := range s.quota[s.assignWindow] {
-						if s.assignWindow == 0 {
-							s.startCommittedCut[rid] = 0
-						} else {
-							_, ok := s.quota[s.assignWindow-1][rid]
-							if ok {
-								s.startCommittedCut[rid] = s.startCommittedCut[rid] + s.quota[s.assignWindow-1][rid]*s.localCutChangeWindow
-							} else {
-								s.startCommittedCut[rid] = 0
-							}
-						}
-					}
-
-					for rid := range s.startCommittedCut {
-						if _, ok := s.quota[s.assignWindow][rid]; !ok {
-							delete(s.startCommittedCut, rid)
-						}
-					}
-
-					prevCutHint := make(map[int32]int64)
-					for rid, cut := range s.startCommittedCut {
-						prevCutHint[rid] = cut
-					}
-
-					// increment window
-					s.assignWindow++
-
-					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut, ShardQuotas: quota, IsShardQuotaUpdated: true, WindowNum: s.assignWindow - 1, ViewID: vid, WindowStartGSN: s.windowStartGSN[s.assignWindow-1], PrevCut: prevCutHint}, FinalizeShards: finalizeEntry}
-					log.Printf("quota: %v", s.quota[s.assignWindow-1])
-				} else {
-					ce = &orderpb.CommittedEntry{Seq: 0, ViewID: vid, CommittedCut: &orderpb.CommittedCut{StartGSN: s.startGSN, Cut: ccut}, FinalizeShards: nil}
-				}
-
-				if lagfixEnabled {
-					if s.isSignificantLag(lags) {
-						if lastLag == nil || s.isLastLagFixed(lastLag) {
-							if lagfixExpt {
-								log.Printf("significant lag in cuts: %v", lags)
-							}
-							ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
-							s.getSignificantLags(&lags)
-							ce.CommittedCut.AdjustmentSignal.Lag = lags
-							lastLag = lags
-						}
-					}
-				}
-
-				s.proposeC <- ce
-				s.startGSN += s.computeCutDiff(s.prevCut, ccut)
-				s.prevCut = ccut
-			}
+			s.evalCommittedCut(lcs)
+			timer.Reset(worstCasePeriod)
 		case <-printTicker.C:
 			for rid, cut := range s.prevCut {
 				log.Printf("replica %v: %v [+%v]", rid, cut, cut-prevPrintCut[rid])
