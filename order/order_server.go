@@ -270,6 +270,7 @@ func (s *OrderServer) adjustToMinimums(rid int32, lc *orderpb.LocalCut, windowNu
 	if lc.WindowNum > windowNum {
 		if lc.WindowNum-1 != windowNum {
 			log.Errorf("error: theoretically unreachable code, replicas can only be 1 window apart")
+			log.Panicf("rid: %v, lc: %v, windowNum: %v, localCutNum: %v", rid, lc, windowNum, localCutNum)
 			return -1
 		}
 		adjustedCut -= (lc.LocalCutNum + 1) * s.quota[lc.WindowNum][rid]
@@ -293,16 +294,22 @@ func (s *OrderServer) isReadyToAssignQuota(failedNum int) bool {
 // this function finds the amount of lag in the cuts across all replicas
 // the lag is the difference between the cut number of a replica and the highest cut number across all replicas
 // where, cut number = windowNumber * localCutChangeWindow + localCutNumber
-func (s *OrderServer) getLags(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
+func (s *OrderServer) getLags(lcs map[int32]*orderpb.LocalCut, ignore map[int32]interface{}) map[int32]int64 {
 	lags := make(map[int32]int64)
 	highestCut := int64(0)
-	for _, lc := range lcs {
+	for rid, lc := range lcs {
+		if _, ok := ignore[rid]; ok {
+			continue
+		}
 		cutNum := lc.WindowNum*s.localCutChangeWindow + lc.LocalCutNum
 		if cutNum > highestCut {
 			highestCut = cutNum
 		}
 	}
 	for rid, lc := range lcs {
+		if _, ok := ignore[rid]; ok {
+			continue
+		}
 		cutNum := lc.WindowNum*s.localCutChangeWindow + lc.LocalCutNum
 		lags[rid] = highestCut - cutNum
 	}
@@ -483,8 +490,9 @@ func (s *OrderServer) processReport() {
 	var lastLag map[int32]int64
 	lastLagTime := make(map[int32]time.Time)
 	numFailed := int(0)
+	lastWindowNumForFailed := int64(0)
 
-	failedReplicas := make(map[int32]int64, 0) // committed cut number at the time of failure
+	failedReplicas := make(map[int32]interface{}, 0) // committed cut number at the time of failure
 	numCommittedCuts := int64(0)
 	ticker := time.NewTicker(s.batchingInterval)
 	var quotaStartTime time.Time
@@ -618,6 +626,24 @@ func (s *OrderServer) processReport() {
 				failedReplicasSlice := make([]int32, 0) //xxx
 
 				ccut := s.computeCommittedCut(lcs)
+				if len(failedReplicas) > 0 {
+					lowestWindowNum := getLowestWindowNum(lcs)
+					if lowestWindowNum == lastWindowNumForFailed {
+						if s.getLowestLocalCutNum(lcs, lowestWindowNum) == s.localCutChangeWindow-1 {
+							for rid := range failedReplicas {
+								delete(lcs, rid)
+							}
+							failedReplicas = make(map[int32]interface{})
+							numFailed = 0
+							lastWindowNumForFailed = 0
+							log.Printf("live replicas have surpassed failed replicas")
+						}
+					}
+				}
+
+				isNextQuotaAssigned := func(windowNum int64) bool {
+					return windowNum < s.assignWindow-1
+				}
 
 				for rid, t := range lastLagTime {
 					if time.Since(t).Milliseconds() >= lagfixTimeThresMs {
@@ -628,21 +654,42 @@ func (s *OrderServer) processReport() {
 						}
 						for i := int32(0); i < s.dataNumReplica; i++ { // then all replicas in the same physical shard are failed
 							rid := sid*s.dataNumReplica + i
-							failedReplicas[rid] = ccut[rid]
+							failedReplicas[rid] = struct{}{}
 							numFailed++
-							delete(lcs, rid)
+							// delete(lcs, rid)
 							delete(s.replicasInReserve, rid) // don't know if this is required, do it for safe
 							delete(lastLagTime, rid)
 							failedReplicasSlice = append(failedReplicasSlice, rid)
 							if _, ok := s.quota[s.assignWindow][rid]; ok {
 								s.numQuotaChanged--
 							}
+
+							log.Debugf("localCut %v before adjustig: %v", rid, lcs[rid])
+
+							lc := lcs[rid]
+							lc.Cut[i] = lc.Cut[i] - (lc.LocalCutNum+1)*lc.Quota + s.localCutChangeWindow*lc.Quota
+							lc.LocalCutNum = s.localCutChangeWindow - 1 // pretend that the current window is fully filled
+
+							if isNextQuotaAssigned(lc.WindowNum) {
+								log.Printf("quota assigned for replica %v", rid)
+								lc.Quota = s.quota[lc.WindowNum+1][rid]
+								lc.Cut[i] += s.localCutChangeWindow * lc.Quota // also pretend that the next window is fully filled
+								lc.WindowNum++
+							}
+
+							lastWindowNumForFailed = lc.WindowNum
+
+							log.Debugf("localCut %v after adjustig: %v", rid, lcs[rid])
 						}
-						log.Printf("replicas failed together: %v", failedReplicasSlice)
+						log.Printf("replicas failed together: %v, last windowNum for failed ones to remain %v", failedReplicasSlice, lastWindowNumForFailed)
 					}
 				}
+				if len(failedReplicasSlice) > 0 {
+					atomic.AddInt32(&s.viewID, 1)
+					log.Printf("Incrementing view ID to %v as replicas failed", s.viewID)
+				}
 
-				lags := s.getLags(lcs)
+				lags := s.getLags(lcs, failedReplicas)
 				s.stats.timeToComputeCommittedCut += time.Since(start).Nanoseconds()
 				s.stats.numCommittedCuts++
 				vid := atomic.LoadInt32(&s.viewID)

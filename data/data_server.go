@@ -176,7 +176,6 @@ type DataServer struct {
 	quotas                        map[int64](map[int32]int64) // quotas for each window
 	views                         map[int64]int32             // viewID in which each window is supposed to be committed
 	nextAssignableWindowAndQuotas chan *WindowAndQuota
-	failedShardNotifyC            chan []int32
 
 	// hole filling
 	nextCSNForHole  int32
@@ -245,7 +244,6 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.speculativeSubC = make(chan *datapb.Record, 4096)
 	s.speculationConfC = make(chan *datapb.Record, 4096)
 	s.nextAssignableWindowAndQuotas = make(chan *WindowAndQuota, 4096)
-	s.failedShardNotifyC = make(chan []int32, 4)
 	s.confirmationRecords = make(map[int64]*datapb.Record)
 	s.views = make(map[int64]int32)
 	// s.outstandingCuts = make(chan bool, 2)
@@ -613,15 +611,6 @@ func (s *DataServer) processSingleRecord(record *datapb.Record, nextGsn *int64, 
 
 		// advance local cut number
 		*localCutNum++
-
-		select {
-		case failedShards := <-s.failedShardNotifyC:
-			for _, rid := range failedShards {
-				delete((*quotas), rid)
-				log.Printf("replica %v failed and deleted from quota", rid)
-			}
-		default:
-		}
 
 		if *localCutNum == s.numLocalCutsThreshold {
 			// we have advanced by a window
@@ -1174,8 +1163,7 @@ func (s *DataServer) processCommittedEntry() {
 			// update quota if new quota is received
 			rid := s.shardID*s.numReplica + s.replicaID
 			if len(entry.FailedShards) > 0 {
-				log.Printf("receive failed shards: %v", entry.FailedShards)
-				s.failedShardNotifyC <- entry.FailedShards
+				log.Printf("receive failed shards: %v, entry: %v", entry.FailedShards, entry)
 			}
 			if entry.CommittedCut.IsShardQuotaUpdated {
 				_, quotaExists := s.quotas[entry.CommittedCut.WindowNum]
