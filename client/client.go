@@ -40,6 +40,7 @@ type SpeculationConf struct {
 type CommittedRecord struct {
 	GSN    int64
 	Record string
+	RecordId int32
 }
 
 type Client struct {
@@ -639,6 +640,24 @@ func (c *Client) FilterSubscribe(gsn int64, readerId int32, filterValue int32) (
 	return c.subC, c.confC, nil
 }
 
+func (c *Client) FilterSubscribeDouble(gsn int64, readerId int32, readerId2 int32, filterValue int32) (chan CommittedRecord, chan SpeculationConf, error) {
+	c.committedRecordsMu.Lock()
+	c.nextGSN = gsn
+	c.nextConf = gsn
+	c.committedRecordsMu.Unlock()
+
+	for _, shard := range c.view.LiveShards {
+		for replicaId := int32(0); replicaId < c.numReplica; replicaId++ {
+			go c.filterSubscribeShardServerDouble(shard, replicaId, readerId, readerId2, filterValue)
+		}
+
+		c.shardsSubscribedTo[shard] = true
+	}
+	c.isReader = true
+
+	return c.subC, c.confC, nil
+}
+
 func (c *Client) filterSubscribeShardServer(shard, replica int32, readerId int32, filterValue int32) {
 	conn, err := c.getDataServerConn(shard, replica)
 	if err != nil {
@@ -678,6 +697,65 @@ func (c *Client) filterSubscribeShardServer(shard, replica int32, readerId int32
 			c.committedRecords[record.GlobalSN] = CommittedRecord{
 				GSN:    record.GlobalSN,
 				Record: record.Record,
+			}
+			if record.GlobalSN == c.nextGSN {
+				c.respondToClient()
+			}
+		} else {
+			// this is a speculation confirmation
+			c.speculationConfs[record.GlobalSN] = record
+			if record.GlobalSN == c.nextConf {
+				c.confirmToClient()
+			}
+		}
+
+		c.committedRecordsMu.Unlock()
+		// TODO(shreesha): handle view change
+	}
+}
+
+func (c *Client) filterSubscribeShardServerDouble(
+	shard, replica int32, readerId int32, readerId2 int32, filterValue int32) {
+	conn, err := c.getDataServerConn(shard, replica)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	opts := []grpc.CallOption{}
+	dataClient := datapb.NewDataClient(conn)
+	packed := (readerId << 16) | (readerId2 & 0xFFFF) // pack two reader ids
+	globalSN := &datapb.FilterGlobalSN{GSN: c.nextGSN, ReaderID: packed, FilterValue: filterValue}
+	stream, err := dataClient.FilterSubscribeDouble(context.Background(), globalSN, readerId2, opts...)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	for {
+		record, err := stream.Recv()
+		if err == io.EOF {
+			log.Infof("Receive subscribe stream closed.")
+			return
+		}
+		if err != nil {
+			log.Errorf("%v", err)
+			return
+		}
+		c.committedRecordsMu.Lock()
+		if record.ClientID != -1 {
+			for _, gsn := range record.MissedRecords {
+				c.committedRecords[gsn] = CommittedRecord{
+					GSN:    gsn,
+					Record: "",
+				}
+				if gsn == c.nextGSN {
+					c.respondToClient()
+				}
+			}
+
+			c.committedRecords[record.GlobalSN] = CommittedRecord{
+				GSN:    record.GlobalSN,
+				Record: record.Record,
+				RecordId: record.recordId,
 			}
 			if record.GlobalSN == c.nextGSN {
 				c.respondToClient()
