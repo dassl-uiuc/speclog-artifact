@@ -21,10 +21,14 @@ func Start() {
 	log.Infof("%v: %v", "sid", sid)
 	rid := int32(viper.GetInt("rid"))
 	log.Infof("%v: %v", "rid", rid)
-	StartData(sid, rid)
+	rate := viper.GetFloat64("rate")
+	log.Infof("%v: %v", "rate", rate)
+	numShards := int64(viper.GetInt("num_shards"))
+	log.Infof("%v: %v", "num_shards", numShards)
+	StartData(sid, rid, rate, numShards)
 }
 
-func StartData(sid, rid int32) {
+func StartData(sid, rid int32, rate float64, numShards int64) {
 	// read configuration
 	numReplica := int32(viper.GetInt("data-replication-factor"))
 	log.Infof("%v: %v", "data-replication-factor", numReplica)
@@ -61,7 +65,7 @@ func StartData(sid, rid int32) {
 	healthServer.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
 	healthgrpc.RegisterHealthServer(grpcServer, healthServer)
 	// data server
-	server := NewDataServer(rid, sid, numReplica, batchingInterval, generalDataAddr, generalOrderAddr)
+	server := NewDataServer(rid, sid, numReplica, batchingInterval, generalDataAddr, generalOrderAddr, numShards, rate)
 	if server == nil {
 		log.Fatalf("Failed to create data server")
 	}

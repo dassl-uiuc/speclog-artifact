@@ -1,0 +1,3 @@
+# Use goreman to run `go get github.com/mattn/goreman`
+
+data-21-0: ../../scalog data --config=../../.scalog.yaml --sid=21 --rid=0 --rate=$RATE --num_shards=$NUM_SHARDS

@@ -76,19 +76,19 @@ start_order_nodes() {
     done
 }
 
-# args: numshards
+# args: numshards, rate
 start_data_nodes() {
     # start data nodes
     for ((i=0; i<$1; i++))
     do
         echo "Starting primary for shard $i on ${data_pri[$i]}"
-        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[$i]} "sh -c \"cd $benchmark_dir/data-$i-0; nohup ./run_goreman.sh > ${LOGDIR}/data-$i-0.log 2>&1 &\""
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[$i]} "sh -c \"cd $benchmark_dir/data-$i-0; RATE=$2 NUM_SHARDS=$1 nohup ./run_goreman.sh > ${LOGDIR}/data-$i-0.log 2>&1 &\""
     done
 
     for ((i=0; i<$1; i++))
     do
         echo "Starting secondary for shard $i on ${data_sec[$i]}"
-        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_sec[$i]} "sh -c \"cd $benchmark_dir/data-$i-1; nohup ./run_goreman.sh > ${LOGDIR}/data-$i-1.log 2>&1 &\""
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_sec[$i]} "sh -c \"cd $benchmark_dir/data-$i-1; RATE=$2 NUM_SHARDS=$1 nohup ./run_goreman.sh > ${LOGDIR}/data-$i-1.log 2>&1 &\""
     done
 }
 

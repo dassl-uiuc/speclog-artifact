@@ -220,16 +220,16 @@ type DataServer struct {
 	// in such a case we buffer the confirmation records in the subsequent array @confirmationRecords and send them only after the actual records have been submitted to the clients
 	confirmationRecords map[int64]*datapb.Record
 
-	startLoad chan bool
-
-	// emulation stats
-	emulationStats EmulationStats
-
+	// emulation stuff
+	emulationStats            EmulationStats
 	emulationOutstandingLimit int64
 	emulationOutstanding      chan bool
+	emulationShardCount       int64
+	emulatedRate              float64
+	startLoad                 chan bool
 }
 
-func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
+func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr, numShards int64, rate float64) *DataServer {
 	var err error
 	s := &DataServer{
 		replicaID:        replicaID,
@@ -284,6 +284,9 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.emulationStats.emulationAppendLatency = hdrhistogram.New(1, 1000000000, 5)
 	s.emulationStats.emulationDeliveryLatency = hdrhistogram.New(1, 1000000000, 5)
 	s.emulationStats.emulationAppendStart = make(map[int64]time.Time)
+
+	s.emulatedRate = rate
+	s.emulationShardCount = numShards
 
 	s.quota = 10
 	s.localCutNum = -1
@@ -411,7 +414,7 @@ func (s *DataServer) Start() {
 		// if reconfigExpt {
 		// 	go s.finalizeShardStandby()
 		// }
-		go s.emulationLoadGenerator(10000, 120)
+		go s.emulationLoadGenerator(int(s.emulatedRate), 120)
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)
@@ -979,10 +982,6 @@ func (s *DataServer) finalizeShard() {
 
 func (s *DataServer) incrementWindowNumber() {
 	s.windowNumber++
-	if s.windowNumber == 50 {
-		log.Printf("window number reached 50")
-		s.startLoad <- true
-	}
 }
 
 func (s *DataServer) reportLocalCut() {
@@ -1292,6 +1291,10 @@ func (s *DataServer) processCommittedEntry() {
 				if !quotaExists {
 					s.quotas[entry.CommittedCut.WindowNum] = entry.CommittedCut.ShardQuotas
 					s.views[entry.CommittedCut.WindowNum] = entry.CommittedCut.ViewID
+					// trigger load start once specified number of shards have joined
+					if len(s.quotas) == int(s.emulationShardCount)*2 {
+						s.startLoad <- true
+					}
 				}
 				if quota, ok := entry.CommittedCut.ShardQuotas[rid]; ok {
 					if s.windowNumber == -1 {
@@ -1583,7 +1586,7 @@ func (s *DataServer) emulationLoadGenerator(rate int, runtimeSecs int) {
 			return
 		default:
 			// rlim.WaitN(context.Background(), 10)
-			for i := 0; i < 10; i++ {
+			for i := 0; i < rate/1000; i++ {
 				record := &datapb.Record{
 					ClientID: clientID,
 					ClientSN: clientSN,
