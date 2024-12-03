@@ -54,7 +54,7 @@ func StartK8s() {
 	healthServer.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
 	healthgrpc.RegisterHealthServer(grpcServer, healthServer)
 	// data server
-	server := NewDataServer(rid, sid, numReplica, batchingInterval, k8sDataAddr, k8sOrderAddr)
+	server := NewDataServer(rid, sid, numReplica, batchingInterval, k8sDataAddr, k8sOrderAddr, 0, 0)
 	if server == nil {
 		log.Fatalf("Failed to create data server")
 	}

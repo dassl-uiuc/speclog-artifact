@@ -74,7 +74,7 @@ EOL
     cat <<EOL > $dir/Procfile
 # Use goreman to run \`go get github.com/mattn/goreman\`
 
-data-$j-$i: ../../scalog data --config=../../.scalog.yaml --sid=$j --rid=$i
+data-$j-$i: ../../scalog data --config=../../.scalog.yaml --sid=$j --rid=$i --rate=\$RATE --num_shards=\$NUM_SHARDS
 EOL
   done
 done

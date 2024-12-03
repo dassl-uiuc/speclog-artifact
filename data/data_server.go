@@ -15,7 +15,6 @@ import (
 	"github.com/scalog/scalog/order/orderpb"
 	"github.com/scalog/scalog/pkg/address"
 	"github.com/scalog/scalog/storage"
-	rateLimiter "golang.org/x/time/rate"
 	"google.golang.org/grpc"
 )
 
@@ -122,9 +121,11 @@ type DataServer struct {
 
 	emulationOutstandingLimit int64
 	emulationOutstanding      chan bool
+	emulationShardCount       int64
+	emulatedRate              float64
 }
 
-func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
+func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr, numShards int64, rate float64) *DataServer {
 	var err error
 	s := &DataServer{
 		replicaID:        replicaID,
@@ -173,6 +174,8 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.emulationStats.emulationAppendLatency = hdrhistogram.New(1, 1000000000, 5)
 	s.emulationStats.emulationDeliveryLatency = hdrhistogram.New(1, 1000000000, 5)
 	s.emulationStats.emulationAppendStart = make(map[int64]time.Time)
+	s.emulatedRate = rate
+	s.emulationShardCount = numShards
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -276,7 +279,7 @@ func (s *DataServer) Start() {
 		if reconfigExpt {
 			go s.finalizeShardStandby()
 		}
-		go s.emulationLoadGenerator(10000, 120)
+		go s.emulationLoadGenerator(int(s.emulatedRate), 120)
 		return
 	}
 	log.Errorf("Error creating data s sid=%v,rid=%v", s.shardID, s.replicaID)
@@ -789,26 +792,39 @@ func (s *DataServer) WaitForAck(cid, csn int32) *datapb.Ack {
 	return ack
 }
 
-func (s *DataServer) emulationLoadGenerator(rate int, runtimeSecs int) {
-	// wait for start load signal
-	time.Sleep(10 * time.Second) // wait for all shards to connect
-
-	timer := time.NewTimer(time.Duration(runtimeSecs) * time.Second)
-	rlim := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 10)
-	clientID := rand.Int31() // random client id
-	clientSN := int32(0)     // start with 0
+func (s *DataServer) printStats(stop chan bool) {
+	ticker := time.NewTicker(5 * time.Second)
 	for {
 		select {
-		case <-timer.C:
-			time.Sleep(5 * time.Second)
+		case <-ticker.C:
+			s.emulationStats.emulationMapMu.Lock()
 			log.Printf("emulation statistics/metric, append/confirmation latency (us), delivery latency (us), confirmation latency (us)")
 			log.Printf("mean, %v, %v", s.emulationStats.emulationAppendLatency.Mean()/1e3, s.emulationStats.emulationDeliveryLatency.Mean()/1e3)
 			log.Printf("p50, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(50.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(50.0)/1e3)
 			log.Printf("p99, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(99.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(99.0)/1e3)
+			s.emulationStats.emulationMapMu.Unlock()
+		case <-stop:
+			return
+		}
+	}
+}
+
+func (s *DataServer) emulationLoadGenerator(rate int, runtimeSecs int) {
+	time.Sleep(10 * time.Second)
+	stop := make(chan bool)
+	go s.printStats(stop)
+	timer := time.NewTimer(time.Duration(runtimeSecs) * time.Second)
+	// rlim := rateLimiter.NewLimiter(rateLimiter.Limit(rate), 10)
+	clientID := rand.Int31() // generate a new random id
+	clientSN := int32(0)     // start with 0
+	for {
+		select {
+		case <-timer.C:
+			stop <- true
 			return
 		default:
-			rlim.WaitN(context.Background(), 10)
-			for i := 0; i < 10; i++ {
+			// rlim.WaitN(context.Background(), 10)
+			for i := 0; i < rate/1000; i++ {
 				record := &datapb.Record{
 					ClientID: clientID,
 					ClientSN: clientSN,
@@ -817,6 +833,11 @@ func (s *DataServer) emulationLoadGenerator(rate int, runtimeSecs int) {
 				s.emulationOutstanding <- true
 				s.appendC <- record
 				clientSN++
+			}
+			startTs := time.Now()
+			sleepTime := time.Millisecond
+			for time.Since(startTs) < sleepTime {
+				// wait
 			}
 		}
 	}

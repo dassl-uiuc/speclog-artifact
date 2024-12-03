@@ -2,7 +2,8 @@
 
 source ./common.sh
 
-num_shards=(20)
+num_shards=(5 10 15 20 25 30 35 40)
+rate=10000
 for num_shard in "${num_shards[@]}"
 do
     echo "Running emulation for $num_shard shards"
@@ -13,7 +14,7 @@ do
 
     start_order_nodes
     start_discovery
-    start_data_nodes ${num_shard}
+    start_data_nodes ${num_shard} ${rate}
 
     sleep 140
 
@@ -25,6 +26,3 @@ do
     mkdir -p "$benchmark_dir/results/emulation_$num_shard"
     mv $benchmark_dir/logs/* "$benchmark_dir/results/emulation_$num_shard"
 done 
-
-
-

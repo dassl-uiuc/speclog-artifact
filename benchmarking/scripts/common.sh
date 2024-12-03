@@ -8,8 +8,8 @@ LOGDIR="/data"
 order=("node0" "node1" "node2")
 
 # index into remote_nodes/ips for data shards
-data_pri=("node3" "node5" "node7" "node9" "node11" "node3" "node5" "node7" "node9" "node11" "node3" "node5" "node7" "node9" "node11" "node3" "node5" "node7" "node9" "node11")
-data_sec=("node4" "node6" "node8" "node10" "node12" "node4" "node6" "node8" "node10" "node12" "node4" "node6" "node8" "node10" "node12" "node4" "node6" "node8" "node10" "node12")
+data_pri=("node3" "node5" "node7" "node9" "node11" "node3" "node5" "node7" "node9" "node11" "node3" "node5" "node7" "node9" "node11" "node3" "node5" "node7" "node9" "node11" "node3" "node5" "node7" "node9" "node11" "node3" "node5" "node7" "node9" "node11" "node3" "node5" "node7" "node9" "node11" "node3" "node5" "node7" "node9" "node11")
+data_sec=("node4" "node6" "node8" "node10" "node12" "node4" "node6" "node8" "node10" "node12" "node4" "node6" "node8" "node10" "node12" "node4" "node6" "node8" "node10" "node12" "node4" "node6" "node8" "node10" "node12" "node4" "node6" "node8" "node10" "node12" "node4" "node6" "node8" "node10" "node12" "node4" "node6" "node8" "node10" "node12")
 
 client_nodes=("node13" "node14" "node15")
 intrusion_detection_dir="../../applications/vanilla_applications/intrusion_detection"
@@ -75,19 +75,19 @@ start_order_nodes() {
     done
 }
 
-# args: numshards
+# args: numshards, rate
 start_data_nodes() {
     # start data nodes
     for ((i=0; i<$1; i++))
     do
         echo "Starting primary for shard $i on ${data_pri[$i]}"
-        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[$i]} "sh -c \"cd $benchmark_dir/data-$i-0; nohup ./run_goreman.sh > ${LOGDIR}/data-$i-0.log 2>&1 &\""
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[$i]} "sh -c \"cd $benchmark_dir/data-$i-0; RATE=$2 NUM_SHARDS=$1 nohup ./run_goreman.sh > ${LOGDIR}/data-$i-0.log 2>&1 &\""
     done
 
     for ((i=0; i<$1; i++))
     do
         echo "Starting secondary for shard $i on ${data_sec[$i]}"
-        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_sec[$i]} "sh -c \"cd $benchmark_dir/data-$i-1; nohup ./run_goreman.sh > ${LOGDIR}/data-$i-1.log 2>&1 &\""
+        ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_sec[$i]} "sh -c \"cd $benchmark_dir/data-$i-1; RATE=$2 NUM_SHARDS=$1 nohup ./run_goreman.sh > ${LOGDIR}/data-$i-1.log 2>&1 &\""
     done
 }
 
