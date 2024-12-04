@@ -22,6 +22,8 @@ const NumberOfRequest = 10
 const NumberOfBytes = 100
 const StreamName = "AppendBenchmark"
 
+var viewID int32 = 0
+
 type tuple struct {
 	gsn   int64
 	shard int32
@@ -35,7 +37,7 @@ func appendOne(cli *client.Client, timeLimit time.Duration, numberOfBytes int, r
 	var runTimes []time.Duration
 	var numberOfRequest int
 
-	startTime := time.Now()
+	// startTime := time.Now()
 
 	fmt.Println("starting client with rate limit: ", rate)
 
@@ -83,16 +85,21 @@ func appendOne(cli *client.Client, timeLimit time.Duration, numberOfBytes int, r
 		default:
 		}
 	}
-	endTime := time.Now()
+	// endTime := time.Now()
 
-	util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
+	// util.LogCsvFile(numberOfRequest, numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
 }
 
-func ack(cli *client.Client, runEndTimes *[]time.Time, stop chan bool) {
+func ack(cli *client.Client, runEndTimes *[]time.Time, GSNs *[]int64, stop chan bool) {
 	for {
 		select {
-		case <-cli.AckC:
+		case a := <-cli.AckC:
 			*runEndTimes = append(*runEndTimes, time.Now())
+			*GSNs = append(*GSNs, a.GlobalSN)
+			if a.ViewID != viewID {
+				viewID = a.ViewID
+				log.Printf("viewID changed to %v", viewID)
+			}
 		case <-stop:
 			return
 		}
@@ -109,7 +116,7 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 	var numberOfRequest int
 
 	stop := make(chan bool)
-	go ack(cli, &runEndTimes, stop)
+	go ack(cli, &runEndTimes, &GSNs, stop)
 
 	startTime := time.Now()
 	numberOfRequest = 0
@@ -129,9 +136,8 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 		record := strings.Repeat("a", numberOfBytes)
 		dataGenEndTime := time.Now()
 
-		var gsn int64
 		var shard int32
-		gsn, shard, err = cli.Append(record)
+		_, shard, err = cli.Append(record)
 		runStartTimes = append(runStartTimes, time.Now())
 
 		if err != nil {
@@ -139,7 +145,6 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 			goto end
 		}
 
-		GSNs = append(GSNs, gsn)
 		shardIds = append(shardIds, shard)
 		dataGenTimes = append(dataGenTimes, dataGenEndTime.Sub(dataGenStartTime))
 		numberOfRequest++
@@ -160,7 +165,7 @@ func appendStream(cli *client.Client, timeLimit time.Duration, numberOfBytes int
 		runTimes = append(runTimes, runEndTimes[i].Sub(runStartTimes[i]))
 	}
 
-	util.LogCsvFile(len(runEndTimes), numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, dataGenTimes, fileName)
+	util.LogCsvFile(len(runEndTimes), numberOfBytes*numberOfRequest, endTime.Sub(startTime), GSNs, shardIds, runTimes, runEndTimes, fileName)
 }
 
 func main() {

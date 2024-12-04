@@ -123,7 +123,7 @@ elif [ "$mode" -eq 1 ]; then # append experiment mode
                 fi
                 
                 # start_append_clients <client_id> <num_of_clients_to_run> <num_appends_per_client> <total_clients> <interval> <start_sharding_hint> <append_mode> <rate>
-                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "2m" $c $interval $jobs "append" ${rates[$j]}
+                start_append_clients "${client_nodes[$i]}" $num_jobs_for_client "1m" $c $interval $jobs "append" ${rates[$j]}
 
                 jobs=$(($jobs + $num_jobs_for_client))
             done

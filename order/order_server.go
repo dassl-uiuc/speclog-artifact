@@ -15,7 +15,8 @@ import (
 	"go.etcd.io/etcd/raft/raftpb"
 )
 
-const reconfigExpt bool = false
+const reconfigExpt bool = true
+const failExpt bool = true
 const lagfixExpt bool = false
 const lagfixEnabled bool = true
 const lagfixThres float64 = 0.03
@@ -647,7 +648,10 @@ func (s *OrderServer) processReport() {
 
 				for rid, t := range lastLagTime {
 					if time.Since(t).Milliseconds() >= lagfixTimeThresMs {
-						log.Printf("replica %v is DOWN! overtime %v", rid, time.Since(t).Milliseconds())
+						log.Printf("replica %v is DOWN! overtime: %v", rid, time.Since(t).Milliseconds())
+						log.Printf("[fail detected] %v", time.Now().Format("2006/01/02 15:04:05.000000"))
+						log.Printf("[lag detected] %v", t.Format("2006/01/02 15:04:05.000000"))
+						log.Printf("[last cut] %v", s.lastCutTime[rid].Format("2006/01/02 15:04:05.000000"))
 						sid := rid / s.dataNumReplica
 						if _, ok := failedReplicas[rid]; ok {
 							continue
@@ -878,7 +882,9 @@ func (s *OrderServer) processCommit() {
 	for e := range s.commitC {
 		if s.isLeader {
 			if reconfigExpt || lagfixExpt {
-				log.Printf("%v", e)
+				if len(e.FailedShards) > 0 {
+					log.Printf("[cut commit]: %v", time.Now().Format("2006/01/02 15:04:05.000000"))
+				}
 			} else {
 				log.Debugf("%v", e)
 			}

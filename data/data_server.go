@@ -1165,6 +1165,9 @@ func (s *DataServer) processCommittedEntry() {
 			if len(entry.FailedShards) > 0 {
 				log.Printf("receive failed shards: %v, entry: %v", entry.FailedShards, entry)
 			}
+			if atomic.CompareAndSwapInt32(&s.viewID, entry.ViewID-1, entry.ViewID) {
+				log.Printf("view Id increased from %v to %v", entry.ViewID-1, s.viewID)
+			}
 			if entry.CommittedCut.IsShardQuotaUpdated {
 				_, quotaExists := s.quotas[entry.CommittedCut.WindowNum]
 				if !quotaExists {
