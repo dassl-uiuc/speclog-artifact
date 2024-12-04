@@ -51,11 +51,11 @@ func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) error {
 	_, _, err = s.client.AppendToAssignedShard(appenderId, record)
 	if err != nil {
 		log.Errorf("%v", err)
+		return err
 	}
 
 	s.Stats.AppendStartTimeChan <- time.Now()
-
-	return err
+	return nil
 }
 
 func (s *Scalog) Ack() {
