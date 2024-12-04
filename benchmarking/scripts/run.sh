@@ -435,9 +435,9 @@ elif [ "$mode" -eq 8 ]; then
                 for (( k=start; k<start+stride; k++ ));
                 do
                     # Spawn reader clients
-                    start_transaction_analysis_clients "${client_nodes[$j]}" $num_replicas $num_read_clients_per_replica $k
+                    start_hft_clients "${client_nodes[$j]}" $num_replicas $num_read_clients_per_replica $k
                     # Spawn append clients
-                    start_transaction_analysis_generator_clients "${client_nodes[$j]}" $num_replicas $num_append_clients_per_replica $append_type $k
+                    start_hft_generator_clients "${client_nodes[$j]}" $num_replicas $num_append_clients_per_replica $append_type $k
                 done
                 start=$((start + stride))
             done

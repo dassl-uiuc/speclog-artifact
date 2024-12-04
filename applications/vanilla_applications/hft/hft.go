@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/spf13/viper"
 
 	_ "github.com/mattn/go-sqlite3"
+
+	"gonum.org/v1/gonum/mat"
 )
 
 var transactionAnalysisConfigFilePath = "../../applications/vanilla_applications/hft/hft_config.yaml"
@@ -89,7 +92,6 @@ func SeriesVBatchOptimized(dataPointsX []float64, dataPointsY []float64, prevV *
 	return Vt
 }
 
-
 func Compute(records1 []client.CommittedRecord, records2 []client.CommittedRecord) {
 	dataPointsX := make([]float64, len(records1))
 	dataPointsY := make([]float64, len(records2))
@@ -163,11 +165,11 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 			for i := prevOffset; i < offset; i++ {
 				committedRecord := scalogApi.Read(i)
 
-				if committedRecord.RecordId % clientNumber == readerId:
+				if committedRecord.RecordId%int32(clientNumber) == readerId {
 					committedRecords1 = append(committedRecords1, committedRecord)
-				else:
+				} else {
 					committedRecords2 = append(committedRecords2, committedRecord)
-
+				}
 				timeBeginCompute[committedRecord.GSN] = startComputeTime
 			}
 

@@ -1,4 +1,4 @@
 #!/bin/bash
 
-export PATH=$PATH:/users/sgbhat3/go/bin/
+export PATH=$PATH:/users/JiyuHu23/go/bin/
 goreman start

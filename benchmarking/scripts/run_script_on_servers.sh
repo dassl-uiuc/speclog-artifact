@@ -1,7 +1,7 @@
 #!/bin/bash
 
-remote_nodes=("node0" "node1" "node2" "node3" "node4" "node5" "node6" "node7" "node8" "node9" "node10" "node11" "node12")
-PASSLESS_ENTRY="/users/sgbhat3/.ssh/id_rsa"
+remote_nodes=("node0" "node1" "node2" "node3" "node4" "node5" "node6" "node7" "node8" "node9" "node10")
+PASSLESS_ENTRY="/users/JiyuHu23/.ssh/dassl_rsa"
 
 # Check if the local script path is provided as a command line argument
 if [ $# -eq 0 ]; then
@@ -14,7 +14,7 @@ local_script="$1"
 # Iterate over remote nodes and execute the script
 for node in "${remote_nodes[@]}"; do
     echo "Executing script on $node..."
-    ssh -o StrictHostKeyChecking=no -i ${PASSLESS_ENTRY} sgbhat3@$node "sudo bash -s" < "$local_script" &
+    ssh -o StrictHostKeyChecking=no -i ${PASSLESS_ENTRY} JiyuHu23@$node "sudo bash -s" < "$local_script" &
 done
 
 wait 

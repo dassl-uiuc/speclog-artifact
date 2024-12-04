@@ -1,5 +1,5 @@
 #!/bin/bash
-PASSLESS_ENTRY="/users/JiyuHu23/.ssh/id_rsa"
+PASSLESS_ENTRY="/users/JiyuHu23/.ssh/dassl_rsa"
 
 benchmark_dir="/proj/rasl-PG0/JiyuHu23/speclog/benchmarking"
 LOGDIR="/data"
@@ -8,10 +8,12 @@ LOGDIR="/data"
 order=("node0" "node1" "node2")
 
 # index into remote_nodes/ips for data shards
-data_pri=("node3" "node5" "node7" "node9" "node11")
-data_sec=("node4" "node6" "node8" "node10" "node12")
+# data_pri=("node3" "node5" "node7" "node9" "node11")
+# data_sec=("node4" "node6" "node8" "node10" "node12")
+data_pri=("node3" "node5" "node7" "node9")
+data_sec=("node4" "node6" "node8" "node10")
 
-client_nodes=("node13" "node14" "node15")
+client_nodes=("node11" "node12")
 intrusion_detection_dir="../../applications/vanilla_applications/intrusion_detection"
 transaction_analysis_dir="../../applications/vanilla_applications/transaction_analysis"
 hft_dir="../../applications/vanilla_applications/hft"
@@ -51,19 +53,19 @@ drop_server_caches() {
 collect_logs() {
     for svr in ${order[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY JiyuHu23@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
     for svr in ${data_pri[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY JiyuHu23@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
     for svr in ${data_sec[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY JiyuHu23@$svr:/data/*.log $benchmark_dir/logs/ &
     done 
     for svr in ${client_nodes[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY JiyuHu23@$svr:/data/*.log $benchmark_dir/logs/ &
     done
     wait
 }
