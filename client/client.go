@@ -18,6 +18,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+const reconfigExpt bool = false
+
 type ShardingPolicy interface {
 	Shard(view *view.View, record string) (int32, int32)
 	AssignSpecificShard(view *view.View, record string, appenderId int32) (int32, int32)
@@ -510,7 +512,16 @@ func (c *Client) processAssignedAppend() {
 }
 
 func (c *Client) AppendToAssignedShard(appenderId int32, record string) (int64, int32, error) {
-	c.outstandingRequestsChan <- true
+	if reconfigExpt {
+		select {
+		case c.outstandingRequestsChan <- true:
+		case <-time.After(1 * time.Second):
+			log.Printf("Timeout waiting for outstanding requests")
+			return 0, 0, fmt.Errorf("timeout")
+		}
+	} else {
+		c.outstandingRequestsChan <- true
+	}
 	r := &datapb.Record{
 		ClientID:   c.clientID,
 		ClientSN:   c.getNextClientSN(),
