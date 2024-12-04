@@ -207,7 +207,7 @@ elif [ "$mode" -eq 4 ]; then # kill servers and clients
 elif [ "$mode" -eq 5 ]; then 
     cleanup_clients
     cleanup_servers
-    collect_logs
+    collect_logs 5
 elif [ "$mode" -eq 6 ]; then
     append_clients=("20")
     read_clients=("2")

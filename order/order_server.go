@@ -14,7 +14,7 @@ import (
 )
 
 const reconfigExpt = false
-const emulation = true
+const emulation = false
 
 type RealTimeTput struct {
 	count atomic.Int64

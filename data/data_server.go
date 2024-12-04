@@ -43,6 +43,7 @@ type EmulationStats struct {
 
 	emulationAppendStart map[int64]time.Time
 	emulationMapMu       sync.Mutex
+	emulationCompleted   int64
 }
 
 type DataServer struct {
@@ -174,6 +175,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.emulationStats.emulationAppendLatency = hdrhistogram.New(1, 1000000000, 5)
 	s.emulationStats.emulationDeliveryLatency = hdrhistogram.New(1, 1000000000, 5)
 	s.emulationStats.emulationAppendStart = make(map[int64]time.Time)
+	s.emulationStats.emulationCompleted = 0
 	s.emulatedRate = rate
 	s.emulationShardCount = numShards
 
@@ -726,6 +728,7 @@ func (s *DataServer) processCommittedEntry() {
 							// }
 							// s.ackC <- ack
 							<-s.emulationOutstanding
+							s.emulationStats.emulationCompleted++
 
 							// update stats for real records
 							recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
@@ -794,15 +797,20 @@ func (s *DataServer) WaitForAck(cid, csn int32) *datapb.Ack {
 
 func (s *DataServer) printStats(stop chan bool) {
 	ticker := time.NewTicker(5 * time.Second)
+	startTime := time.Now()
+	prevEmulationCompleted := int64(0)
 	for {
 		select {
 		case <-ticker.C:
 			s.emulationStats.emulationMapMu.Lock()
-			log.Printf("emulation statistics/metric, append/confirmation latency (us), delivery latency (us), confirmation latency (us)")
+			log.Printf("emulation statistics/metric, append/confirmation latency (us), delivery latency (us)")
 			log.Printf("mean, %v, %v", s.emulationStats.emulationAppendLatency.Mean()/1e3, s.emulationStats.emulationDeliveryLatency.Mean()/1e3)
 			log.Printf("p50, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(50.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(50.0)/1e3)
 			log.Printf("p99, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(99.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(99.0)/1e3)
 			s.emulationStats.emulationMapMu.Unlock()
+			log.Printf("committedRecords: %v [+%v]", float64(s.emulationStats.emulationCompleted), float64(s.emulationStats.emulationCompleted-prevEmulationCompleted))
+			prevEmulationCompleted = s.emulationStats.emulationCompleted
+			log.Printf("tput: %v", float64(s.emulationStats.emulationCompleted)/time.Since(startTime).Seconds())
 		case <-stop:
 			return
 		}
