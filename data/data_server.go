@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +26,7 @@ const lagfixExpt bool = false
 const qcExpt bool = false
 const qcEnabled bool = true
 const postReplicationLoad bool = true
+const staggeringFactor int64 = 4
 
 var qcBurstLSN int64 = -1
 var qcBurstLocalCutNumber int64 = -1
@@ -79,6 +81,7 @@ type EmulationStats struct {
 
 	emulationAppendStart map[int64]time.Time
 	emulationMapMu       sync.Mutex
+	emulationCompleted   int64
 }
 
 func (s *Stats) printStats() {
@@ -130,6 +133,7 @@ type DataServer struct {
 	prevCommittedCut        *orderpb.CommittedCut
 	nextExpectedLocalCutNum int64
 	nextExpectedWindowNum   int64
+	nextRid                 int32
 	// ordering layer information
 	orderAddr   address.OrderAddr
 	orderConn   *grpc.ClientConn
@@ -195,7 +199,8 @@ type DataServer struct {
 	waitForNewQuota               chan int64
 	windowNumber                  int64
 	quotas                        map[int64](map[int32]int64) // quotas for each window
-	views                         map[int64]int32             // viewID in which each window is supposed to be committed
+	sortedReplicaList             map[int64][]int32
+	views                         map[int64]int32 // viewID in which each window is supposed to be committed
 	nextAssignableWindowAndQuotas chan *WindowAndQuota
 
 	// hole filling
@@ -275,6 +280,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.nextAssignableWindowAndQuotas = make(chan *WindowAndQuota, 4096)
 	s.confirmationRecords = make(map[int64]*datapb.Record)
 	s.views = make(map[int64]int32)
+	s.sortedReplicaList = make(map[int64][]int32)
 	s.startLoad = make(chan bool, 1)
 	// s.outstandingCuts = make(chan bool, 2)
 
@@ -284,6 +290,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.emulationStats.emulationAppendLatency = hdrhistogram.New(1, 1000000000, 5)
 	s.emulationStats.emulationDeliveryLatency = hdrhistogram.New(1, 1000000000, 5)
 	s.emulationStats.emulationAppendStart = make(map[int64]time.Time)
+	s.emulationStats.emulationCompleted = 0
 
 	s.emulatedRate = rate
 	s.emulationShardCount = numShards
@@ -304,6 +311,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.windowNumber = -1
 	s.nextExpectedLocalCutNum = 0
 	s.nextExpectedWindowNum = 0
+	s.nextRid = -1
 	s.nextCSNForHole = -1
 	s.holeID = s.generateClientIDForHole()
 	s.quotas = make(map[int64](map[int32]int64))
@@ -996,7 +1004,7 @@ func (s *DataServer) reportLocalCut() {
 	if s.quota == 0 {
 		log.Errorf("error: quota is 0")
 	}
-
+	log.Printf("starting local cut reporting with quota %v", s.quota)
 	var prevLocalCutTime time.Time
 	// timer to start filling holes in the worst case
 	// set hole timer to 1.5 * batchingInterval
@@ -1290,9 +1298,18 @@ func (s *DataServer) processCommittedEntry() {
 				_, quotaExists := s.quotas[entry.CommittedCut.WindowNum]
 				if !quotaExists {
 					s.quotas[entry.CommittedCut.WindowNum] = entry.CommittedCut.ShardQuotas
+					replicaList := make([]int32, 0)
+					for k := range entry.CommittedCut.ShardQuotas {
+						replicaList = append(replicaList, k)
+					}
+					sort.Slice(replicaList, func(i, j int) bool {
+						return replicaList[i] < replicaList[j]
+					})
+					s.sortedReplicaList[entry.CommittedCut.WindowNum] = replicaList
 					s.views[entry.CommittedCut.WindowNum] = entry.CommittedCut.ViewID
 					// trigger load start once specified number of shards have joined
 					if len(s.quotas) == int(s.emulationShardCount)*2 {
+						log.Printf("All shards have joined, starting load")
 						s.startLoad <- true
 					}
 				}
@@ -1344,9 +1361,10 @@ func (s *DataServer) processCommittedEntry() {
 			startGSN := max(entry.CommittedCut.StartGSN, initStartGSN)
 			// numCuts := int64(0)
 			for {
-				log.Debugf("processing next expected local cut num: %v, next expected window num: %v", s.nextExpectedLocalCutNum, s.nextExpectedWindowNum)
-				log.Debugf("entry.CommittedCut.Cut: %v", entry.CommittedCut.Cut)
-				log.Debugf("prevCommittedCut.Cut: %v", s.prevCommittedCut.Cut)
+				// log.Printf("processing next expected local cut num: %v, next expected window num: %v", s.nextExpectedLocalCutNum, s.nextExpectedWindowNum)
+				// log.Printf("entry.CommittedCut.Cut: %v", entry.CommittedCut.Cut)
+				// log.Printf("prevCommittedCut.Cut: %v", s.prevCommittedCut.Cut)
+				// log.Printf("nextRid: %v", s.nextRid)
 				terminate := true
 				for rid, lsn := range entry.CommittedCut.Cut {
 					_, ok := s.prevCommittedCut.Cut[rid]
@@ -1358,28 +1376,27 @@ func (s *DataServer) processCommittedEntry() {
 				if terminate {
 					break
 				}
-				// compute startGSN using the number of records stored
-				// in shards with smaller ids
-				for rid, lsn := range entry.CommittedCut.Cut {
-					_, ok := s.quotas[s.nextExpectedWindowNum][rid]
-					if !ok {
+
+				broken := false
+				for _, rid := range s.sortedReplicaList[s.nextExpectedWindowNum] {
+					if s.nextRid != -1 && rid < s.nextRid {
 						continue
 					}
-					if rid < startReplicaID {
+					lsn := entry.CommittedCut.Cut[rid]
+					if rid < startReplicaID || rid >= startReplicaID+s.numReplica {
 						diff := lsn
 						if l, ok := s.prevCommittedCut.Cut[rid]; ok {
 							diff = lsn - l
 						}
 						if diff > 0 {
 							startGSN += s.quotas[s.nextExpectedWindowNum][rid]
+							s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
+						} else {
+							s.nextRid = rid
+							broken = true
+							break
 						}
-					}
-				}
-				_, ok := s.quotas[s.nextExpectedWindowNum][startReplicaID]
-				if ok {
-					// assign gsn to records in my shard
-					for i := int32(0); i < s.numReplica; i++ {
-						rid := startReplicaID + i
+					} else {
 						lsn := entry.CommittedCut.Cut[rid]
 						diff := int32(lsn)
 						start := int64(0)
@@ -1389,13 +1406,14 @@ func (s *DataServer) processCommittedEntry() {
 						}
 						if diff > 0 {
 							diff := int32(s.quotas[s.nextExpectedWindowNum][rid])
+							s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
 							// TODO: maybe add a sleep here?
 							// err := s.storage.Assign(i, start, diff, startGSN)
 							// if err != nil {
 							// 	log.Errorf("Assign GSN to storage error: %v", err)
 							// 	continue
 							// }
-							if i == s.replicaID {
+							if rid-startReplicaID == s.replicaID {
 								for j := int32(0); j < diff; j++ {
 									s.recordsMu.Lock()
 									record, ok := s.records[start+int64(j)]
@@ -1421,6 +1439,7 @@ func (s *DataServer) processCommittedEntry() {
 
 										// s.ackC <- ack
 										<-s.emulationOutstanding
+										s.emulationStats.emulationCompleted++
 
 										// update stats for real records
 										recordID := int64(record.ClientID)<<32 + int64(record.ClientSN)
@@ -1462,43 +1481,24 @@ func (s *DataServer) processCommittedEntry() {
 								// }
 							}
 							startGSN += int64(diff)
+						} else {
+							s.nextRid = rid
+							broken = true
+							break
 						}
 					}
 				}
-
-				for rid, lsn := range entry.CommittedCut.Cut {
-					_, ok := s.quotas[s.nextExpectedWindowNum][rid]
-					if !ok {
-						continue
+				if broken {
+					continue
+				} else {
+					// update next expected local cut number and window
+					s.nextExpectedLocalCutNum = s.nextExpectedLocalCutNum + 1
+					if s.nextExpectedLocalCutNum == s.numLocalCutsThreshold {
+						s.nextExpectedLocalCutNum = 0
+						s.nextExpectedWindowNum = s.nextExpectedWindowNum + 1
 					}
-					if rid > startReplicaID+s.numReplica-1 {
-						diff := lsn
-						if l, ok := s.prevCommittedCut.Cut[rid]; ok {
-							diff = lsn - l
-						}
-						if diff > 0 {
-							startGSN += s.quotas[s.nextExpectedWindowNum][rid]
-						}
-					}
+					s.nextRid = -1
 				}
-
-				// update previous committed cut's cut portion
-				for rid := range entry.CommittedCut.Cut {
-					if s.prevCommittedCut.Cut == nil {
-						s.prevCommittedCut.Cut = make(map[int32]int64)
-					}
-					if _, ok := s.quotas[s.nextExpectedWindowNum][rid]; ok {
-						s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
-					}
-				}
-
-				// update next expected local cut number and window
-				s.nextExpectedLocalCutNum = s.nextExpectedLocalCutNum + 1
-				if s.nextExpectedLocalCutNum == s.numLocalCutsThreshold {
-					s.nextExpectedLocalCutNum = 0
-					s.nextExpectedWindowNum = s.nextExpectedWindowNum + 1
-				}
-
 				// numCuts++
 			}
 
@@ -1555,15 +1555,17 @@ func (s *DataServer) WaitForAck(cid, csn int32) *datapb.Ack {
 
 func (s *DataServer) printStats(stop chan bool) {
 	ticker := time.NewTicker(5 * time.Second)
+	startTime := time.Now()
 	for {
 		select {
 		case <-ticker.C:
 			s.emulationStats.emulationMapMu.Lock()
-			log.Printf("emulation statistics/metric, append/confirmation latency (us), delivery latency (us), confirmation latency (us)")
+			log.Printf("emulation statistics/metric, append/confirmation latency (us), delivery latency (us)")
 			log.Printf("mean, %v, %v", s.emulationStats.emulationAppendLatency.Mean()/1e3, s.emulationStats.emulationDeliveryLatency.Mean()/1e3)
 			log.Printf("p50, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(50.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(50.0)/1e3)
 			log.Printf("p99, %v, %v", s.emulationStats.emulationAppendLatency.ValueAtPercentile(99.0)/1e3, s.emulationStats.emulationDeliveryLatency.ValueAtPercentile(99.0)/1e3)
 			s.emulationStats.emulationMapMu.Unlock()
+			log.Printf("tput: %v", float64(s.emulationStats.emulationCompleted)/time.Since(startTime).Seconds())
 		case <-stop:
 			return
 		}

@@ -2,6 +2,7 @@ package order
 
 import (
 	"math"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,7 +22,8 @@ const lagfixExpt bool = false
 const qcEnabled bool = true
 const lagfixEnabled bool = true
 const lagfixThres float64 = 0.03
-const emulation bool = true
+const emulation bool = false
+const staggeringFactor int64 = 8
 
 func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)
@@ -149,6 +151,7 @@ type OrderServer struct {
 	avgDelta                map[int32]*movingaverage.MovingAverage
 	prevQueueLength         map[int32]int64
 	quota                   map[int64](map[int32]int64) // map from window number to quota for window
+	sortedReplicaList       map[int64][]int32
 	localCutChangeWindow    int64
 	assignWindow            int64           // next window to assign quota
 	windowStartGSN          map[int64]int64 // map from window number to start GSN
@@ -168,6 +171,7 @@ type OrderServer struct {
 
 	prevLowestWindowNum   int64
 	prevLowestLocalCutNum int64
+	prevSeqReached        int64
 }
 
 // fraction of the local cut window at which quota change decisions are made for a shard
@@ -213,6 +217,8 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.processWindow = -1
 	s.prevLowestWindowNum = -1
 	s.prevLowestLocalCutNum = s.localCutChangeWindow - 1
+	s.prevSeqReached = 0
+	s.sortedReplicaList = make(map[int64][]int32)
 
 	s.rnConfChangeC = make(chan raftpb.ConfChange)
 	s.rnProposeC = make(chan string)
@@ -382,6 +388,26 @@ func (s *OrderServer) getNumHolesCommitted(lowestWindowNum int64, lowestLocalCut
 	return numHolesCommitted
 }
 
+func (s *OrderServer) getNumSeqReached(localCutNum int64, windowNum int64, lcs map[int32]*orderpb.LocalCut) []int32 {
+	seqReached := make([]int32, 0)
+	_, ok := s.quota[windowNum]
+	if !ok {
+		return seqReached
+	}
+
+	for _, rid := range s.sortedReplicaList[windowNum] {
+		if lc, ok := lcs[rid]; ok {
+			if lc.WindowNum > windowNum || (lc.WindowNum == windowNum && lc.LocalCutNum >= localCutNum) {
+				seqReached = append(seqReached, rid)
+			} else {
+				break
+			}
+		}
+	}
+
+	return seqReached
+}
+
 func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
 	// find lowest numbered window across all replicas
 	lowestWindowNum := getLowestWindowNum(lcs)
@@ -419,8 +445,27 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		}
 	}
 
+	// try to see if we can commit some staggered cuts from the next local cut num
+	nextLocalCutNum := lowestLocalCutNum + 1
+	nextWindowNum := lowestWindowNum
+	if nextLocalCutNum == s.localCutChangeWindow {
+		nextLocalCutNum = 0
+		nextWindowNum++
+	}
+
+	// number of sequential replicas that have reached the next local cut number
+	seqReached := s.getNumSeqReached(nextLocalCutNum, nextWindowNum, lcs)
+	log.Debugf("seqReached: %v", seqReached)
+	lenSeqReached := int64(len(seqReached))
+	validCommitLen := (lenSeqReached / staggeringFactor) * staggeringFactor
+	log.Debugf("committing upto local cut num %v, window num %v, validCommitLen %v for lcs %v", lowestLocalCutNum, lowestWindowNum, validCommitLen, lcs)
+	for i := int64(0); i < validCommitLen; i++ {
+		ccut[seqReached[i]] = s.adjustToMinimums(seqReached[i], lcs[seqReached[i]], nextWindowNum, nextLocalCutNum)
+	}
+
 	// check if lcs num is equal to localCutChangeWindow-1
 	// If so we can clear some state
+	// WILL NEVER REACH THE BELOW CODE IN EMULATION, IGNORE
 	removableReplicas := make([]int32, 0)
 	for rid := range lcs {
 		wn, ok := s.replicasConfirmFinalize[rid]
@@ -452,6 +497,7 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 	// update records stat
 	if reconfigExpt || qcExpt || emulation {
 		totalCommitted := s.computeCutDiff(s.prevCut, ccut)
+		// RETHINK THIS FOR STAGGERRED CUTS
 		holesCommitted := s.getNumHolesCommitted(lowestWindowNum, lowestLocalCutNum)
 		s.stats.RealTimeTput.Add(totalCommitted - holesCommitted)
 		s.stats.RealTimeTotalTput.Add(totalCommitted)
@@ -459,6 +505,7 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 
 	s.prevLowestLocalCutNum = lowestLocalCutNum
 	s.prevLowestWindowNum = lowestWindowNum
+	s.prevSeqReached = validCommitLen
 
 	if lowestWindowNum > s.processWindow {
 		// TODO: delete old quota and unneccesary state
@@ -557,9 +604,15 @@ func (s *OrderServer) evalCommittedCut(lcs map[int32]*orderpb.LocalCut) {
 			s.replicasInReserve = make(map[int32]int64)
 
 			quota := make(map[int32]int64)
+			s.sortedReplicaList[s.assignWindow] = make([]int32, 0)
 			for rid, q := range s.quota[s.assignWindow] {
 				quota[rid] = q
+				s.sortedReplicaList[s.assignWindow] = append(s.sortedReplicaList[s.assignWindow], rid)
 			}
+
+			sort.Slice(s.sortedReplicaList[s.assignWindow], func(i, j int) bool {
+				return s.sortedReplicaList[s.assignWindow][i] < s.sortedReplicaList[s.assignWindow][j]
+			})
 
 			// increment view ID if new shards
 			// increment view ID if shards leave as well
@@ -724,7 +777,17 @@ func (s *OrderServer) processReport() {
 				if lowestLocalCutNum == math.MaxInt64 {
 					continue
 				}
-				if lowestLocalCutNum != s.prevLowestLocalCutNum || lowestWindowNum != s.prevLowestWindowNum {
+
+				nextLocalCutNum := lowestLocalCutNum + 1
+				nextWindowNum := lowestWindowNum
+				if nextLocalCutNum == s.localCutChangeWindow {
+					nextLocalCutNum = 0
+					nextWindowNum++
+				}
+				seqReached := s.getNumSeqReached(nextLocalCutNum, nextWindowNum, lcs)
+				validCutLen := (int64(len(seqReached)) / staggeringFactor) * staggeringFactor
+				if lowestWindowNum != s.prevLowestWindowNum || lowestLocalCutNum != s.prevLowestLocalCutNum || validCutLen > s.prevSeqReached {
+					// if lowestWindowNum != s.prevLowestWindowNum || lowestLocalCutNum != s.prevLowestLocalCutNum {
 					// log.Printf("Lowest window num, local cut num: %v, %v", lowestWindowNum, lowestLocalCutNum)
 					s.evalCommittedCut(lcs)
 
