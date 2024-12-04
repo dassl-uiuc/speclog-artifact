@@ -23,7 +23,7 @@ const qcEnabled bool = true
 const lagfixEnabled bool = true
 const lagfixThres float64 = 0.03
 const emulation bool = false
-const staggeringFactor int64 = 8
+const staggeringFactor int64 = -1
 
 func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)
@@ -172,6 +172,7 @@ type OrderServer struct {
 	prevLowestWindowNum   int64
 	prevLowestLocalCutNum int64
 	prevSeqReached        int64
+	lagfixTimer           *time.Timer
 }
 
 // fraction of the local cut window at which quota change decisions are made for a shard
@@ -333,6 +334,20 @@ func (s *OrderServer) getLags(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
 	return lags
 }
 
+func (s *OrderServer) shouldLagFix() bool {
+	if s.lagfixTimer == nil {
+		s.lagfixTimer = time.NewTimer(s.batchingInterval)
+		return true
+	}
+	select {
+	case <-s.lagfixTimer.C:
+		s.lagfixTimer.Reset(s.batchingInterval)
+		return true
+	default:
+		return false
+	}
+}
+
 // logs the avg lag in cuts and returns true if there is a significant lag in the cuts
 // significance is currently defined as a maximum lag of 5% of the localCutChangeWindow or more
 func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
@@ -340,6 +355,8 @@ func (s *OrderServer) isSignificantLag(lags map[int32]int64) bool {
 	if lagfixEnabled && !qcEnabled {
 		limit = float64(lagfixThres) * float64(100)
 	}
+
+	// TODO: only fix lags in [s.prevSeqReached, s.prevSeqReached + staggeringFactor)]
 	maxLag := float64(0)
 	for _, lag := range lags {
 		if float64(lag) > maxLag {
@@ -445,22 +462,25 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		}
 	}
 
+	var validCommitLen int64
 	// try to see if we can commit some staggered cuts from the next local cut num
-	nextLocalCutNum := lowestLocalCutNum + 1
-	nextWindowNum := lowestWindowNum
-	if nextLocalCutNum == s.localCutChangeWindow {
-		nextLocalCutNum = 0
-		nextWindowNum++
-	}
+	if staggeringFactor != -1 {
+		nextLocalCutNum := lowestLocalCutNum + 1
+		nextWindowNum := lowestWindowNum
+		if nextLocalCutNum == s.localCutChangeWindow {
+			nextLocalCutNum = 0
+			nextWindowNum++
+		}
 
-	// number of sequential replicas that have reached the next local cut number
-	seqReached := s.getNumSeqReached(nextLocalCutNum, nextWindowNum, lcs)
-	log.Debugf("seqReached: %v", seqReached)
-	lenSeqReached := int64(len(seqReached))
-	validCommitLen := (lenSeqReached / staggeringFactor) * staggeringFactor
-	log.Debugf("committing upto local cut num %v, window num %v, validCommitLen %v for lcs %v", lowestLocalCutNum, lowestWindowNum, validCommitLen, lcs)
-	for i := int64(0); i < validCommitLen; i++ {
-		ccut[seqReached[i]] = s.adjustToMinimums(seqReached[i], lcs[seqReached[i]], nextWindowNum, nextLocalCutNum)
+		// number of sequential replicas that have reached the next local cut number
+		seqReached := s.getNumSeqReached(nextLocalCutNum, nextWindowNum, lcs)
+		log.Debugf("seqReached: %v", seqReached)
+		lenSeqReached := int64(len(seqReached))
+		validCommitLen = (lenSeqReached / staggeringFactor) * staggeringFactor
+		log.Debugf("committing upto local cut num %v, window num %v, validCommitLen %v for lcs %v", lowestLocalCutNum, lowestWindowNum, validCommitLen, lcs)
+		for i := int64(0); i < validCommitLen; i++ {
+			ccut[seqReached[i]] = s.adjustToMinimums(seqReached[i], lcs[seqReached[i]], nextWindowNum, nextLocalCutNum)
+		}
 	}
 
 	// check if lcs num is equal to localCutChangeWindow-1
@@ -505,7 +525,9 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 
 	s.prevLowestLocalCutNum = lowestLocalCutNum
 	s.prevLowestWindowNum = lowestWindowNum
-	s.prevSeqReached = validCommitLen
+	if staggeringFactor != -1 {
+		s.prevSeqReached = validCommitLen
+	}
 
 	if lowestWindowNum > s.processWindow {
 		// TODO: delete old quota and unneccesary state
@@ -678,7 +700,7 @@ func (s *OrderServer) evalCommittedCut(lcs map[int32]*orderpb.LocalCut) {
 		}
 
 		if lagfixEnabled {
-			if s.isSignificantLag(lags) {
+			if s.shouldLagFix() && s.isSignificantLag(lags) {
 				if s.lastLag == nil || s.isLastLagFixed() {
 					if lagfixExpt {
 						log.Printf("significant lag in cuts: %v", lags)
@@ -778,23 +800,32 @@ func (s *OrderServer) processReport() {
 					continue
 				}
 
-				nextLocalCutNum := lowestLocalCutNum + 1
-				nextWindowNum := lowestWindowNum
-				if nextLocalCutNum == s.localCutChangeWindow {
-					nextLocalCutNum = 0
-					nextWindowNum++
-				}
-				seqReached := s.getNumSeqReached(nextLocalCutNum, nextWindowNum, lcs)
-				validCutLen := (int64(len(seqReached)) / staggeringFactor) * staggeringFactor
-				if lowestWindowNum != s.prevLowestWindowNum || lowestLocalCutNum != s.prevLowestLocalCutNum || validCutLen > s.prevSeqReached {
-					// if lowestWindowNum != s.prevLowestWindowNum || lowestLocalCutNum != s.prevLowestLocalCutNum {
-					// log.Printf("Lowest window num, local cut num: %v, %v", lowestWindowNum, lowestLocalCutNum)
-					s.evalCommittedCut(lcs)
-
-					if !timer.Stop() {
-						<-timer.C
+				if staggeringFactor != -1 {
+					nextLocalCutNum := lowestLocalCutNum + 1
+					nextWindowNum := lowestWindowNum
+					if nextLocalCutNum == s.localCutChangeWindow {
+						nextLocalCutNum = 0
+						nextWindowNum++
 					}
-					timer.Reset(worstCasePeriod)
+					seqReached := s.getNumSeqReached(nextLocalCutNum, nextWindowNum, lcs)
+					validCutLen := (int64(len(seqReached)) / staggeringFactor) * staggeringFactor
+					if lowestWindowNum != s.prevLowestWindowNum || lowestLocalCutNum != s.prevLowestLocalCutNum || validCutLen > s.prevSeqReached {
+						s.evalCommittedCut(lcs)
+
+						if !timer.Stop() {
+							<-timer.C
+						}
+						timer.Reset(worstCasePeriod)
+					}
+				} else {
+					if lowestWindowNum != s.prevLowestWindowNum || lowestLocalCutNum != s.prevLowestLocalCutNum {
+						s.evalCommittedCut(lcs)
+
+						if !timer.Stop() {
+							<-timer.C
+						}
+						timer.Reset(worstCasePeriod)
+					}
 				}
 			} else {
 				// TODO: forward to the leader
