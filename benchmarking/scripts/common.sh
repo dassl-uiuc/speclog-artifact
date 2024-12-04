@@ -1,7 +1,7 @@
 #!/bin/bash
-PASSLESS_ENTRY="/users/sgbhat3/.ssh/id_rsa"
+PASSLESS_ENTRY="/users/JiyuHu23/.ssh/id_rsa"
 
-benchmark_dir="/proj/rasl-PG0/sgbhat3/speclog/benchmarking"
+benchmark_dir="/proj/rasl-PG0/JiyuHu23/speclog/benchmarking"
 LOGDIR="/data"
 
 # index into remote_nodes/ips for order nodes
@@ -14,6 +14,7 @@ data_sec=("node4" "node6" "node8" "node10" "node12")
 client_nodes=("node13" "node14" "node15")
 intrusion_detection_dir="../../applications/vanilla_applications/intrusion_detection"
 transaction_analysis_dir="../../applications/vanilla_applications/transaction_analysis"
+hft_dir="../../applications/vanilla_applications/hft"
 
 batching_intervals=("1ms")
 
@@ -200,4 +201,12 @@ start_transaction_analysis_clients() {
 
 start_transaction_analysis_generator_clients() {
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $transaction_analysis_dir/transaction_analysis_generator_client.sh $1 $2 $3 $4 $5 > ${LOGDIR}/client_writer_$1_$5.log 2>&1" &
+}
+
+start_hft_clients() {
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $hft_dir/hft_client.sh $1 $2 $3 $4 > ${LOGDIR}/client_reader_$1_$4.log 2>&1" &
+}
+
+start_hft_generator_clients() {
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $hft_dir/hft_generator_client.sh $1 $2 $3 $4 $5 > ${LOGDIR}/client_writer_$1_$5.log 2>&1" &
 }

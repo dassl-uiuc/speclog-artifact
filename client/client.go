@@ -38,8 +38,8 @@ type SpeculationConf struct {
 }
 
 type CommittedRecord struct {
-	GSN    int64
-	Record string
+	GSN      int64
+	Record   string
 	RecordId int32
 }
 
@@ -725,7 +725,7 @@ func (c *Client) filterSubscribeShardServerDouble(
 	dataClient := datapb.NewDataClient(conn)
 	packed := (readerId << 16) | (readerId2 & 0xFFFF) // pack two reader ids
 	globalSN := &datapb.FilterGlobalSN{GSN: c.nextGSN, ReaderID: packed, FilterValue: filterValue}
-	stream, err := dataClient.FilterSubscribeDouble(context.Background(), globalSN, readerId2, opts...)
+	stream, err := dataClient.FilterSubscribeDouble(context.Background(), globalSN, opts...)
 	if err != nil {
 		log.Errorf("%v", err)
 		return
@@ -753,9 +753,9 @@ func (c *Client) filterSubscribeShardServerDouble(
 			}
 
 			c.committedRecords[record.GlobalSN] = CommittedRecord{
-				GSN:    record.GlobalSN,
-				Record: record.Record,
-				RecordId: record.recordId,
+				GSN:      record.GlobalSN,
+				Record:   record.Record,
+				RecordId: record.RecordID,
 			}
 			if record.GlobalSN == c.nextGSN {
 				c.respondToClient()

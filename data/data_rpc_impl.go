@@ -200,7 +200,7 @@ func (s *DataServer) FilterSubscribe(gsn *datapb.FilterGlobalSN, stream datapb.D
 	return nil
 }
 
-func (s *DataServer) FilterSubscribeDouble(gsn *datapb.FilterGlobalSN, stream datapb.Data_FilterSubscribeServer) error {
+func (s *DataServer) FilterSubscribeDouble(gsn *datapb.FilterGlobalSN, stream datapb.Data_FilterSubscribeDoubleServer) error {
 	subC := make(chan *datapb.Record, 4096)
 	clientSub := &clientSubscriber{
 		state:    BEHIND,
@@ -225,7 +225,7 @@ func (s *DataServer) FilterSubscribeDouble(gsn *datapb.FilterGlobalSN, stream da
 			close(subC)
 			return err
 		} else {
-			if (sub.RecordID % gsn.FilterValue) == readerId || (sub.RecordID % gsn.FilterValue) == readerId2 {
+			if (sub.RecordID%gsn.FilterValue) == readerId || (sub.RecordID%gsn.FilterValue) == readerId2 {
 				log.Infof("Sending record %v to reader %v", sub.RecordID, gsn.ReaderID)
 				sub.MissedRecords = missedRecords[:numMissedRecords]
 

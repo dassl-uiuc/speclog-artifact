@@ -14,7 +14,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-var transactionAnalysisConfigFilePath = "../../applications/vanilla_applications/transaction_analysis/transaction_analysis_config.yaml"
+var transactionAnalysisConfigFilePath = "../../applications/vanilla_applications/hft/hft_config.yaml"
 
 // TODO: Add computation here
 func Compute() {
@@ -22,6 +22,7 @@ func Compute() {
 
 func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	// read configuration file
+	fmt.Printf("readerId: %d, readerId2: %d\n", readerId, readerId2)
 	viper.SetConfigFile(transactionAnalysisConfigFilePath)
 	viper.AutomaticEnv()
 	err := viper.ReadInConfig()
@@ -81,7 +82,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 			// HandleIntrusion(committedRecords, db)
 			// handleIntrusionLatencies += int(time.Since(startHandleIntrusion).Nanoseconds())
 
-			duration := time.Duration(2) * time.Millisecond
+			duration := 500 * time.Microsecond
 			start := time.Now()
 			for time.Since(start) < duration {
 				// Busy-waiting
@@ -109,7 +110,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	scalogApi.Stop <- true
 
 	// Record records received
-	recordsReceivedFilePath := "../../applications/vanilla_applications/transaction_analysis/data/records_received_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	recordsReceivedFilePath := "../../applications/vanilla_applications/hft/data/records_received_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err := os.OpenFile(recordsReceivedFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -121,7 +122,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	}
 
 	// Record transaction analysis latencies
-	transactionAnalysisLatenciesFilePath := "../../applications/vanilla_applications/transaction_analysis/data/transaction_analysis_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	transactionAnalysisLatenciesFilePath := "../../applications/vanilla_applications/hft/data/hft_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err = os.OpenFile(transactionAnalysisLatenciesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -134,7 +135,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	}
 
 	// Dump compute e2e latencies
-	computeE2eEndTimesFilePath := "../../applications/vanilla_applications/transaction_analysis/data/compute_e2e_end_times_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	computeE2eEndTimesFilePath := "../../applications/vanilla_applications/hft/data/compute_e2e_end_times_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err = os.OpenFile(computeE2eEndTimesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -148,7 +149,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	}
 
 	// Dump delivery latencies with GSNs
-	deliveryLatenciesFilePath := "../../applications/vanilla_applications/transaction_analysis/data/delivery_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	deliveryLatenciesFilePath := "../../applications/vanilla_applications/hft/data/delivery_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err = os.OpenFile(deliveryLatenciesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -163,7 +164,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	}
 
 	// Dump start compute times
-	startComputeTimesFilePath := "../../applications/vanilla_applications/transaction_analysis/data/start_compute_times_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	startComputeTimesFilePath := "../../applications/vanilla_applications/hft/data/start_compute_times_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err = os.OpenFile(startComputeTimesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -178,7 +179,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 
 	// Dump batch sizes
 	avgBatchSize := float64(batchSize) / float64(batchesReceived)
-	batchSizesFilePath := "../../applications/vanilla_applications/transaction_analysis/data/batch_sizes_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	batchSizesFilePath := "../../applications/vanilla_applications/hft/data/batch_sizes_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err = os.OpenFile(batchSizesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -190,7 +191,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	}
 
 	// Dump confirm latencies with GSNs
-	confirmLatenciesFilePath := "../../applications/vanilla_applications/transaction_analysis/data/confirm_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	confirmLatenciesFilePath := "../../applications/vanilla_applications/hft/data/confirm_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err = os.OpenFile(confirmLatenciesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -206,7 +207,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 
 	// Calculate throughput
 	throughput := float64(recordsReceived) / float64((endThroughputTimer-startThroughputTimer)/1000000000)
-	readThroughputFilePath := "../../applications/vanilla_applications/transaction_analysis/data/read_throughput_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	readThroughputFilePath := "../../applications/vanilla_applications/hft/data/read_throughput_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
 	file, err = os.OpenFile(readThroughputFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -229,10 +230,10 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 }
 
 func main() {
-	fmt.Println("Running transaction analysis application")
+	fmt.Println("Running hft application")
 
 	if len(os.Args) < 3 {
-		fmt.Println("Usage: go run transaction_analysis.go <reader_id> <client_number>")
+		fmt.Println("Usage: go run hft.go <reader_id> <client_number>")
 		return
 	}
 
@@ -248,5 +249,5 @@ func main() {
 		return
 	}
 
-	HftProcessing(int32(readerId), 0, clientNumber)
+	HftProcessing(int32(readerId), int32(readerId)+1, clientNumber)
 }

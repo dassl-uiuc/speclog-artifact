@@ -6,9 +6,9 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/scalog/scalog/benchmark/util"
 	"github.com/scalog/scalog/scalog_api"
 
 	// "sync"
@@ -18,32 +18,26 @@ import (
 var hftConfigFilePath = "../../applications/vanilla_applications/hft/hft_config.yaml"
 
 func GenerateRecord(length int) string {
-	padding := util.GenerateRandomString(length - 15)
+	// Length of the fixed floating-point number (e.g., "012.345")
+	floatLength := 8 // Adjust this if you want a different fixed length for the floating point
+	if length <= floatLength {
+		panic("Length must be greater than the fixed floating-point length to accommodate padding.")
+	}
+
+	// Seed the random generator
 	rand.Seed(time.Now().UnixNano())
 
-	// Random temperature
-	temperature := rand.Intn(90) + 10
+	// Generate a random floating-point number and format it to a fixed length
+	randomFloat := fmt.Sprintf("%07.3f", rand.Float64()*100) // Fixed length: 7 characters including 3 decimals
 
-	// Motion detection
-	motionDetected := rand.Intn(2)
+	// Calculate the padding length
+	paddingLength := length - floatLength
 
-	// Random vibration
-	vibration := float64(int(rand.Float64()*10)) / 10
+	// Generate random padding of the required length
+	padding := strings.Repeat("X", paddingLength)
 
-	// Random light intensity
-	lightIntensity := rand.Intn(90) + 10
-	// Random sound intensity
-	soundIntensity := rand.Intn(90) + 10
-
-	// Random humidity
-	humidity := rand.Intn(90) + 10
-
-	// Random air pressure change
-	airPressureChange := float64(int(rand.Float64()*10)) / 10
-
-	// Add padding at the end
-	// Ex: 1010.63040740.4
-	record := fmt.Sprintf("%02d%d%.1f%d%d%d%.1f%s", temperature, motionDetected, vibration, lightIntensity, soundIntensity, humidity, airPressureChange, padding)
+	// Construct the final record
+	record := randomFloat + padding
 	return record
 }
 
