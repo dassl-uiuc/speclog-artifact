@@ -17,7 +17,103 @@ import (
 var transactionAnalysisConfigFilePath = "../../applications/vanilla_applications/hft/hft_config.yaml"
 
 // TODO: Add computation here
-func Compute() {
+func SeriesMBatchOptimized(dataPointsX []float64, WFull *mat.Dense, prevM *mat.Dense) *mat.Dense {
+	alpha := 0.9
+
+	n := len(dataPointsX)
+	X := mat.NewDense(n, 2, nil) // Create a matrix with n rows and 2 columns
+	for i, x := range dataPointsX {
+		X.Set(i, 0, 1.0)
+		X.Set(i, 1, x)
+	}
+
+	// Copy the appropriate slice of WFull to W
+	W := mat.NewDense(n, n, nil)
+	W.Copy(WFull.Slice(0, n, 0, n))
+
+	// Step 2: Compute X^T * W * X
+	weightedSum := mat.NewDense(2, 2, nil)
+	temp := mat.NewDense(n, 2, nil)
+	temp.Mul(W, X)               // W * X
+	weightedSum.Mul(X.T(), temp) // X^T * (W * X)
+
+	// Step 3: Add decayed M_{t-1}
+	scaledPrevM := mat.NewDense(2, 2, nil)
+	scaledPrevM.Scale(math.Pow(alpha, float64(n)), prevM)
+
+	Mt := mat.NewDense(2, 2, nil)
+	Mt.Add(scaledPrevM, weightedSum)
+
+	// fmt.Printf("Optimized Batch Updated M_t:\n%v\n", mat.Formatted(Mt, mat.Prefix(" ")))
+	// fmt.Printf("Execution time: %.6f milliseconds\n\n", duration.Seconds()*1000)
+
+	return Mt
+}
+
+func SeriesVBatchOptimized(dataPointsX []float64, dataPointsY []float64, prevV *mat.Dense, WFull *mat.Dense) *mat.Dense {
+	alpha := 0.9
+
+	n := len(dataPointsX)
+	X := mat.NewDense(n, 2, nil)
+	for i, x := range dataPointsX {
+		X.Set(i, 0, 1.0)
+		X.Set(i, 1, x)
+	}
+
+	// Create the Y matrix from dataPointsY
+	Y := mat.NewDense(n, 1, nil)
+	for i, y := range dataPointsY {
+		Y.Set(i, 0, y)
+	}
+
+	// Copy the appropriate slice of WFull to W
+	W := mat.NewDense(n, n, nil)
+	W.Copy(WFull.Slice(0, n, 0, n))
+
+	// Step 2: Compute X^T * W * Y (weighted sum)
+	weightedSum := mat.NewDense(2, 1, nil)
+	temp := mat.NewDense(n, 1, nil)
+	temp.Mul(W, Y)               // W * Y
+	weightedSum.Mul(X.T(), temp) // X^T * (W * Y)
+
+	// Step 3: Apply decay (weighted sum) and add previous V
+	scaledPrevV := mat.NewDense(2, 1, nil)
+	scaledPrevV.Scale(math.Pow(alpha, float64(n)), prevV)
+
+	Vt := mat.NewDense(2, 1, nil)
+	Vt.Add(scaledPrevV, weightedSum)
+
+	// fmt.Printf("Optimized Batch Updated V_t:\n%v\n", mat.Formatted(Vt, mat.Prefix(" ")))
+	// fmt.Printf("Execution time: %.6f milliseconds\n\n", duration.Seconds()*1000)
+
+	return Vt
+}
+
+
+func Compute(records1 []client.CommittedRecord, records2 []client.CommittedRecord) {
+	dataPointsX := make([]float64, len(records1))
+	dataPointsY := make([]float64, len(records2))
+
+	for i, record := range records1 {
+		value, err := strconv.ParseFloat(record.Record[:7], 64)
+		if err != nil {
+			fmt.Printf("Error converting Record %v to float64: %v\n", record.Record, err)
+			continue
+		}
+		dataPointsX[i] = value
+	}
+
+	for i, record := range records2 {
+		value, err := strconv.ParseFloat(record.Record[:7], 64)
+		if err != nil {
+			fmt.Printf("Error converting Record %v to float64: %v\n", record.Record, err)
+			continue
+		}
+		dataPointsY[i] = value
+	}
+
+	Mt := SeriesMBatchOptimized(dataPointsX, WFull, prevM)
+	Vt := SeriesVBatchOptimized(dataPointsX, dataPointsY, prevM, WFull)
 }
 
 func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
