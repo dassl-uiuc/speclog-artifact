@@ -17,6 +17,15 @@ import (
 
 var transactionAnalysisConfigFilePath = "../../applications/vanilla_applications/transaction_analysis/transaction_analysis_config.yaml"
 
+func GenerateRecord(length int) string {
+	padding := util.GenerateRandomString(length - 4)
+	rand.Seed(time.Now().UnixNano())
+	// transacton amount
+	transactionAmount := rand.Intn(9000) + 1000
+	record := fmt.Sprintf("%04d%s", transactionAmount, padding)
+	return record
+}
+
 func Append_One_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy int) {
 	// read configuration file
 	viper.SetConfigFile(transactionAnalysisConfigFilePath)
@@ -62,6 +71,7 @@ func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPol
 	}
 	runTime := int64(viper.GetInt("produce-run-time"))
 	// numReadClients := int32(viper.GetInt("num-read-clients"))
+	numUsers := int32(viper.GetInt("num-users"))
 
 	rand.Seed(time.Now().UnixNano())
 	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
@@ -70,15 +80,25 @@ func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPol
 	startTimeInSeconds := time.Now().Unix()
 	startThroughputTimer := time.Now().UnixNano()
 	for time.Now().Unix()-startTimeInSeconds < runTime {
-		record := util.GenerateRandomString(4096)
+		record := GenerateRecord(4096)
 		if err != nil {
 			fmt.Println("Error marshalling record")
 			return
 		}
 
+		var recordId int32
+		if appenderId == 0 {
+			// Even
+			recordId = int32(rand.Int31n(numUsers/2) * 2)
+		} else if appenderId == 1 {
+			// Odd
+			recordId = int32(rand.Int31n(numUsers/2)*2 + 1)
+		} else {
+			log.Fatal("Invalid appender id")
+		}
+
 		// recordId := int32(rand.Int31n(numReadClients))
-		// scalogApi.FilterAppend(record, recordId)
-		scalogApi.FilterAppend(record, appenderId)
+		scalogApi.FilterAppend(record, recordId)
 
 		recordsProduced++
 	}
@@ -168,8 +188,6 @@ func main() {
 		fmt.Println("Invalid offset for sharding policy. It should be a number, err: ", err)
 		return
 	}
-
-	fmt.Println("Offset for sharding policy for appender ", appenderId, " is ", offsetForShardingPolicy)
 
 	if appendType == 0 {
 		Append_One_Ping(int32(appenderId), clientNumber, offsetForShardingPolicy)

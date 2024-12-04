@@ -40,6 +40,7 @@ type SpeculationConf struct {
 type CommittedRecord struct {
 	GSN    int64
 	Record string
+	RecordID int32
 }
 
 type Client struct {
@@ -678,6 +679,7 @@ func (c *Client) filterSubscribeShardServer(shard, replica int32, readerId int32
 			c.committedRecords[record.GlobalSN] = CommittedRecord{
 				GSN:    record.GlobalSN,
 				Record: record.Record,
+				RecordID: record.RecordID,
 			}
 			if record.GlobalSN == c.nextGSN {
 				c.respondToClient()

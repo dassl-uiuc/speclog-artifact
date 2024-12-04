@@ -177,7 +177,7 @@ func (s *DataServer) FilterSubscribe(gsn *datapb.FilterGlobalSN, stream datapb.D
 			return err
 		} else {
 			if (sub.RecordID % gsn.FilterValue) == gsn.ReaderID {
-				log.Infof("Sending record %v to reader %v", sub.RecordID, gsn.ReaderID)
+				log.Debugf("Sending record %v to reader %v", sub.RecordID, gsn.ReaderID)
 				sub.MissedRecords = missedRecords[:numMissedRecords]
 
 				err := stream.Send(sub)

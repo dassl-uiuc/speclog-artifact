@@ -1,7 +1,7 @@
 num_replicas = 2
 num_append_clients_per_replica = 10
 num_read_clients_per_replica = 1
-num_trials = 1
+num_trials = 3
 def analyze():
     analyzing_trial = 1
     while analyzing_trial <= num_trials:

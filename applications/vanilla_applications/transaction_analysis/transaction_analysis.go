@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/boltdb/bolt"
+	"github.com/scalog/scalog/benchmark/util"
 	"github.com/scalog/scalog/client"
 	"github.com/scalog/scalog/scalog_api"
 	"github.com/spf13/viper"
@@ -15,12 +17,88 @@ import (
 )
 
 var transactionAnalysisConfigFilePath = "../../applications/vanilla_applications/transaction_analysis/transaction_analysis_config.yaml"
+var dbEntrySize = 1024
+var padding = util.GenerateRandomString(dbEntrySize)
 
 // TODO: Add computation here
-func Compute() {
+func AnalyzeTransaction(committedRecords []client.CommittedRecord, db *bolt.DB) {
+	err := db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte("users"))
+		if bucket == nil {
+			log.Printf("Bucket 'users' does not exist")
+			return nil
+		}
+		// Loop through the committed records and update each one
+		for _, record := range committedRecords {
+			userID := record.RecordID
+			transactionAmount, err := strconv.Atoi(record.Record[0:4])
+			if err != nil {
+				log.Printf("Invalid transaction amount in record: %v", err)
+				continue
+			}
+			userIDStr := fmt.Sprintf("%d", userID)
+			key := []byte(userIDStr)
+			value := bucket.Get(key)
+			// If the user doesn't exist, insert the initial record
+			if value == nil {
+				userData := fmt.Sprintf("%d,%d,%d,%d,", transactionAmount, transactionAmount, transactionAmount, 1)
+				userData = userData + padding[:dbEntrySize-len(userData)]
+				err := bucket.Put(key, []byte(userData))
+				if err != nil {
+					log.Printf("Failed to insert new record for user %s: %v", userIDStr, err)
+				}
+				continue
+			}
+			existingValue := string(value)
+			var avgTransaction, maxTransaction, minTransaction, numTransactions int
+			_, err = fmt.Sscanf(existingValue, "%d,%d,%d,%d,", &avgTransaction, &maxTransaction, &minTransaction, &numTransactions)
+			if err != nil {
+				log.Printf("Failed to parse user data for user %s: %v", userIDStr, err)
+				continue
+			}
+			totalTransactionAmount := float64(avgTransaction)*float64(numTransactions) + float64(transactionAmount)
+			numTransactions++
+			avgTransaction = int(totalTransactionAmount / float64(numTransactions))
+			if transactionAmount > maxTransaction {
+				maxTransaction = transactionAmount
+			}
+			if transactionAmount < minTransaction {
+				minTransaction = transactionAmount
+			}
+			userData := fmt.Sprintf("%d,%d,%d,%d,", avgTransaction, maxTransaction, minTransaction, numTransactions)
+			userData = userData + padding[:dbEntrySize-len(userData)]
+			err = bucket.Put(key, []byte(userData))
+			if err != nil {
+				log.Printf("Failed to update record for user %s: %v", userIDStr, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("Failed to update database: %v", err)
+	}
+}
+
+func CreateDatabase() *bolt.DB {
+	dbFile := "/data/records.db"
+	db, err := bolt.Open(dbFile, 0600, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists([]byte("users"))
+		return err
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	return db
 }
 
 func TransactionAnalysisProcessing(readerId int32, clientNumber int) {
+	// Create database
+	db := CreateDatabase()
+
 	// read configuration file
 	viper.SetConfigFile(transactionAnalysisConfigFilePath)
 	viper.AutomaticEnv()
@@ -73,15 +151,15 @@ func TransactionAnalysisProcessing(readerId int32, clientNumber int) {
 			// fmt.Println("Length of committed records: ", len(committedRecords))
 			// fmt.Println("Expected number of records: ", offset-prevOffset)
 
-			// startHandleIntrusion := time.Now()
-			// HandleIntrusion(committedRecords, db)
-			// handleIntrusionLatencies += int(time.Since(startHandleIntrusion).Nanoseconds())
+			startTransactionAnalysis := time.Now()
+			AnalyzeTransaction(committedRecords, db)
+			transactionAnalysisLatencies += int(time.Since(startTransactionAnalysis).Nanoseconds())
 
-			duration := time.Duration(2) * time.Millisecond
-			start := time.Now()
-			for time.Since(start) < duration {
-				// Busy-waiting
-			}
+			// duration := time.Duration(2) * time.Millisecond
+			// start := time.Now()
+			// for time.Since(start) < duration {
+			// 	// Busy-waiting
+			// }
 
 			// Iterate through committed records
 			timestamp := time.Now().UnixNano()
