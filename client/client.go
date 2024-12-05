@@ -723,14 +723,13 @@ func (c *Client) filterSubscribeShardServerDouble(
 	}
 	opts := []grpc.CallOption{}
 	dataClient := datapb.NewDataClient(conn)
-	packed := (readerId << 16) | (readerId2 & 0xFFFF) // pack two reader ids
-	globalSN := &datapb.FilterGlobalSN{GSN: c.nextGSN, ReaderID: packed, FilterValue: filterValue}
+	globalSN := &datapb.FilterGlobalSN{GSN: c.nextGSN, ReaderID: readerId, ReaderID2: readerId2, FilterValue: filterValue}
 	stream, err := dataClient.FilterSubscribeDouble(context.Background(), globalSN, opts...)
 	if err != nil {
 		log.Errorf("%v", err)
 		return
 	}
-	// recvVnt := 0
+	recvVnt := 0
 	for {
 		record, err := stream.Recv()
 		if err == io.EOF {
@@ -761,7 +760,8 @@ func (c *Client) filterSubscribeShardServerDouble(
 			if record.GlobalSN == c.nextGSN {
 				c.respondToClient()
 			}
-			// recvVnt++
+			recvVnt++
+			// log.Infof("recvcnt: %d", recvVnt)
 		} else {
 			// this is a speculation confirmation
 			c.speculationConfs[record.GlobalSN] = record

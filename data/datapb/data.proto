@@ -47,7 +47,8 @@ message GlobalSN {
 message FilterGlobalSN {
 	int64 gSN = 1;
 	int32 readerID = 2;
-	int32 filterValue = 3;
+	int32 readerID2 = 3;
+	int32 filterValue = 4;
 }
 
 message Empty {}
