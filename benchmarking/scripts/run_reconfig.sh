@@ -10,10 +10,11 @@ shard_join_time=15
 
 # when does shard 1 leave
 # shard 1 leaves 30 seconds after joining, uncomment code in data_server.go to achieve this. 
+# also uncomment timeout code in client.go
 
 # parameters
 runtime_secs=60
-computation_time=(1000)
+computation_time=(800)
 
 cleanup_clients
 cleanup_servers
@@ -29,19 +30,16 @@ start_specific_shard 0
 # sleep for a bit befor starting clients
 sleep 5
 
+new_client_runtime_secs=$(($runtime_secs - $shard_join_time))
 # start clients
-start_reconfig_clients ${client_nodes[0]} $computation_time $runtime_secs 0 5 $benchmark_dir/logs/ 1
-start_reconfig_clients ${client_nodes[1]} $computation_time $runtime_secs 1 5 $benchmark_dir/logs/ 0
+start_reconfig_clients ${client_nodes[0]} $computation_time $runtime_secs $new_client_runtime_secs 10 $benchmark_dir/logs/ 1
 echo "Waiting for clients to terminate"
 
 # sleep for a bit before starting shard 1
 sleep $shard_join_time
 
-new_runtime_secs=$(($runtime_secs - $shard_join_time))
 # start shard 1 with rid 2 and rid 3
 start_specific_shard 1
-start_reconfig_clients ${client_nodes[2]} $computation_time $new_runtime_secs 2 5 $benchmark_dir/logs/ 0
-start_reconfig_clients ${client_nodes[3]} $computation_time $new_runtime_secs 3 5 $benchmark_dir/logs/ 0
 
 wait 
 

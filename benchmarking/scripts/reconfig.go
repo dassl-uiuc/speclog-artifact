@@ -47,18 +47,25 @@ func appendThread(scalog *scalog_api.Scalog, id int, shardId int, timeSecs int) 
 
 	numRecords := 0
 	ticker := time.After(time.Duration(timeSecs) * time.Second)
+	countDown := -1
 	for {
 		str := strings.Repeat("a", 4096)
-		_ = scalog.AppendToAssignedShard(int32(shardId), str)
+		err := scalog.AppendToAssignedShard(int32(shardId), str)
 		if numRecords%1000 == 0 {
 			log.Printf("[reconfig_e2e]: client %v appended %v records", id, numRecords)
 		}
 		numRecords++
-
-		if shardId/2 == 1 && scalog.ShardLeft(1) {
+		if countDown == 0 || err != nil {
+			// either we are able to drain the countdown or we timedout waiting for acks from the leaving shard
 			log.Printf("[reconfig_e2e]: stopping client %v", id)
 			scalog.StopAck <- true
 			return
+		} else if countDown > 0 {
+			countDown--
+		}
+
+		if shardId/2 == 1 && scalog.ShardLeft(1) {
+			countDown = 200 // wait for 200 appends before stopping
 		}
 
 		select {
@@ -132,17 +139,18 @@ func main() {
 		log.Errorf("[reconfig_e2e]: unable to parse time duration")
 	}
 
-	shardId, err := strconv.Atoi(os.Args[3])
+	newClientRunTimeSecs, err := strconv.Atoi(os.Args[3])
 	if err != nil {
-		log.Errorf("[reconfig_e2e]: unable to parse shard id")
+		log.Errorf("[reconfig_e2e]: unable to parse time duration")
 	}
 
-	numAppenders, err := strconv.Atoi(os.Args[4])
+	numAppendersPerShard, err := strconv.Atoi(os.Args[4])
 	if err != nil {
-		log.Errorf("[reconfig_e2e]: unable to parse number of appenders")
+		log.Errorf("[reconfig_e2e]: unable to parse number of appenders per shard")
 	}
 
 	filepath := os.Args[5]
+	log.Printf("[reconfig_e2e]: filepath %v", filepath)
 
 	withConsumer, err := strconv.ParseBool(os.Args[6])
 	if err != nil {
@@ -162,10 +170,15 @@ func main() {
 
 	appendClients := make([]*scalog_api.Scalog, 0)
 	// start producer
-	wg.Add(numAppenders)
-	for i := 0; i < numAppenders; i++ {
-		c := scalog_api.CreateClient(500, shardId, "../../.scalog.yaml") // assuming that 5 clients will be spawned per producer node
-		go appendThread(c, i, shardId, runTimeSecs)
+	wg.Add(numAppendersPerShard * 2)
+	for i := 0; i < numAppendersPerShard*2; i++ {
+		shardId := i % 4
+		runTime := runTimeSecs
+		if shardId/2 == 1 {
+			runTime = newClientRunTimeSecs
+		}
+		c := scalog_api.CreateClient(500, shardId, "../../.scalog.yaml")
+		go appendThread(c, i, shardId, runTime)
 		appendClients = append(appendClients, c)
 	}
 	wg.Wait()
@@ -179,7 +192,7 @@ func main() {
 	appendLatencies := make([]LatencyTuple, 0)
 	appendStartTimeMap := make(map[int64]time.Time)
 
-	appendMetrics, err := os.Create(filepath + "append_metrics_" + strconv.Itoa(shardId) + ".csv")
+	appendMetrics, err := os.Create(filepath + "append_metrics.csv")
 	if err != nil {
 		log.Errorf("[reconfig_e2e]: failed to open csv file")
 	}
@@ -212,20 +225,21 @@ func main() {
 	appendWriter.Flush()
 
 	if withConsumer {
-		e2eMetrics, err := os.Create(filepath + "e2e_metrics_" + strconv.Itoa(shardId) + ".csv")
+		e2eMetrics, err := os.Create(filepath + "e2e_metrics.csv")
 		if err != nil {
 			log.Errorf("[reconfig_e2e]: failed to open csv file")
 		}
 		defer e2eMetrics.Close()
 
 		e2eWriter := csv.NewWriter(e2eMetrics)
-		header = []string{"gsn", "delivery latency (us)", "e2e latency (us)", "queuing delay (us)"}
+		header = []string{"gsn", "delivery latency (us)", "e2e latency (us)", "queuing delay (us)", "delivery timestamp"}
 		e2eWriter.Write(header)
 		for _, latency := range appendLatencies {
 			computeTime, inCompute := timeCompute[latency.GSN]
 			deliveryTime, inDelivery := consumer.Stats.DeliveryTime[latency.GSN]
+			timeStamp := deliveryTime.Format("15:04:05.000000")
 			if inCompute && inDelivery {
-				e2eWriter.Write([]string{strconv.Itoa(int(latency.GSN)), strconv.Itoa(int(deliveryTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(timeBeginCompute[latency.GSN].Sub(consumer.Stats.DeliveryTime[latency.GSN]).Microseconds()))})
+				e2eWriter.Write([]string{strconv.Itoa(int(latency.GSN)), strconv.Itoa(int(deliveryTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(timeBeginCompute[latency.GSN].Sub(consumer.Stats.DeliveryTime[latency.GSN]).Microseconds())), timeStamp})
 			}
 		}
 		e2eWriter.Flush()

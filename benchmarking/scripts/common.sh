@@ -124,10 +124,10 @@ start_e2e_clients() {
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run single_client_e2e.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1_$4.log 2>&1" &
 }
 
-# args: client node, computation time, runtime secs, shardId, numAppenders, filepath, withConsumer
+# args: client node, computation time, runtime secs, new client runtime (s1), numAppendersPerShard, filepath, withConsumer
 start_reconfig_clients() {
     go_path="/usr/local/go/bin/go"
-    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run reconfig.go $2 $3 $4 $5 $6 $7 > ${LOGDIR}/client_$1_$4.log 2>&1" &
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run reconfig.go $2 $3 $4 $5 $6 $7 > ${LOGDIR}/client_$1.log 2>&1" &
 }
 
 start_random_read_clients() {
