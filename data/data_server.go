@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -178,6 +179,8 @@ type DataServer struct {
 	diskWriteC  map[int64]chan bool
 	diskWriteMu sync.RWMutex
 
+	nextRid int32
+
 	// Channel used to determine if local cut should be send
 	quota                         int64
 	localCutNum                   int64
@@ -185,7 +188,8 @@ type DataServer struct {
 	waitForNewQuota               chan int64
 	windowNumber                  int64
 	quotas                        map[int64](map[int32]int64) // quotas for each window
-	views                         map[int64]int32             // viewID in which each window is supposed to be committed
+	sortedReplicaList             map[int64][]int32
+	views                         map[int64]int32 // viewID in which each window is supposed to be committed
 	nextAssignableWindowAndQuotas chan *WindowAndQuota
 
 	// hole filling
@@ -256,7 +260,9 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.speculationConfC = make(chan *datapb.Record, 4096)
 	s.nextAssignableWindowAndQuotas = make(chan *WindowAndQuota, 4096)
 	s.confirmationRecords = make(map[int64]*datapb.Record)
+	s.sortedReplicaList = make(map[int64][]int32)
 	s.views = make(map[int64]int32)
+	s.nextRid = -1
 	// s.outstandingCuts = make(chan bool, 2)
 
 	s.quota = 10
@@ -1207,6 +1213,14 @@ func (s *DataServer) processCommittedEntry() {
 				_, quotaExists := s.quotas[entry.CommittedCut.WindowNum]
 				if !quotaExists {
 					s.quotas[entry.CommittedCut.WindowNum] = entry.CommittedCut.ShardQuotas
+					replicaList := make([]int32, 0)
+					for k := range entry.CommittedCut.ShardQuotas {
+						replicaList = append(replicaList, k)
+					}
+					sort.Slice(replicaList, func(i, j int) bool {
+						return replicaList[i] < replicaList[j]
+					})
+					s.sortedReplicaList[entry.CommittedCut.WindowNum] = replicaList
 					s.views[entry.CommittedCut.WindowNum] = entry.CommittedCut.ViewID
 				}
 				if quota, ok := entry.CommittedCut.ShardQuotas[rid]; ok {
@@ -1271,28 +1285,27 @@ func (s *DataServer) processCommittedEntry() {
 				if terminate {
 					break
 				}
-				// compute startGSN using the number of records stored
-				// in shards with smaller ids
-				for rid, lsn := range entry.CommittedCut.Cut {
-					_, ok := s.quotas[s.nextExpectedWindowNum][rid]
-					if !ok {
+
+				broken := false
+				for _, rid := range s.sortedReplicaList[s.nextExpectedWindowNum] {
+					if s.nextRid != -1 && rid < s.nextRid {
 						continue
 					}
-					if rid < startReplicaID {
+					lsn := entry.CommittedCut.Cut[rid]
+					if rid < startReplicaID || rid >= startReplicaID+s.numReplica {
 						diff := lsn
 						if l, ok := s.prevCommittedCut.Cut[rid]; ok {
 							diff = lsn - l
 						}
 						if diff > 0 {
 							startGSN += s.quotas[s.nextExpectedWindowNum][rid]
+							s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
+						} else {
+							s.nextRid = rid
+							broken = true
+							break
 						}
-					}
-				}
-				_, ok := s.quotas[s.nextExpectedWindowNum][startReplicaID]
-				if ok {
-					// assign gsn to records in my shard
-					for i := int32(0); i < s.numReplica; i++ {
-						rid := startReplicaID + i
+					} else {
 						lsn := entry.CommittedCut.Cut[rid]
 						diff := int32(lsn)
 						start := int64(0)
@@ -1302,12 +1315,13 @@ func (s *DataServer) processCommittedEntry() {
 						}
 						if diff > 0 {
 							diff := int32(s.quotas[s.nextExpectedWindowNum][rid])
-							err := s.storage.Assign(i, start, diff, startGSN)
+							s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
+							err := s.storage.Assign(rid-startReplicaID, start, diff, startGSN)
 							if err != nil {
 								log.Errorf("Assign GSN to storage error: %v", err)
 								continue
 							}
-							if i == s.replicaID {
+							if rid-startReplicaID == s.replicaID {
 								for j := int32(0); j < diff; j++ {
 									s.recordsMu.Lock()
 									record, ok := s.records[start+int64(j)]
@@ -1367,43 +1381,24 @@ func (s *DataServer) processCommittedEntry() {
 								}
 							}
 							startGSN += int64(diff)
+						} else {
+							s.nextRid = rid
+							broken = true
+							break
 						}
 					}
 				}
-
-				for rid, lsn := range entry.CommittedCut.Cut {
-					_, ok := s.quotas[s.nextExpectedWindowNum][rid]
-					if !ok {
-						continue
+				if broken {
+					continue
+				} else {
+					// update next expected local cut number and window
+					s.nextExpectedLocalCutNum = s.nextExpectedLocalCutNum + 1
+					if s.nextExpectedLocalCutNum == s.numLocalCutsThreshold {
+						s.nextExpectedLocalCutNum = 0
+						s.nextExpectedWindowNum = s.nextExpectedWindowNum + 1
 					}
-					if rid > startReplicaID+s.numReplica-1 {
-						diff := lsn
-						if l, ok := s.prevCommittedCut.Cut[rid]; ok {
-							diff = lsn - l
-						}
-						if diff > 0 {
-							startGSN += s.quotas[s.nextExpectedWindowNum][rid]
-						}
-					}
+					s.nextRid = -1
 				}
-
-				// update previous committed cut's cut portion
-				for rid := range entry.CommittedCut.Cut {
-					if s.prevCommittedCut.Cut == nil {
-						s.prevCommittedCut.Cut = make(map[int32]int64)
-					}
-					if _, ok := s.quotas[s.nextExpectedWindowNum][rid]; ok {
-						s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
-					}
-				}
-
-				// update next expected local cut number and window
-				s.nextExpectedLocalCutNum = s.nextExpectedLocalCutNum + 1
-				if s.nextExpectedLocalCutNum == s.numLocalCutsThreshold {
-					s.nextExpectedLocalCutNum = 0
-					s.nextExpectedWindowNum = s.nextExpectedWindowNum + 1
-				}
-
 				// numCuts++
 			}
 

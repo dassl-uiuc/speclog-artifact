@@ -81,9 +81,12 @@ if [ "$mode" -eq 0 ]; then # append one experiment mode
         done
     done
 elif [ "$mode" -eq 1 ]; then # append experiment mode
-    clients=("20" "80")
-    num_shards=("1" "4")
-    rates=("1000" "1050")
+    # clients=("20" "80")
+    # num_shards=("1" "4")
+    # rates=("1000" "1050")
+    clients=("80")
+    num_shards=("4")
+    rates=("1050")
     for interval in "${batching_intervals[@]}";
     do
         # modify intervals
