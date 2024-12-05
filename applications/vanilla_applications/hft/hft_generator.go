@@ -41,7 +41,7 @@ func GenerateRecord(length int) string {
 	return record
 }
 
-func Append_One_Ping(appenderId int32, clientNumber int) {
+func Append_One_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy int) {
 	// read configuration file
 	viper.SetConfigFile(hftConfigFilePath)
 	viper.AutomaticEnv()
@@ -75,7 +75,7 @@ func Append_One_Ping(appenderId int32, clientNumber int) {
 	WriteStats(recordsProduced, startThroughputTimer, endThroughputTimer, appenderId, clientNumber, scalogApi)
 }
 
-func Append_Stream_Ping(appenderId int32, clientNumber int) {
+func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy int) {
 	// read configuration file
 	viper.SetConfigFile(hftConfigFilePath)
 	viper.AutomaticEnv()
@@ -86,7 +86,7 @@ func Append_Stream_Ping(appenderId int32, clientNumber int) {
 	runTime := int64(viper.GetInt("produce-run-time"))
 	fmt.Printf("runtime=%ds appenderID=%d\n", runTime, appenderId)
 
-	scalogApi := scalog_api.CreateClient(1000, int(appenderId), "/proj/rasl-PG0/JiyuHu23/speclog/.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "/proj/rasl-PG0/JiyuHu23/speclog/.scalog.yaml")
 
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
@@ -161,7 +161,7 @@ func WriteStats(recordsProduced int, startThroughputTimer int64, endThroughputTi
 func main() {
 	fmt.Println("Running hft generator")
 
-	if len(os.Args) < 4 {
+	if len(os.Args) < 5 {
 		fmt.Println("Usage: go run hft_generator.go <appender_id> <append_type> <client_number>")
 		return
 	}
@@ -184,9 +184,15 @@ func main() {
 		return
 	}
 
+	offsetForShardingPolicy, err := strconv.Atoi(os.Args[4])
+	if err != nil {
+		fmt.Println("Invalid offset for sharding policy. It should be a number, err: ", err)
+		return
+	}
+
 	if appendType == 0 {
-		Append_One_Ping(int32(appenderId), clientNumber)
+		Append_One_Ping(int32(appenderId), clientNumber, offsetForShardingPolicy)
 	} else {
-		Append_Stream_Ping(int32(appenderId), clientNumber)
+		Append_Stream_Ping(int32(appenderId), clientNumber, offsetForShardingPolicy)
 	}
 }

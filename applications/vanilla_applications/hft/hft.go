@@ -114,8 +114,20 @@ func Compute(records1 []client.CommittedRecord, records2 []client.CommittedRecor
 		dataPointsY[i] = value
 	}
 
-	// Mt := SeriesMBatchOptimized(dataPointsX, WFull, prevM)
-	// Vt := SeriesVBatchOptimized(dataPointsX, dataPointsY, prevV, WFull)
+	W := WFull
+	n := len(records1)
+	if n >= 20 {
+		W = mat.NewDense(n, n, nil)
+		for i := 0; i < n; i++ {
+			W.Set(i, i, math.Pow(0.9, float64(20-i-1)))
+		}
+	}
+
+	Mt := SeriesMBatchOptimized(dataPointsX, W, prevM)
+	Vt := SeriesVBatchOptimized(dataPointsX, dataPointsY, prevV, W)
+
+	prevM = Mt
+	prevV = Vt
 }
 
 func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
@@ -130,6 +142,13 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	numReadClients := int32(viper.GetInt("num-append-clients"))
 
 	fmt.Printf("runtime=%ds\n", runTime)
+
+	M := mat.NewDense(2, 2, nil)
+	V := mat.NewDense(2, 1, nil)
+	WFull := mat.NewDense(20, 20, nil)
+	for i := 0; i < 20; i++ {
+		WFull.Set(i, i, math.Pow(0.9, float64(20-i-1)))
+	}
 
 	filterValue := numReadClients
 	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/JiyuHu23/speclog/.scalog.yaml")
@@ -185,10 +204,19 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 			// HandleIntrusion(committedRecords, db)
 			// handleIntrusionLatencies += int(time.Since(startHandleIntrusion).Nanoseconds())
 
-			duration := time.Duration(3000) * time.Microsecond
+			currBatch := int(math.Min(float64(len(committedRecords1)), float64(len(committedRecords2))))
+			duration := time.Duration(800) * time.Microsecond
 			start := time.Now()
+			do_compute := true
+			if currBatch == 0 {
+				do_compute = false
+			}
 			for time.Since(start) < duration {
 				// Busy-waiting
+				if do_compute {
+					Compute(committedRecords1[:currBatch], committedRecords2[:currBatch], WFull, M, V)
+					do_compute = false
+				}
 			}
 
 			// Iterate through committed records
@@ -205,7 +233,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 			}
 
 			batchesReceived++
-			batchSize += int(math.Min(float64(len(committedRecords1)), float64(len(committedRecords2))))
+			batchSize += currBatch
 
 			prevOffset = offset
 			// fmt.Println("processed a batch ", offset)

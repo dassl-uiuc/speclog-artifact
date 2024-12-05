@@ -13,8 +13,9 @@ appender_id="$5"
 
 echo "Running hft appender on node $client_id with appender id $appender_id"
 for ((i=0; i<$client_number; i++)); do
-  real_appender_id=$(( $appender_id * $client_number + $i ))
-  cmd="sudo /usr/local/go/bin/go run ../../applications/vanilla_applications/hft/hft_generator.go $real_appender_id $append_type $i"
+  offset=$(( $appender_id * $client_number + $i ))
+  real_appender_id=$(( offset / 5 ))
+  cmd="sudo /usr/local/go/bin/go run ../../applications/vanilla_applications/hft/hft_generator.go $real_appender_id $append_type $i $offset"
   $cmd &
 done
 
