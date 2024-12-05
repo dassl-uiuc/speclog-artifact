@@ -14,7 +14,7 @@ shard_join_time=15
 
 # parameters
 runtime_secs=60
-computation_time=(1000)
+computation_time=(800)
 
 cleanup_clients
 cleanup_servers
