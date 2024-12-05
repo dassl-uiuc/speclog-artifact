@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+
 num_replicas = 2
 num_append_clients_per_replica = 10
 num_read_clients_per_replica = 1
@@ -5,22 +7,34 @@ num_trials = 1
 def analyze():
     analyzing_trial = 1
     while analyzing_trial <= num_trials:
-        append_throughput_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/append_throughput_"
-        append_start_timestamps_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/append_start_timestamps_"
-        compute_e2e_end_times_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/compute_e2e_end_times_"
-        delivery_latencies_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/delivery_latencies_"
-        confirm_latencies_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/confirm_latencies_"
-        read_throughput_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/read_throughput_"
-        append_records_produced_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/append_records_produced_"
-        records_received_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/records_received_"
-        stats_file_path = "analytics/stats_trial_" + str(analyzing_trial) + ".txt"
-        start_compute_times_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/start_compute_times_"
-        avg_batch_size_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/batch_sizes_"
+        # append_throughput_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/append_throughput_"
+        # append_start_timestamps_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/append_start_timestamps_"
+        # compute_e2e_end_times_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/compute_e2e_end_times_"
+        # delivery_latencies_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/delivery_latencies_"
+        # confirm_latencies_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/confirm_latencies_"
+        # read_throughput_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/read_throughput_"
+        # append_records_produced_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/append_records_produced_"
+        # records_received_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/records_received_"
+        # stats_file_path = "analytics/stats_trial_" + str(analyzing_trial) + ".txt"
+        # start_compute_times_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/start_compute_times_"
+        # avg_batch_size_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/data/batch_sizes_"
+
+        append_throughput_file_path = "data/append_throughput_"
+        append_start_timestamps_file_path = "data/append_start_timestamps_"
+        compute_e2e_end_times_file_path = "data/compute_e2e_end_times_"
+        delivery_latencies_file_path = "data/delivery_latencies_"
+        confirm_latencies_file_path =  "data/confirm_latencies_"
+        read_throughput_file_path =  "data/read_throughput_"
+        append_records_produced_file_path =  "data/append_records_produced_"
+        records_received_file_path =  "data/records_received_"
+        stats_file_path = "data/stats_trial_" + str(analyzing_trial) + ".txt"
+        start_compute_times_file_path =  "data/start_compute_times_"
+        avg_batch_size_file_path = "data/batch_sizes_"
 
         records_produced = 0
         for i in range(num_replicas):
             for j in range(num_append_clients_per_replica):
-                append_records_produced_file_path_i = append_records_produced_file_path + str(i) + "_" + str(j) + ".txt"
+                append_records_produced_file_path_i = append_records_produced_file_path + str(i*2 + int(j/5)) + "_" + str(j) + ".txt"
                 with open(append_records_produced_file_path_i, 'r') as file:
                     for line in file:
                         records_produced += int(line)
@@ -28,7 +42,7 @@ def analyze():
         records_consumed = 0
         for i in range(num_replicas):
             for j in range(num_read_clients_per_replica):
-                records_received_file_path_i = records_received_file_path + str(i) + "_" + str(j) + ".txt"
+                records_received_file_path_i = records_received_file_path +  str(i*2 + int(j/5)) + "_" + str(j) + ".txt"
                 with open(records_received_file_path_i, 'r') as file:
                     for line in file:
                         records_consumed += int(line)
@@ -36,7 +50,7 @@ def analyze():
         append_throughput = 0
         for i in range(num_replicas):
             for j in range(num_append_clients_per_replica):
-                append_throughput_file_path_i = append_throughput_file_path + str(i) + "_" + str(j) + ".txt"
+                append_throughput_file_path_i = append_throughput_file_path +  str(i*2 + int(j/5)) + "_" + str(j) + ".txt"
                 with open(append_throughput_file_path_i, "r") as append_num_ops_file:
                     for line in append_num_ops_file:
                         append_throughput += float(line)
@@ -44,7 +58,7 @@ def analyze():
         read_throughput = 0
         for i in range(num_replicas):
             for j in range(num_read_clients_per_replica):
-                read_throughput_file_path_i = read_throughput_file_path + str(i) + "_" + str(j) + ".txt"
+                read_throughput_file_path_i = read_throughput_file_path +  str(i*2 + int(j/5)) + "_" + str(j) + ".txt"
                 with open(read_throughput_file_path_i, 'r') as file:
                     for line in file:
                         read_throughput += float(line)
@@ -54,7 +68,7 @@ def analyze():
         num_append_timestamps = 0
         for i in range(num_replicas):
             for j in range(num_append_clients_per_replica):
-                append_start_timestamps_file_path_i = f"{append_start_timestamps_file_path}{i}_{j}.txt"
+                append_start_timestamps_file_path_i = f"{append_start_timestamps_file_path}{i*2 + int(j/5)}_{j}.txt"
                 with open(append_start_timestamps_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
@@ -67,7 +81,7 @@ def analyze():
         num_compute_e2e_latencies = 0
         for i in range(num_replicas):
             for j in range(num_read_clients_per_replica):
-                compute_e2e_end_times_file_path_i = f"{compute_e2e_end_times_file_path}{i}_{j}.txt"
+                compute_e2e_end_times_file_path_i = f"{compute_e2e_end_times_file_path}{i*2 + int(j/5)}_{j}.txt"
                 with open(compute_e2e_end_times_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
@@ -81,7 +95,7 @@ def analyze():
         delivery_e2e_latencies_map = {}
         for i in range(num_replicas):
             for j in range(num_read_clients_per_replica):
-                delivery_latencies_file_path_i = f"{delivery_latencies_file_path}{i}_{j}.txt"
+                delivery_latencies_file_path_i = f"{delivery_latencies_file_path}{i*2 + int(j/5)}_{j}.txt"
                 with open(delivery_latencies_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
@@ -90,7 +104,7 @@ def analyze():
         delivery_e2e_latencies_map = {}
         for i in range(num_replicas):
             for j in range(num_read_clients_per_replica):
-                delivery_latencies_file_path_i = f"{delivery_latencies_file_path}{i}_{j}.txt"
+                delivery_latencies_file_path_i = f"{delivery_latencies_file_path}{i*2 + int(j/5)}_{j}.txt"
                 with open(delivery_latencies_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
@@ -99,12 +113,13 @@ def analyze():
         confirm_e2e_latencies_map = {}
         for i in range(num_replicas):
             for j in range(num_read_clients_per_replica):
-                confirm_latencies_file_path_i = f"{confirm_latencies_file_path}{i}_{j}.txt"
+                confirm_latencies_file_path_i = f"{confirm_latencies_file_path}{i*2 + int(j/5)}_{j}.txt"
                 with open(confirm_latencies_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
                         confirm_e2e_latencies_map[int(gsn)] = int(timestamp)
         
+        confirm_e2e_duration_map = {}
         confirm_e2e_latencies = 0
         confirm_e2e_latencies_list = []
         num_confirm_e2e_latencies = 0
@@ -119,6 +134,7 @@ def analyze():
                 delivery_e2e_latencies += delivery_e2e_latencies_map[gsn] - timestamp
                 delivery_e2e_latencies_list.append(delivery_e2e_latencies_map[gsn] - timestamp)
                 confirm_e2e_latencies += confirm_e2e_latencies_map[gsn] - timestamp
+                confirm_e2e_duration_map[gsn] = confirm_e2e_latencies_map[gsn] - timestamp
                 confirm_e2e_latencies_list.append(confirm_e2e_latencies_map[gsn] - timestamp)
                 num_delivery_e2e_latencies += 1
                 num_confirm_e2e_latencies += 1
@@ -135,7 +151,7 @@ def analyze():
         compute_start_times_map = {}
         for i in range(num_replicas):
             for j in range(num_read_clients_per_replica):
-                start_compute_times_file_path_i = f"{start_compute_times_file_path}{i}_{j}.txt"
+                start_compute_times_file_path_i = f"{start_compute_times_file_path}{i*2 + int(j/5)}_{j}.txt"
                 with open(start_compute_times_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
@@ -184,7 +200,7 @@ def analyze():
         batch_size = 0
         for i in range(num_replicas):
             for j in range(num_read_clients_per_replica):
-                avg_batch_size_file_path_i = avg_batch_size_file_path + str(i) + "_" + str(j) + ".txt"
+                avg_batch_size_file_path_i = avg_batch_size_file_path + str(i*2 + int(j/5)) + "_" + str(j) + ".txt"
                 with open(avg_batch_size_file_path_i, 'r') as file:
                     for line in file:
                         batch_size += float(line)
@@ -235,5 +251,20 @@ def analyze():
             file.write("avg_batch_size: " + str(avg_batch_size) + "\n")
 
         analyzing_trial += 1
+
+        sorted_items = sorted(confirm_e2e_duration_map.items())
+
+        # Extracting the sorted keys and values
+        keys = [item[0] for item in sorted_items]
+        values = [item[1] for item in sorted_items]
+
+        # Plotting the sorted data
+        plt.figure(figsize=(8, 6))
+        plt.plot(keys, values, marker='o', linestyle='-', color='b')
+        plt.title('Confirm E2E Duration Map (Sorted by GSN)')
+        plt.xlabel('GSN (Key)')
+        plt.ylabel('Duration (Value)')
+        plt.grid(True)
+        plt.savefig('confirm_e2e_duration_map.png')
 
 analyze()

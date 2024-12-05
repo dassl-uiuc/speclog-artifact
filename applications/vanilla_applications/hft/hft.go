@@ -166,7 +166,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	timeBeginCompute := make(map[int64]time.Time)
 	batchesReceived := 0
 	batchSize := 0
-	transactionAnalysisLatencies := 0
+	hftLatencies := 0
 
 	// Wait for first record to come in before starting throughput timer
 	for {
@@ -219,6 +219,8 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 				}
 			}
 
+			hftLatencies += int(time.Since(start).Nanoseconds())
+
 			// Iterate through committed records
 			timestamp := time.Now().UnixNano()
 			for _, record := range committedRecords1 {
@@ -269,8 +271,8 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	}
 	defer file.Close()
 
-	averageTransactionAnalysisLatencies := float64(transactionAnalysisLatencies) / float64(batchesReceived)
-	if _, err := file.WriteString(fmt.Sprintf("%f\n", averageTransactionAnalysisLatencies)); err != nil {
+	averageHftLatencies := float64(hftLatencies) / float64(batchesReceived)
+	if _, err := file.WriteString(fmt.Sprintf("%f\n", averageHftLatencies)); err != nil {
 		log.Fatal(err)
 	}
 
