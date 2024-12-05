@@ -214,6 +214,7 @@ func (s *DataServer) FilterSubscribeDouble(gsn *datapb.FilterGlobalSN, stream da
 	// unpack read id
 	readerId := int32(uint32(gsn.ReaderID) >> 16)
 	readerId2 := int32(gsn.ReaderID & 0xFFFF)
+	log.Infof("filtering recordID %d, %d with filter value %d", readerId, readerId2, gsn.FilterValue)
 	for sub := range subC {
 		if sub.ClientID == -1 {
 			err := stream.Send(sub)
@@ -226,7 +227,7 @@ func (s *DataServer) FilterSubscribeDouble(gsn *datapb.FilterGlobalSN, stream da
 			return err
 		} else {
 			if (sub.RecordID%gsn.FilterValue) == readerId || (sub.RecordID%gsn.FilterValue) == readerId2 {
-				log.Infof("Sending record %v to reader %v", sub.RecordID, gsn.ReaderID)
+				// log.Infof("Sending record %v to reader %v", sub.RecordID, gsn.ReaderID)
 				sub.MissedRecords = missedRecords[:numMissedRecords]
 
 				err := stream.Send(sub)
@@ -241,6 +242,9 @@ func (s *DataServer) FilterSubscribeDouble(gsn *datapb.FilterGlobalSN, stream da
 			} else {
 				missedRecords[numMissedRecords] = sub.GlobalSN
 				numMissedRecords++
+				if numMissedRecords >= 10000000 {
+					log.Warningf("missing records too much: %d", numMissedRecords)
+				}
 			}
 		}
 	}

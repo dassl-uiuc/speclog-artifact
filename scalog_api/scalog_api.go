@@ -260,7 +260,7 @@ func (s *Scalog) FilterSubscribeThreadDouble(startGsn int64, readerId int32, rea
 				s.records[index] = r
 				atomic.AddInt64(&s.atomicInt, 1)
 				s.Stats.DeliveryTime[r.GSN] = time.Now()
-
+				// log.Infof(r.Record[0:7])
 				continue
 			}
 		}

@@ -730,6 +730,7 @@ func (c *Client) filterSubscribeShardServerDouble(
 		log.Errorf("%v", err)
 		return
 	}
+	// recvVnt := 0
 	for {
 		record, err := stream.Recv()
 		if err == io.EOF {
@@ -760,6 +761,7 @@ func (c *Client) filterSubscribeShardServerDouble(
 			if record.GlobalSN == c.nextGSN {
 				c.respondToClient()
 			}
+			// recvVnt++
 		} else {
 			// this is a speculation confirmation
 			c.speculationConfs[record.GlobalSN] = record

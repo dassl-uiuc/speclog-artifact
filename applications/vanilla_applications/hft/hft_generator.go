@@ -84,8 +84,9 @@ func Append_Stream_Ping(appenderId int32, clientNumber int) {
 		fmt.Println("read config file error: %v", err)
 	}
 	runTime := int64(viper.GetInt("produce-run-time"))
+	fmt.Printf("runtime=%ds appenderID=%d\n", runTime, appenderId)
 
-	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/JiyuHu23/speclog/.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, int(appenderId), "/proj/rasl-PG0/JiyuHu23/speclog/.scalog.yaml")
 
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
@@ -154,7 +155,7 @@ func WriteStats(recordsProduced int, startThroughputTimer int64, endThroughputTi
 		}
 	}
 
-	fmt.Println("Produced ", recordsProduced, " records")
+	fmt.Println("AppenderID ", appenderId, "Produced ", recordsProduced, " records")
 }
 
 func main() {

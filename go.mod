@@ -1,6 +1,6 @@
 module github.com/scalog/scalog
 
-go 1.21
+go 1.22
 
 toolchain go1.22.0
 
@@ -13,7 +13,7 @@ require (
 	github.com/stretchr/testify v1.9.0
 	go.etcd.io/etcd v0.0.0-20190703195757-48f5bb6d2822
 	go.uber.org/zap v1.10.0
-	gonum.org/v1/gonum v0.15.0
+	gonum.org/v1/gonum v0.15.1
 	google.golang.org/grpc v1.21.1
 	k8s.io/api v0.0.0-20190814101207-0772a1bdf941
 	k8s.io/apimachinery v0.0.0-20190814100815-533d101be9a6

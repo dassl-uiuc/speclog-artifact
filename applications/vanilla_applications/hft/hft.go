@@ -92,7 +92,7 @@ func SeriesVBatchOptimized(dataPointsX []float64, dataPointsY []float64, prevV *
 	return Vt
 }
 
-func Compute(records1 []client.CommittedRecord, records2 []client.CommittedRecord) {
+func Compute(records1 []client.CommittedRecord, records2 []client.CommittedRecord, WFull *mat.Dense, prevM *mat.Dense, prevV *mat.Dense) {
 	dataPointsX := make([]float64, len(records1))
 	dataPointsY := make([]float64, len(records2))
 
@@ -114,8 +114,8 @@ func Compute(records1 []client.CommittedRecord, records2 []client.CommittedRecor
 		dataPointsY[i] = value
 	}
 
-	Mt := SeriesMBatchOptimized(dataPointsX, WFull, prevM)
-	Vt := SeriesVBatchOptimized(dataPointsX, dataPointsY, prevM, WFull)
+	// Mt := SeriesMBatchOptimized(dataPointsX, WFull, prevM)
+	// Vt := SeriesVBatchOptimized(dataPointsX, dataPointsY, prevV, WFull)
 }
 
 func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
@@ -128,7 +128,9 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 		fmt.Println("read config file error: %v", err)
 	}
 	runTime := int64(viper.GetInt("consume-run-time"))
-	numReadClients := int32(viper.GetInt("num-read-clients"))
+	numReadClients := int32(viper.GetInt("num-append-clients"))
+
+	fmt.Printf("runtime=%ds\n", runTime)
 
 	filterValue := numReadClients
 	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/JiyuHu23/speclog/.scalog.yaml")
@@ -154,6 +156,8 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 		}
 	}
 
+	fmt.Println("Start processing")
+
 	startThroughputTimer := time.Now().UnixNano()
 	for time.Now().Unix()-startTimeInSeconds < (runTime) {
 		offset := scalogApi.GetLatestOffset()
@@ -165,7 +169,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 			for i := prevOffset; i < offset; i++ {
 				committedRecord := scalogApi.Read(i)
 
-				if committedRecord.RecordId%int32(clientNumber) == readerId {
+				if committedRecord.RecordId%filterValue == readerId {
 					committedRecords1 = append(committedRecords1, committedRecord)
 				} else {
 					committedRecords2 = append(committedRecords2, committedRecord)
@@ -180,7 +184,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 			// HandleIntrusion(committedRecords, db)
 			// handleIntrusionLatencies += int(time.Since(startHandleIntrusion).Nanoseconds())
 
-			duration := 500 * time.Microsecond
+			duration := time.Duration(800) * time.Microsecond
 			start := time.Now()
 			for time.Since(start) < duration {
 				// Busy-waiting
@@ -188,19 +192,28 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 
 			// Iterate through committed records
 			timestamp := time.Now().UnixNano()
-			for _, record := range committedRecords {
+			for _, record := range committedRecords1 {
+				computeE2eEndTimes[record.GSN] = timestamp
+
+				recordsReceived++
+			}
+			for _, record := range committedRecords2 {
 				computeE2eEndTimes[record.GSN] = timestamp
 
 				recordsReceived++
 			}
 
 			batchesReceived++
-			batchSize += len(committedRecords)
+			batchSize += int(math.Min(float64(len(committedRecords1)), float64(len(committedRecords2))))
 
 			prevOffset = offset
+			// fmt.Println("processed a batch ", offset)
 		}
 	}
 
+	fmt.Println("processed a batch ", scalogApi.GetLatestOffset())
+	fmt.Printf("avg batch size %.2f\n", float64(batchSize)/float64(batchesReceived))
+	fmt.Println(batchSize, batchesReceived)
 	endThroughputTimer := time.Now().UnixNano()
 
 	// Wait for everyone to finish their run
@@ -347,5 +360,5 @@ func main() {
 		return
 	}
 
-	HftProcessing(int32(readerId), int32(readerId)+1, clientNumber)
+	HftProcessing(int32(readerId)+1, int32(readerId)+2, clientNumber)
 }
