@@ -185,3 +185,41 @@ func (s *DataServer) FilterSubscribe(gsn *datapb.FilterGlobalSN, stream datapb.D
 	clientSub.state = CLOSED
 	return nil
 }
+
+func (s *DataServer) FilterSubscribeDouble(gsn *datapb.FilterGlobalSN, stream datapb.Data_FilterSubscribeDoubleServer) error {
+	subC := make(chan *datapb.Record, 4096)
+	clientSub := &clientSubscriber{
+		state:    BEHIND,
+		respChan: subC,
+		startGsn: gsn.GSN,
+	}
+	s.newClientSubscribersChan <- clientSub
+
+	missedRecords := make([]int64, 10000000)
+	numMissedRecords := 0
+
+	readerId := gsn.ReaderID
+	readerId2 := gsn.ReaderID2
+	log.Infof("filtering recordID %d, %d with filter value %d", readerId, readerId2, gsn.FilterValue)
+	for sub := range subC {
+		if (sub.RecordID%gsn.FilterValue) == readerId || (sub.RecordID%gsn.FilterValue) == readerId2 {
+			sub.MissedRecords = missedRecords[:numMissedRecords]
+
+			err := stream.Send(sub)
+			if err == nil {
+				numMissedRecords = 0
+				continue
+			}
+			log.Debugf("Send record error: %v, closing channel...", err)
+			clientSub.state = CLOSED
+			close(subC)
+			return err
+		} else {
+			missedRecords[numMissedRecords] = sub.GlobalSN
+			numMissedRecords++
+		}
+	}
+
+	clientSub.state = CLOSED
+	return nil
+}

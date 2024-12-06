@@ -33,8 +33,8 @@ type tuple struct {
 }
 
 type CommittedRecord struct {
-	GSN    int64
-	Record string
+	GSN      int64
+	Record   string
 	RecordID int32
 }
 
@@ -528,6 +528,23 @@ func (c *Client) FilterSubscribe(gsn int64, readerId int32, filterValue int32) (
 	return c.subC, nil
 }
 
+func (c *Client) FilterSubscribeDouble(gsn int64, readerId int32, readerId2 int32, filterValue int32) (chan CommittedRecord, error) {
+	c.committedRecordsMu.Lock()
+	c.nextGSN = gsn
+	c.committedRecordsMu.Unlock()
+
+	for _, shard := range c.view.LiveShards {
+		for replicaId := int32(0); replicaId < c.numReplica; replicaId++ {
+			go c.filterSubscribeShardServerDouble(shard, replicaId, readerId, readerId2, filterValue)
+		}
+
+		c.shardsSubscribedTo[shard] = true
+	}
+	c.isReader = true
+
+	return c.subC, nil
+}
+
 func (c *Client) filterSubscribeShardServer(shard, replica int32, readerId int32, filterValue int32) {
 	conn, err := c.getDataServerConn(shard, replica)
 	if err != nil {
@@ -564,13 +581,66 @@ func (c *Client) filterSubscribeShardServer(shard, replica int32, readerId int32
 		}
 
 		c.committedRecords[record.GlobalSN] = CommittedRecord{
-			GSN:    record.GlobalSN,
-			Record: record.Record,
+			GSN:      record.GlobalSN,
+			Record:   record.Record,
 			RecordID: record.RecordID,
 		}
 		if record.GlobalSN == c.nextGSN {
 			c.respondToClient()
 		}
+		c.committedRecordsMu.Unlock()
+		// TODO(shreesha): handle view change
+	}
+}
+
+func (c *Client) filterSubscribeShardServerDouble(
+	shard, replica int32, readerId int32, readerId2 int32, filterValue int32) {
+	conn, err := c.getDataServerConn(shard, replica)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	opts := []grpc.CallOption{}
+	dataClient := datapb.NewDataClient(conn)
+	globalSN := &datapb.FilterGlobalSN{GSN: c.nextGSN, ReaderID: readerId, ReaderID2: readerId2, FilterValue: filterValue}
+	stream, err := dataClient.FilterSubscribeDouble(context.Background(), globalSN, opts...)
+	if err != nil {
+		log.Errorf("%v", err)
+		return
+	}
+	recvVnt := 0
+	for {
+		record, err := stream.Recv()
+		if err == io.EOF {
+			log.Infof("Receive subscribe stream closed.")
+			return
+		}
+		if err != nil {
+			log.Errorf("%v", err)
+			return
+		}
+		c.committedRecordsMu.Lock()
+		for _, gsn := range record.MissedRecords {
+			c.committedRecords[gsn] = CommittedRecord{
+				GSN:    gsn,
+				Record: "",
+			}
+			if gsn == c.nextGSN {
+				c.respondToClient()
+			}
+		}
+
+		c.committedRecords[record.GlobalSN] = CommittedRecord{
+			GSN:      record.GlobalSN,
+			Record:   record.Record,
+			RecordID: record.RecordID,
+		}
+		if record.GlobalSN == c.nextGSN {
+			c.respondToClient()
+		}
+		recvVnt++
+		// log.Infof("recvcnt: %d", recvVnt)
+
 		c.committedRecordsMu.Unlock()
 		// TODO(shreesha): handle view change
 	}

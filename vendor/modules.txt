@@ -132,6 +132,9 @@ github.com/spf13/viper
 # github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2
 ## explicit
 github.com/xiang90/probing
+# go.etcd.io/bbolt v1.3.11
+## explicit; go 1.22
+go.etcd.io/bbolt
 # go.etcd.io/etcd v0.0.0-20190703195757-48f5bb6d2822
 ## explicit
 go.etcd.io/etcd/etcdserver/api/rafthttp

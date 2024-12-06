@@ -1,6 +1,6 @@
 module github.com/scalog/scalog
 
-go 1.21
+go 1.22
 
 toolchain go1.22.0
 
@@ -53,6 +53,7 @@ require (
 	github.com/tecbot/gorocksdb v0.0.0-20191217155057-f0fad39f321c // indirect
 	github.com/tecbot/rocksdb v0.0.0-20140404035127-ef7dc38919a4 // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
+	go.etcd.io/bbolt v1.3.11 // indirect
 	go.uber.org/atomic v1.4.0 // indirect
 	go.uber.org/multierr v1.1.0 // indirect
 	golang.org/x/crypto v0.15.0 // indirect

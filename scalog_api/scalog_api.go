@@ -228,7 +228,40 @@ func (s *Scalog) FilterSubscribeThread(startGsn int64, readerId int32, filterVal
 				s.records[index] = r
 				atomic.AddInt64(&s.atomicInt, 1)
 				s.Stats.DeliveryTime[r.GSN] = time.Now()
-				
+
+				continue
+			}
+		}
+	}
+}
+
+func (s *Scalog) FilterSubscribeThreadDouble(startGsn int64, readerId int32, readerId2 int32, filterValue int32) {
+	stream, err := s.client.FilterSubscribeDouble(startGsn, readerId, readerId2, filterValue)
+	if err != nil {
+		log.Errorf("%v", err)
+	}
+
+	prevGsn := int64(-1)
+
+	for {
+		select {
+		case <-s.Stop:
+			return
+		case r := <-stream:
+			if r.GSN != prevGsn+1 {
+				log.Errorf("[scalog_api]: out of order record: %v", r.GSN)
+			}
+			prevGsn = r.GSN
+
+			// This means we received a "dummy" record that was used for ordering or we received a hole
+			if r.Record == "" {
+				continue
+			} else {
+				index := atomic.LoadInt64(&s.atomicInt)
+				s.records[index] = r
+				atomic.AddInt64(&s.atomicInt, 1)
+				s.Stats.DeliveryTime[r.GSN] = time.Now()
+
 				continue
 			}
 		}
@@ -237,6 +270,10 @@ func (s *Scalog) FilterSubscribeThread(startGsn int64, readerId int32, filterVal
 
 func (s *Scalog) FilterSubscribe(startGsn int64, readerId int32, filterValue int32) {
 	go s.FilterSubscribeThread(startGsn, readerId, filterValue)
+}
+
+func (s *Scalog) FilterSubscribeDouble(startGsn int64, readerId int32, readerId2 int32, filterValue int32) {
+	go s.FilterSubscribeThreadDouble(startGsn, readerId, readerId2, filterValue)
 }
 
 // read desc in client/client.go
