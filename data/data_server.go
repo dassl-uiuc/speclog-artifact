@@ -637,7 +637,7 @@ func (s *DataServer) processSingleRecord(record *datapb.Record, nextGsn *int64, 
 	record.GlobalSN = *nextGsn
 	record.LocalReplicaID = s.replicaID
 	record.ShardID = s.shardID
-	record.ViewID = *viewID
+	record.ViewID = max(s.viewID, *viewID)
 
 	s.committedRecordsMu.Lock()
 	s.committedRecords[*nextGsn] = record
@@ -1156,14 +1156,22 @@ func (s *DataServer) receiveCommittedCut() {
 
 func (s *DataServer) processCommittedEntry() {
 	initStartGSN := int64(-1)
+	representRid := int32(-1) // I'm represent this failed replica to send hole speculations
 	for entry := range s.committedEntryC {
 		if entry.CommittedCut != nil {
 			log.Debugf("Processing committed cut: %v", entry.CommittedCut)
 			startTime := time.Now()
 			// update quota if new quota is received
 			rid := s.shardID*s.numReplica + s.replicaID
+
 			if len(entry.FailedShards) > 0 {
 				log.Printf("receive failed shards: %v, entry: %v", entry.FailedShards, entry)
+				for _, failRid := range entry.FailedShards {
+					if rid == int32(failRid)+2 { // todo: ad-hoc
+						representRid = failRid
+					}
+				}
+				log.Printf("Assigned to send holes for failed replica %v", representRid)
 			}
 			if atomic.CompareAndSwapInt32(&s.viewID, entry.ViewID-1, entry.ViewID) {
 				log.Printf("view Id increased from %v to %v", entry.ViewID-1, s.viewID)
@@ -1323,10 +1331,35 @@ func (s *DataServer) processCommittedEntry() {
 								}
 
 								log.Debugf("Sending confirmations for records %v to %v", startGSN, startGSN+int64(diff)-1)
+								// send fake hole speculations on behalf of failed shards
+								if _, ok := entry.CommittedCut.Cut[representRid]; ok { // I have a failed shard assigned for me
+
+									representStartGSN := startGSN
+									for rrid := representRid; rrid < startReplicaID+s.replicaID; rrid++ {
+										representStartGSN -= s.quotas[s.nextExpectedLocalCutNum][rrid] // substract the sum of quota between this shard and represented shard
+									}
+									diff = int32(s.quotas[s.nextExpectedWindowNum][representRid])
+									// NOTE: we may resend speculation records for the speculation already sent from the failed shards
+									s.speculationConfC <- &datapb.Record{
+										ClientID:       s.holeID,
+										ShardID:        representRid / s.numReplica,
+										LocalReplicaID: representRid % s.numReplica,
+										ViewID:         s.viewID,
+										GlobalSN:       representStartGSN,
+										GlobalSN1:      representStartGSN + int64(diff) - 1,
+										NumHoles:       diff,
+									}
+									log.Printf("sending hole speculation between [%v, %v] on behalf of %v", representStartGSN, representStartGSN+int64(diff)-1, representRid)
+								} else {
+									if representRid != -1 {
+										log.Printf("OL has reconfigured, finish representative for failed shard %v", representRid)
+										representRid = -1
+									}
+								}
 								// send a batch of acks for all these records on the spec confirmation channel
 								s.speculationConfC <- &datapb.Record{
-									ClientID:  -1, // mark this as a confirmation record
-									ViewID:    s.views[s.nextExpectedWindowNum],
+									ClientID:  -1,                                              // mark this as a confirmation record
+									ViewID:    max(s.viewID, s.views[s.nextExpectedWindowNum]), // todo: ad-hoc
 									GlobalSN:  startGSN,
 									GlobalSN1: startGSN + int64(diff) - 1,
 								}
