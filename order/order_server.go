@@ -101,6 +101,7 @@ type Stats struct {
 	holesFilled               map[int32](map[int64]int64) // number of holes filled by each replica (1st int32) in each local cut id (1st int64)
 	quotaStartTime            time.Time
 	prevNumCommittedCuts      int64
+	numCutsCommited           map[int64]int64
 }
 
 func (s *Stats) printStats() {
@@ -118,6 +119,9 @@ func (s *Stats) printStats() {
 	}
 	log.Printf("num committed cuts: %v [+%v]", s.numCommittedCuts, s.numCommittedCuts-s.prevNumCommittedCuts)
 	s.prevNumCommittedCuts = s.numCommittedCuts
+	for k, v := range s.numCutsCommited {
+		log.Printf("num cuts committed at stagger level: %v: %v", k, v)
+	}
 }
 
 type OrderServer struct {
@@ -241,6 +245,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 		s.stats.holesFilled = make(map[int32](map[int64]int64))
 	}
 	s.stats.numLagFixes = make(map[int32]int64)
+	s.stats.numCutsCommited = make(map[int64]int64)
 	s.lastLag = make(map[int32]int64)
 	return s
 }
@@ -463,6 +468,7 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		for i := int64(0); i < validCommitLen; i++ {
 			ccut[seqReached[i]] = s.adjustToMinimums(seqReached[i], lcs[seqReached[i]], nextWindowNum, nextLocalCutNum)
 		}
+		s.stats.numCutsCommited[validCommitLen]++
 	}
 
 	// check if lcs num is equal to localCutChangeWindow-1

@@ -75,7 +75,7 @@ def get_avg_throughput(directory, num_bytes_per_op):
 clients = [80]
 print(f"#clients,avg tput(ops/sec),avg latency(ms/op),p50 latency(ms/op),p99 latency(ms/op)")
 for n in clients:
-    directory_path = "./runs_3/3/1ms/append_bench_" + str(n)
+    directory_path = "../results/1ms/append_bench_" + str(n)
     avg_tput = get_avg_throughput(directory_path, 4096)
     latencies = get_latencies(directory_path)
     mean, p50, p99 = get_latency_metrics(latencies)
