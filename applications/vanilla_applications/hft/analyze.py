@@ -4,6 +4,15 @@ num_replicas = 2
 num_append_clients_per_replica = 10
 num_read_clients_per_replica = 1
 num_trials = 1
+
+def largest_common_key(*maps):
+    # Find the intersection of all keys across the maps
+    common_keys = set(maps[0].keys())
+    for m in maps[1:]:
+        common_keys.intersection_update(m.keys())
+    
+    return max(common_keys) if common_keys else None
+
 def analyze():
     analyzing_trial = 1
     while analyzing_trial <= num_trials:
@@ -129,7 +138,14 @@ def analyze():
         total_e2e_latencies = 0
         total_e2e_latencies_list = []
         num_total_e2e_latencies = 0
+
+        largest_key = largest_common_key(append_start_timestamps, delivery_e2e_latencies_map, confirm_e2e_latencies_map, compute_e2e_latencies_map)
+        threshold = 0.2
+        threshold_key = largest_key*threshold
+
         for gsn, timestamp in append_start_timestamps.items():
+            if gsn < threshold_key:
+                continue
             if gsn in delivery_e2e_latencies_map and gsn in confirm_e2e_latencies_map and gsn in compute_e2e_latencies_map:
                 delivery_e2e_latencies += delivery_e2e_latencies_map[gsn] - timestamp
                 delivery_e2e_latencies_list.append(delivery_e2e_latencies_map[gsn] - timestamp)

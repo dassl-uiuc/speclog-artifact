@@ -8,6 +8,8 @@ github.com/RobinUS2/golang-moving-average
 github.com/beorn7/perks/quantile
 # github.com/buger/jsonparser v1.1.1
 ## explicit; go 1.13
+# github.com/cespare/xxhash/v2 v2.1.2
+## explicit; go 1.11
 # github.com/coreos/go-semver v0.3.0
 ## explicit
 github.com/coreos/go-semver/semver
@@ -20,12 +22,16 @@ github.com/coreos/pkg/capnslog
 # github.com/davecgh/go-spew v1.1.1
 ## explicit
 github.com/davecgh/go-spew/spew
+# github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f
+## explicit
 # github.com/dustin/go-humanize v1.0.0
 ## explicit
 github.com/dustin/go-humanize
-# github.com/fsnotify/fsnotify v1.4.7
-## explicit
+# github.com/fsnotify/fsnotify v1.4.9
+## explicit; go 1.13
 github.com/fsnotify/fsnotify
+# github.com/go-redis/redis/v8 v8.11.5
+## explicit; go 1.17
 # github.com/gogo/protobuf v1.2.2-0.20190723190241-65acae22fc9d
 ## explicit
 github.com/gogo/protobuf/gogoproto
@@ -141,6 +147,9 @@ github.com/stretchr/testify/assert
 # github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2
 ## explicit
 github.com/xiang90/probing
+# go.etcd.io/bbolt v1.3.11
+## explicit; go 1.22
+go.etcd.io/bbolt
 # go.etcd.io/etcd v0.0.0-20190703195757-48f5bb6d2822
 ## explicit
 go.etcd.io/etcd/etcdserver/api/rafthttp
@@ -291,8 +300,8 @@ google.golang.org/grpc/tap
 # gopkg.in/inf.v0 v0.9.1
 ## explicit
 gopkg.in/inf.v0
-# gopkg.in/yaml.v2 v2.2.2
-## explicit
+# gopkg.in/yaml.v2 v2.4.0
+## explicit; go 1.15
 gopkg.in/yaml.v2
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit

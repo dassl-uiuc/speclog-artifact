@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"math"
@@ -15,11 +17,50 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"gonum.org/v1/gonum/mat"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 var hftConfigFilePath = "../../applications/vanilla_applications/hft/hft_config.yaml"
 
 // TODO: Add computation here
+func int32ToBytes(value int32) []byte {
+	var buf bytes.Buffer
+	err := binary.Write(&buf, binary.BigEndian, value)
+	if err != nil {
+		log.Fatalf("Error packing int32: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func matrixToBytes(m *mat.Dense) []byte {
+	rows, cols := m.Dims()
+	var buf bytes.Buffer
+	for i := 0; i < rows; i++ {
+		for j := 0; j < cols; j++ {
+			binary.Write(&buf, binary.BigEndian, m.At(i, j))
+		}
+	}
+	return buf.Bytes()
+}
+
+func setBoltDB(dataFile string) *bolt.DB {
+	db, err := bolt.Open(dataFile, 0600, nil)
+	if err != nil {
+		log.Fatalf("Failed to open or create database file %s: %v", dataFile, err)
+	}
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists([]byte("BenchmarkBucket"))
+		return err
+	})
+	if err != nil {
+		log.Fatalf("Failed to create bucket: %v", err)
+	}
+
+	return db
+}
+
 func SeriesMBatchOptimized(dataPointsX []float64, WFull *mat.Dense, prevM *mat.Dense) *mat.Dense {
 	alpha := 0.9
 
@@ -92,7 +133,9 @@ func SeriesVBatchOptimized(dataPointsX []float64, dataPointsY []float64, prevV *
 	return Vt
 }
 
-func Compute(records1 []client.CommittedRecord, records2 []client.CommittedRecord, WFull *mat.Dense, prevM *mat.Dense, prevV *mat.Dense) {
+func Compute(
+	records1 []client.CommittedRecord, records2 []client.CommittedRecord,
+	WFull *mat.Dense, prevM *mat.Dense, prevV *mat.Dense) {
 	dataPointsX := make([]float64, len(records1))
 	dataPointsY := make([]float64, len(records2))
 
@@ -130,8 +173,42 @@ func Compute(records1 []client.CommittedRecord, records2 []client.CommittedRecor
 	prevV = Vt
 }
 
+func writeToBoltDB(M *mat.Dense, V *mat.Dense, timestamp uint32, db *bolt.DB) {
+	key := make([]byte, 4)
+	binary.BigEndian.PutUint32(key, timestamp)
+
+	mBytes := matrixToBytes(M)
+	vBytes := matrixToBytes(V)
+
+	key[0] &= 0x7F
+	err := db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte("BenchmarkBucket"))
+		if bucket == nil {
+			return fmt.Errorf("Bucket not found")
+		}
+		return bucket.Put(key, mBytes)
+	})
+	if err != nil {
+		log.Fatalf("Failed to insert key %d: %v", timestamp, err)
+	}
+
+	key[0] |= 0x80
+	err = db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte("BenchmarkBucket"))
+		if bucket == nil {
+			return fmt.Errorf("Bucket not found")
+		}
+		return bucket.Put(key, vBytes)
+	})
+	if err != nil {
+		log.Fatalf("Failed to insert key %d: %v", timestamp, err)
+	}
+}
+
 func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	// read configuration file
+	db := setBoltDB("/data/hft.db")
+
 	viper.SetConfigFile(hftConfigFilePath)
 	viper.AutomaticEnv()
 	err := viper.ReadInConfig()
@@ -166,6 +243,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	timeBeginCompute := make(map[int64]time.Time)
 	batchesReceived := 0
 	batchSize := 0
+	diffSize := 0
 	hftLatencies := 0
 
 	// Wait for first record to come in before starting throughput timer
@@ -178,20 +256,20 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 
 	fmt.Println("Start processing")
 
+	committedRecords1 := make([]client.CommittedRecord, 0)
+	committedRecords2 := make([]client.CommittedRecord, 0)
+
 	startThroughputTimer := time.Now().UnixNano()
 	for time.Now().Unix()-startTimeInSeconds < (runTime) {
 		offset := scalogApi.GetLatestOffset()
 		if offset != prevOffset {
-			committedRecords1 := make([]client.CommittedRecord, 0)
-			committedRecords2 := make([]client.CommittedRecord, 0)
-
 			startComputeTime := time.Now()
 			for i := prevOffset; i < offset; i++ {
 				committedRecord := scalogApi.Read(i)
 
 				if committedRecord.RecordId%filterValue == readerId {
 					committedRecords1 = append(committedRecords1, committedRecord)
-				} else {
+				} else if committedRecord.RecordId%filterValue == readerId2 {
 					committedRecords2 = append(committedRecords2, committedRecord)
 				}
 				timeBeginCompute[committedRecord.GSN] = startComputeTime
@@ -205,19 +283,16 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 			// handleIntrusionLatencies += int(time.Since(startHandleIntrusion).Nanoseconds())
 
 			currBatch := int(math.Min(float64(len(committedRecords1)), float64(len(committedRecords2))))
-			duration := time.Duration(800) * time.Microsecond
-			start := time.Now()
-			do_compute := true
 			if currBatch == 0 {
-				do_compute = false
+				continue
 			}
-			for time.Since(start) < duration {
-				// Busy-waiting
-				if do_compute {
-					Compute(committedRecords1[:currBatch], committedRecords2[:currBatch], WFull, M, V)
-					do_compute = false
-				}
-			}
+			diffSize += int(math.Abs(float64(len(committedRecords1) - len(committedRecords2))))
+
+			start := time.Now()
+
+			// do computation and write to boltdb
+			Compute(committedRecords1[:currBatch], committedRecords2[:currBatch], WFull, M, V)
+			writeToBoltDB(M, V, uint32(batchesReceived), db)
 
 			hftLatencies += int(time.Since(start).Nanoseconds())
 
@@ -238,12 +313,17 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 			batchSize += currBatch
 
 			prevOffset = offset
+
+			// clear the slice
+			committedRecords1 = committedRecords1[:0]
+			committedRecords2 = committedRecords2[:0]
 			// fmt.Println("processed a batch ", offset)
 		}
 	}
 
 	fmt.Println("processed a batch ", scalogApi.GetLatestOffset())
-	fmt.Printf("avg batch size %.2f\n", float64(batchSize)/float64(batchesReceived))
+	fmt.Printf("avg batch size %.2f, avg record len diff %.2f\n",
+		float64(batchSize)/float64(batchesReceived), float64(diffSize)/float64(batchesReceived))
 	fmt.Println(batchSize, batchesReceived)
 	endThroughputTimer := time.Now().UnixNano()
 

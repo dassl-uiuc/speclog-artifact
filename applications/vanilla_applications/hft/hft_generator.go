@@ -41,7 +41,7 @@ func GenerateRecord(length int) string {
 	return record
 }
 
-func Append_One_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy int) {
+func Append_One_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy int, maxStockId int32) {
 	// read configuration file
 	viper.SetConfigFile(hftConfigFilePath)
 	viper.AutomaticEnv()
@@ -53,6 +53,7 @@ func Append_One_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy
 
 	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/JiyuHu23/speclog/.scalog.yaml")
 
+	currStockId := int32(0)
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
 	startThroughputTimer := time.Now().UnixNano()
@@ -64,7 +65,11 @@ func Append_One_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy
 		}
 
 		// scalogApi.AppendOneToAssignedShard(appenderId, record)
-		scalogApi.FilterAppendOne(record, appenderId)
+		scalogApi.FilterAppendOne(record, currStockId)
+		currStockId++
+		if currStockId >= maxStockId {
+			currStockId = 0
+		}
 
 		recordsProduced++
 	}
@@ -75,7 +80,7 @@ func Append_One_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy
 	WriteStats(recordsProduced, startThroughputTimer, endThroughputTimer, appenderId, clientNumber, scalogApi)
 }
 
-func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy int) {
+func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy int, maxStockId int32) {
 	// read configuration file
 	viper.SetConfigFile(hftConfigFilePath)
 	viper.AutomaticEnv()
@@ -84,10 +89,11 @@ func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPol
 		fmt.Println("read config file error: %v", err)
 	}
 	runTime := int64(viper.GetInt("produce-run-time"))
-	fmt.Printf("runtime=%ds appenderID=%d\n", runTime, appenderId)
+	fmt.Printf("runtime=%ds appenderID=%d maxStockId=%d\n", runTime, appenderId, maxStockId)
 
 	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "/proj/rasl-PG0/JiyuHu23/speclog/.scalog.yaml")
 
+	currStockId := int32(0)
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
 	startThroughputTimer := time.Now().UnixNano()
@@ -98,8 +104,11 @@ func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPol
 			return
 		}
 
-		// scalogApi.AppendToAssignedShard(appenderId, record)
-		scalogApi.FilterAppend(record, appenderId)
+		scalogApi.FilterAppend(record, currStockId)
+		currStockId++
+		if currStockId >= maxStockId {
+			currStockId = 0
+		}
 
 		recordsProduced++
 	}
@@ -161,7 +170,7 @@ func WriteStats(recordsProduced int, startThroughputTimer int64, endThroughputTi
 func main() {
 	fmt.Println("Running hft generator")
 
-	if len(os.Args) < 5 {
+	if len(os.Args) < 6 {
 		fmt.Println("Usage: go run hft_generator.go <appender_id> <append_type> <client_number>")
 		return
 	}
@@ -190,9 +199,15 @@ func main() {
 		return
 	}
 
+	maxStockID, err := strconv.Atoi(os.Args[5])
+	if err != nil {
+		fmt.Println("Invalid offset for sharding policy. It should be a number, err: ", err)
+		return
+	}
+
 	if appendType == 0 {
-		Append_One_Ping(int32(appenderId), clientNumber, offsetForShardingPolicy)
+		Append_One_Ping(int32(appenderId), clientNumber, offsetForShardingPolicy, int32(maxStockID))
 	} else {
-		Append_Stream_Ping(int32(appenderId), clientNumber, offsetForShardingPolicy)
+		Append_Stream_Ping(int32(appenderId), clientNumber, offsetForShardingPolicy, int32(maxStockID))
 	}
 }
