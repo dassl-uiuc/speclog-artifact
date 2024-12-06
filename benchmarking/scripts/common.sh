@@ -138,6 +138,12 @@ start_qc_clients() {
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run quota_change.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1_$3_$5.log 2>&1" &
 }
 
+# args: client node, runtime secs, numAppendersPerShard, new client join time, computation time, filepath
+start_qc_e2e_clients() {
+    go_path="/usr/local/go/bin/go"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run quota_change_e2e.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1.log 2>&1" &
+}
+
 # args: client node, runtime secs, shardId, numAppenders, filepath
 start_lagfix_clients() {
     go_path="/usr/local/go/bin/go"
