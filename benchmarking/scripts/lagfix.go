@@ -26,11 +26,6 @@ const readType = "subscribe"
 // global data structures to sync between readers and writers
 
 var wg sync.WaitGroup
-
-// time at which a record was computed on
-var timeCompute map[int64]time.Time
-var timeBeginCompute map[int64]time.Time
-var computationTimeUs int64
 var runTimeSecs int
 
 // global stop signal
@@ -82,45 +77,6 @@ func appendThread(scalog *scalog_api.Scalog, id int, shardId int, timeSecs int) 
 	}
 }
 
-func computationThread(c *scalog_api.Scalog) {
-	totalBatchSize := float64(0)
-	numBatches := float64(0)
-	printTicker := time.NewTicker(1 * time.Second)
-	nextExpectedOffset := int64(0)
-	for {
-		latestOffset := c.GetLatestOffset()
-		latestOffset -= 1
-		if latestOffset >= nextExpectedOffset {
-			lenBatch := latestOffset - nextExpectedOffset + 1
-			start := time.Now()
-			for i := nextExpectedOffset; i <= latestOffset; i++ {
-				timeBeginCompute[c.Read(i).GSN] = start
-			}
-			for time.Now().Sub(start).Microseconds() < computationTimeUs {
-				continue
-			}
-			for i := nextExpectedOffset; i <= latestOffset; i++ {
-				timeCompute[c.Read(i).GSN] = time.Now()
-			}
-			totalBatchSize += float64(lenBatch)
-			numBatches++
-
-			nextExpectedOffset = latestOffset + 1
-		}
-		select {
-		case <-printTicker.C:
-			log.Printf("[lagfix]: computed %v records", totalBatchSize)
-			log.Printf("[lagfix]: average batch size %v", totalBatchSize/numBatches)
-		case <-stop:
-			log.Printf("[lagfix]: consumer thread terminating")
-			c.Stop <- true
-			return
-		default:
-			continue
-		}
-	}
-}
-
 type LatencyTuple struct {
 	GSN     int64
 	Latency int64
@@ -147,14 +103,6 @@ func main() {
 
 	log.Printf("[lagfix]: starting benchmark with runtime %v", runTimeSecs)
 
-	var consumer *scalog_api.Scalog
-	// start consumer
-	for i := 0; i < 1; i++ {
-		consumer = scalog_api.CreateClient(0, -1, "../../.scalog.yaml")
-		consumer.Subscribe(0)
-		go computationThread(consumer)
-	}
-
 	appendClients := make([]*scalog_api.Scalog, 0)
 	// start producer
 	wg.Add(numAppenders)
@@ -164,11 +112,6 @@ func main() {
 		appendClients = append(appendClients, c)
 	}
 	wg.Wait()
-
-	if withConsumer {
-		// stop computation thread
-		stop <- true
-	}
 
 	// append latencies
 	appendLatencies := make([]LatencyTuple, 0)
@@ -234,26 +177,6 @@ func main() {
 		appendTimestampWriter.Write([]string{strconv.Itoa(int(latency.GSN)), formattedTime, strconv.Itoa(int(latency.Latency))})
 	}
 	appendTimestampWriter.Flush()
-
-	e2eMetrics, err := os.Create(filepath + "e2e_metrics.csv")
-	if err != nil {
-		log.Errorf("[lagfix]: failed to open csv file")
-	}
-	defer e2eMetrics.Close()
-
-	e2eWriter := csv.NewWriter(e2eMetrics)
-	header = []string{"gsn", "delivery latency (us)", "confirm latency (us)", "compute latency (us)", "e2e latency (us)", "queuing delay (us)", "delivery timestamp"}
-	e2eWriter.Write(header)
-	for _, latency := range appendLatencies {
-		confirmTime, inConfirm := consumer.Stats.ConfirmTime[latency.GSN]
-		computeTime, inCompute := timeCompute[latency.GSN]
-		deliveryTime, inDelivery := consumer.Stats.DeliveryTime[latency.GSN]
-		timeStamp := deliveryTime.Format("15:04:05.000000")
-		if inConfirm && inCompute && inDelivery {
-			e2eWriter.Write([]string{strconv.Itoa(int(latency.GSN)), strconv.Itoa(int(deliveryTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(max(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds(), computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds()))), strconv.Itoa(int(timeBeginCompute[latency.GSN].Sub(consumer.Stats.DeliveryTime[latency.GSN]).Microseconds())), timeStamp})
-		}
-	}
-	e2eWriter.Flush()
 
 	log.Printf("[lagfix]: benchmark complete")
 }
