@@ -28,6 +28,8 @@ var humidityMovingAverage = movingaverage.New(10)
 var airPressureChangeMovingAverage = movingaverage.New(10)
 var padding = util.GenerateRandomString(4081)
 
+var gsnThreshold = int64(250000)
+
 // TODO: Add computation here
 func HandleIntrusion(committedRecords []client.CommittedRecord, db *sql.DB) {
 	var placeholders []string
@@ -112,9 +114,6 @@ func HandleIntrusion(committedRecords []client.CommittedRecord, db *sql.DB) {
 		placeholders = append(placeholders, "(?)")
 		values = append(values, aggregatedRecord)
 	}
-
-	fmt.Println("Length of placeholders: ", len(placeholders))
-	fmt.Println("Length of values: ", len(values))
 
 	// Build the SQL query
 	insertQuery := fmt.Sprintf("INSERT INTO records (temperature) VALUES %s", strings.Join(placeholders, ","))
@@ -206,12 +205,14 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 				timeBeginCompute[committedRecord.GSN] = startComputeTime
 			}
 
-			fmt.Println("Length of committed records: ", len(committedRecords))
-			fmt.Println("Expected number of records: ", offset-prevOffset)
-
-			startHandleIntrusion := time.Now()
+			var startHandleIntrusion time.Time
+			if committedRecords[0].GSN > gsnThreshold {
+				startHandleIntrusion = time.Now()
+			}
 			HandleIntrusion(committedRecords, db)
-			handleIntrusionLatencies += int(time.Since(startHandleIntrusion).Nanoseconds())
+			if committedRecords[0].GSN > gsnThreshold {
+				handleIntrusionLatencies += int(time.Since(startHandleIntrusion).Nanoseconds())
+			}
 
 			// duration := time.Duration(2) * time.Millisecond
 			// start := time.Now()
@@ -227,8 +228,10 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 				recordsReceived++
 			}
 
-			batchesReceived++
-			batchSize += len(committedRecords)
+			if committedRecords[0].GSN > gsnThreshold {
+				batchesReceived++
+				batchSize += len(committedRecords)
+			}
 
 			prevOffset = offset
 		}

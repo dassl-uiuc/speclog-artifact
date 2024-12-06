@@ -1,7 +1,10 @@
+import matplotlib.pyplot as plt
+
 num_replicas = 2
 num_append_clients_per_replica = 10
 num_read_clients_per_replica = 1
-num_trials = 5
+num_trials = 3
+gsn_threshold = 250000
 def analyze():
     analyzing_trial = 1
     while analyzing_trial <= num_trials:
@@ -70,10 +73,11 @@ def analyze():
                 with open(compute_e2e_end_times_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
-                        compute_e2e_latency += int(timestamp) - append_start_timestamps[int(gsn)]
-                        compute_e2e_latencies_list.append(int(timestamp) - append_start_timestamps[int(gsn)])
-                        compute_e2e_latencies_map[int(gsn)] = int(timestamp) - append_start_timestamps[int(gsn)]
-                        num_compute_e2e_latencies += 1
+                        if int(gsn) > gsn_threshold:
+                            compute_e2e_latency += int(timestamp) - append_start_timestamps[int(gsn)]
+                            compute_e2e_latencies_list.append(int(timestamp) - append_start_timestamps[int(gsn)])
+                            compute_e2e_latencies_map[int(gsn)] = int(timestamp) - append_start_timestamps[int(gsn)]
+                            num_compute_e2e_latencies += 1
 
         avg_compute_e2e_latency = compute_e2e_latency / num_compute_e2e_latencies / 1000
 
@@ -84,15 +88,18 @@ def analyze():
                 with open(delivery_latencies_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
-                        delivery_e2e_latencies_map[int(gsn)] = int(timestamp)
+                        if int(gsn) > gsn_threshold:
+                            delivery_e2e_latencies_map[int(gsn)] = int(timestamp)
         
         delivery_e2e_latencies = 0
         delivery_e2e_latencies_list = []
+        delivery_e2e_duration_map = {}
         num_delivery_e2e_latencies = 0
         for gsn, timestamp in append_start_timestamps.items():
             if gsn in delivery_e2e_latencies_map and gsn in compute_e2e_latencies_map:
                 delivery_e2e_latencies += delivery_e2e_latencies_map[gsn] - timestamp
                 delivery_e2e_latencies_list.append(delivery_e2e_latencies_map[gsn] - timestamp)
+                delivery_e2e_duration_map[gsn] = delivery_e2e_latencies_map[gsn] - timestamp
                 num_delivery_e2e_latencies += 1
 
         avg_delivery_e2e_latency = delivery_e2e_latencies / num_delivery_e2e_latencies / 1000
@@ -106,15 +113,18 @@ def analyze():
                 with open(start_compute_times_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
-                        compute_start_times_map[int(gsn)] = int(timestamp)
+                        if int(gsn) > gsn_threshold:
+                            compute_start_times_map[int(gsn)] = int(timestamp)
 
         queuing_delay = 0
         queuing_delays_list = []
+        queueing_delays_map = {}
         num_queuing_delays = 0
         for gsn, timestamp in compute_start_times_map.items():
             if gsn in delivery_e2e_latencies_map and gsn in compute_e2e_latencies_map:
                 queuing_delay += timestamp - delivery_e2e_latencies_map[gsn]
                 queuing_delays_list.append(timestamp - delivery_e2e_latencies_map[gsn])
+                queueing_delays_map[gsn] = timestamp - delivery_e2e_latencies_map[gsn]
                 num_queuing_delays += 1
 
         avg_queuing_delay = queuing_delay / num_queuing_delays / 1000
@@ -179,6 +189,51 @@ def analyze():
             file.write("p99 queuing_delay: " + str(p99_queuing_delay) + "\n")
             file.write("p99.99 queuing_delay: " + str(p99_99_queuing_delay) + "\n")
             file.write("avg_batch_size: " + str(avg_batch_size) + "\n")
+
+            sorted_delivery_items = sorted(delivery_e2e_duration_map.items())
+
+            # Extracting the sorted keys and values
+            delivery_keys = [item[0] for item in sorted_delivery_items]
+            delivery_values = [item[1] for item in sorted_delivery_items]
+
+            # Plotting the sorted data
+            plt.figure(figsize=(8, 6))
+            plt.plot(delivery_keys, delivery_values, marker='o', linestyle='-', color='b')
+            plt.title('Delivery E2E Duration Map (Sorted by GSN)')
+            plt.xlabel('GSN (Key)')
+            plt.ylabel('Duration (Value)')
+            plt.grid(True)
+            plt.savefig('delivery_e2e_duration_map_' + str(analyzing_trial) + '.png')
+
+            sorted_compute_items = sorted(compute_e2e_latencies_map.items())
+
+            # Extracting the sorted keys and values
+            compute_keys = [item[0] for item in sorted_compute_items]
+            compute_values = [item[1] for item in sorted_compute_items]
+
+            # Plotting the sorted data
+            plt.figure(figsize=(8, 6))
+            plt.plot(compute_keys, compute_values, marker='o', linestyle='-', color='b')
+            plt.title('Compute E2E Latency Map (Sorted by GSN)')
+            plt.xlabel('GSN (Key)')
+            plt.ylabel('Latency (Value)')
+            plt.grid(True)
+            plt.savefig('compute_e2e_latency_map_' + str(analyzing_trial) + '.png')
+
+            sorted_queueing_items = sorted(queueing_delays_map.items())
+
+            # Extracting the sorted keys and values
+            queueing_keys = [item[0] for item in sorted_queueing_items]
+            queueing_values = [item[1] for item in sorted_queueing_items]
+
+            # Plotting the sorted data
+            plt.figure(figsize=(8, 6))
+            plt.plot(queueing_keys, queueing_values, marker='o', linestyle='-', color='b')
+            plt.title('Queuing Delay Map (Sorted by GSN)')
+            plt.xlabel('GSN (Key)')
+            plt.ylabel('Delay (Value)')
+            plt.grid(True)
+            plt.savefig('queuing_delay_map_' + str(analyzing_trial) + '.png')
 
         analyzing_trial += 1
 
