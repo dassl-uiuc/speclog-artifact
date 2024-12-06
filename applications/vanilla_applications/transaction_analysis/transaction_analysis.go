@@ -17,8 +17,10 @@ import (
 )
 
 var transactionAnalysisConfigFilePath = "../../applications/vanilla_applications/transaction_analysis/transaction_analysis_config.yaml"
-var dbEntrySize = 1024
+var dbEntrySize = 2048
 var padding = util.GenerateRandomString(dbEntrySize)
+
+var gsnThreshold = int64(250000)
 
 // TODO: Add computation here
 func AnalyzeTransaction(committedRecords []client.CommittedRecord, db *bolt.DB) {
@@ -151,9 +153,14 @@ func TransactionAnalysisProcessing(readerId int32, clientNumber int) {
 			// fmt.Println("Length of committed records: ", len(committedRecords))
 			// fmt.Println("Expected number of records: ", offset-prevOffset)
 
-			startTransactionAnalysis := time.Now()
+			var startTransactionAnalysis time.Time
+			if committedRecords[0].GSN > gsnThreshold {
+				startTransactionAnalysis = time.Now()
+			}
 			AnalyzeTransaction(committedRecords, db)
-			transactionAnalysisLatencies += int(time.Since(startTransactionAnalysis).Nanoseconds())
+			if committedRecords[0].GSN > gsnThreshold {
+				transactionAnalysisLatencies += int(time.Since(startTransactionAnalysis).Nanoseconds())
+			}
 
 			// duration := time.Duration(2) * time.Millisecond
 			// start := time.Now()
@@ -169,8 +176,10 @@ func TransactionAnalysisProcessing(readerId int32, clientNumber int) {
 				recordsReceived++
 			}
 
-			batchesReceived++
-			batchSize += len(committedRecords)
+			if committedRecords[0].GSN > gsnThreshold {
+				batchesReceived++
+				batchSize += len(committedRecords)
+			}
 
 			prevOffset = offset
 		}

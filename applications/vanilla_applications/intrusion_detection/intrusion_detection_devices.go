@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	movingaverage "github.com/RobinUS2/golang-moving-average"
+	"github.com/scalog/scalog/benchmark/util"
 	"github.com/scalog/scalog/client"
 	"github.com/scalog/scalog/scalog_api"
-	"github.com/scalog/scalog/benchmark/util"
 	"github.com/spf13/viper"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -27,6 +27,8 @@ var soundIntensityMovingAverage = movingaverage.New(10)
 var humidityMovingAverage = movingaverage.New(10)
 var airPressureChangeMovingAverage = movingaverage.New(10)
 var padding = util.GenerateRandomString(4081)
+
+var gsnThreshold = int64(250000)
 
 // TODO: Add computation here
 func HandleIntrusion(committedRecords []client.CommittedRecord, db *sql.DB) {
@@ -209,9 +211,14 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 			fmt.Println("Length of committed records: ", len(committedRecords))
 			fmt.Println("Expected number of records: ", offset-prevOffset)
 
-			startHandleIntrusion := time.Now()
+			var startHandleIntrusion time.Time
+			if committedRecords[0].GSN > gsnThreshold {
+				startHandleIntrusion = time.Now()
+			}
 			HandleIntrusion(committedRecords, db)
-			handleIntrusionLatencies += int(time.Since(startHandleIntrusion).Nanoseconds())
+			if committedRecords[0].GSN > gsnThreshold {
+				handleIntrusionLatencies += int(time.Since(startHandleIntrusion).Nanoseconds())
+			}
 
 			// duration := time.Duration(2) * time.Millisecond
 			// start := time.Now()
@@ -227,8 +234,10 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 				recordsReceived++
 			}
 
-			batchesReceived++
-			batchSize += len(committedRecords)
+			if committedRecords[0].GSN > gsnThreshold {
+				batchesReceived++
+				batchSize += len(committedRecords)
+			}
 
 			prevOffset = offset
 		}
