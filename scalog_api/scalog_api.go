@@ -58,6 +58,35 @@ func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) error {
 	return nil
 }
 
+func (s *Scalog) QuotaExpAppendToAssignedShard(appenderId int32, record string, clientId int, numRecords int) error {
+	// first call creates rate limiter
+	if s.rateLimiter == nil {
+		s.rateLimiter = rateLimiter.NewLimiter(rateLimiter.Limit(s.rate), 1)
+		// start ack thread
+		go s.Ack()
+	}
+
+	err := s.rateLimiter.Wait(context.Background())
+	if err != nil {
+		return fmt.Errorf("rate limiter error: %v", err)
+	}
+
+	_, _, err = s.client.AppendToAssignedShard(appenderId, record)
+	if err != nil {
+		log.Errorf("%v", err)
+		return err
+	}
+
+	appendStartTime := time.Now()
+
+	if clientId == 2  && numRecords == 0 {
+		log.Printf("[quota_change]: first append start time %v", appendStartTime.Format("15:04:05.000000"))
+	}
+
+	s.Stats.AppendStartTimeChan <- appendStartTime
+	return nil
+}
+
 func (s *Scalog) Ack() {
 	for {
 		select {
