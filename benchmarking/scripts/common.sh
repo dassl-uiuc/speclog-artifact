@@ -8,10 +8,10 @@ LOGDIR="/data"
 order=("node0" "node1" "node2")
 
 # index into remote_nodes/ips for data shards
-data_pri=("node3" "node5" "node7" "node9")
-data_sec=("node4" "node6" "node8" "node10")
+data_pri=("node3" "node5" "node7" "node9" "node11")
+data_sec=("node4" "node6" "node8" "node10" "node12")
 
-client_nodes=("node13" "node14" "node15" "node12")
+client_nodes=("node13" "node14" "node15")
 intrusion_detection_dir="../../applications/vanilla_applications/intrusion_detection"
 transaction_analysis_dir="../../applications/vanilla_applications/transaction_analysis"
 
