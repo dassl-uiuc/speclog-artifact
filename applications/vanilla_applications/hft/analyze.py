@@ -196,6 +196,50 @@ def analyze():
             file.write("p99.99 queuing_delay: " + str(p99_99_queuing_delay) + "\n")
             file.write("avg_batch_size: " + str(avg_batch_size) + "\n")
 
+        stats = {
+            "Mean": [
+                avg_delivery_e2e_latency,  # Delivery latency mean
+                avg_compute_e2e_latency,  # E2E latency mean
+                avg_queuing_delay,        # Queuing delay mean
+            ],
+            "Std": [
+                delivery_e2e_latency_std,  # Delivery latency std
+                compute_e2e_latency_std,  # E2E latency std
+                queuing_delay_std,        # Queuing delay std
+            ],
+            "P50": [
+                p50_delivery_e2e_latency,  # Delivery latency p50
+                p50_compute_e2e_latency,  # E2E latency p50
+                p50_queuing_delay,        # Queuing delay p50
+            ],
+            "P99": [
+                p99_delivery_e2e_latency,  # Delivery latency p99
+                p99_compute_e2e_latency,  # E2E latency p99
+                p99_queuing_delay,        # Queuing delay p99
+            ],
+            "P99.99": [
+                p99_99_delivery_e2e_latency,  # Delivery latency p99.99
+                p99_99_compute_e2e_latency,  # E2E latency p99.99
+                p99_99_queuing_delay,        # Queuing delay p99.99
+            ],
+        }
+
+        # Column headers
+        columns = [
+            "Statistic/Metric",
+            "Delivery Latency (us)",
+            "E2E Latency (us)",
+            "Queuing Delay (us)",
+        ]
+
+        # Print header
+        print("\t".join(columns))
+
+        # Print each row of statistics
+        for stat_name, values in stats.items():
+            row = [str(value) for value in values]
+            print(",".join(row))
+
         analyzing_trial += 1
 
 analyze()

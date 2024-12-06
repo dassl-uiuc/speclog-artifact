@@ -14,6 +14,7 @@ data_sec=("node4" "node6" "node8" "node10" "node12")
 client_nodes=("node13" "node14" "node15")
 intrusion_detection_dir="../../applications/vanilla_applications/intrusion_detection"
 transaction_analysis_dir="../../applications/vanilla_applications/transaction_analysis"
+hft_dir="../../applications/vanilla_applications/hft"
 
 batching_intervals=("1ms")
 
