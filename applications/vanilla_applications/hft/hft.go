@@ -238,7 +238,6 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	// Time used to keep track of the time to run wordcount
 	startTimeInSeconds := time.Now().Unix()
 	prevOffset := int64(0)
-	recordsReceived := 0
 	computeE2eEndTimes := make(map[int64]int64)
 	timeBeginCompute := make(map[int64]time.Time)
 	batchesReceived := 0
@@ -300,13 +299,9 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 			timestamp := time.Now().UnixNano()
 			for _, record := range committedRecords1 {
 				computeE2eEndTimes[record.GSN] = timestamp
-
-				recordsReceived++
 			}
 			for _, record := range committedRecords2 {
 				computeE2eEndTimes[record.GSN] = timestamp
-
-				recordsReceived++
 			}
 
 			batchesReceived++
@@ -339,13 +334,14 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	}
 	defer file.Close()
 
+	recordsReceived := len(computeE2eEndTimes)
 	if _, err := file.WriteString(fmt.Sprintf("%d\n", recordsReceived)); err != nil {
 		log.Fatal(err)
 	}
 
 	// Record transaction analysis latencies
-	transactionAnalysisLatenciesFilePath := "../../applications/vanilla_applications/hft/data/hft_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
-	file, err = os.OpenFile(transactionAnalysisLatenciesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	hftLatenciesFilePath := "../../applications/vanilla_applications/hft/data/hft_latencies_" + strconv.Itoa(int(readerId)) + "_" + strconv.Itoa(clientNumber) + ".txt"
+	file, err = os.OpenFile(hftLatenciesFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}

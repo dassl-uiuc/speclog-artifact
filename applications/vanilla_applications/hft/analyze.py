@@ -266,6 +266,62 @@ def analyze():
             file.write("p99.99 total_e2e_latency: " + str(p99_99_total_e2e_latency) + "\n")
             file.write("avg_batch_size: " + str(avg_batch_size) + "\n")
 
+        stats = {
+            "Mean": [
+                avg_delivery_e2e_latency,
+                avg_compute_e2e_latency,
+                avg_queuing_delay,
+                avg_confirm_e2e_latency,
+                avg_total_e2e_latency,
+            ],
+            "Std": [
+                delivery_e2e_latency_std,
+                compute_e2e_latency_std,
+                queuing_delay_std,
+                confirm_e2e_latency_std,
+                total_e2e_latency_std,
+            ],
+            "P50": [
+                p50_delivery_e2e_latency,
+                p50_compute_e2e_latency,
+                p50_queuing_delay,
+                p50_confirm_e2e_latency,
+                p50_total_e2e_latency,
+            ],
+            "P99": [
+                p99_delivery_e2e_latency,
+                p99_compute_e2e_latency,
+                p99_queuing_delay,
+                p99_confirm_e2e_latency,
+                p99_total_e2e_latency,
+            ],
+            "P99.99": [
+                p99_99_delivery_e2e_latency,
+                p99_99_compute_e2e_latency,
+                p99_99_queuing_delay,
+                p99_99_confirm_e2e_latency,
+                p99_99_total_e2e_latency,
+            ],
+        }
+
+        # Column headers
+        columns = [
+            "Statistic/Metric",
+            "Delivery Latency (us)",
+            "Compute E2E Latency (us)",
+            "Queuing Delay (us)",
+            "Confirm Latency (us)",
+            "Total E2E Latency (us)",
+        ]
+
+        # Print header
+        print(",".join(columns))
+
+        # Print each row of statistics
+        for stat_name, values in stats.items():
+            row = [str(value) for value in values]
+            print(",".join(row))
+
         analyzing_trial += 1
 
         sorted_items = sorted(confirm_e2e_duration_map.items())
