@@ -1,7 +1,7 @@
 num_replicas = 2
 num_append_clients_per_replica = 10
 num_read_clients_per_replica = 1
-num_trials = 1
+num_trials = 5
 
 def largest_common_key(*maps):
     # Find the intersection of all keys across the maps
@@ -14,16 +14,16 @@ def largest_common_key(*maps):
 def analyze():
     analyzing_trial = 1
     while analyzing_trial <= num_trials:
-        append_throughput_file_path = "data/append_throughput_"
-        append_start_timestamps_file_path = "data/append_start_timestamps_"
-        compute_e2e_end_times_file_path = "data/compute_e2e_end_times_"
-        delivery_latencies_file_path = "data/delivery_latencies_"
-        read_throughput_file_path =  "data/read_throughput_"
-        append_records_produced_file_path =  "data/append_records_produced_"
-        records_received_file_path =  "data/records_received_"
-        stats_file_path = "data/stats_trial_" + str(analyzing_trial) + ".txt"
-        start_compute_times_file_path =  "data/start_compute_times_"
-        avg_batch_size_file_path = "data/batch_sizes_"
+        append_throughput_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/append_throughput_"
+        append_start_timestamps_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/append_start_timestamps_"
+        compute_e2e_end_times_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/compute_e2e_end_times_"
+        delivery_latencies_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/delivery_latencies_"
+        read_throughput_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/read_throughput_"
+        append_records_produced_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/append_records_produced_"
+        records_received_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/records_received_"
+        stats_file_path = "analytics/stats_trial_" + str(analyzing_trial) + ".txt"
+        start_compute_times_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/start_compute_times_"
+        avg_batch_size_file_path = "analytics/hft_run_" + str(analyzing_trial) + "/batch_sizes_"
 
         records_produced = 0
         for i in range(num_replicas):
@@ -69,6 +69,8 @@ def analyze():
                         append_start_timestamps[int(gsn)] = int(timestamp)
                         num_append_timestamps += 1
 
+        threshold_key = 250000
+
         compute_e2e_latency = 0
         compute_e2e_latencies_list = []
         compute_e2e_latencies_map = {}
@@ -79,6 +81,8 @@ def analyze():
                 with open(compute_e2e_end_times_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
+                        if int(gsn) < threshold_key:
+                            continue
                         compute_e2e_latency += int(timestamp) - append_start_timestamps[int(gsn)]
                         compute_e2e_latencies_list.append(int(timestamp) - append_start_timestamps[int(gsn)])
                         compute_e2e_latencies_map[int(gsn)] = int(timestamp) - append_start_timestamps[int(gsn)]
@@ -93,15 +97,17 @@ def analyze():
                 with open(delivery_latencies_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
+                        if int(gsn) < threshold_key:
+                            continue
                         delivery_e2e_latencies_map[int(gsn)] = int(timestamp)
         
         delivery_e2e_latencies = 0
         delivery_e2e_latencies_list = []
         num_delivery_e2e_latencies = 0
 
-        largest_key = largest_common_key(append_start_timestamps, delivery_e2e_latencies_map, compute_e2e_latencies_map)
-        threshold = 0.2
-        threshold_key = largest_key*threshold
+        # largest_key = largest_common_key(append_start_timestamps, delivery_e2e_latencies_map, compute_e2e_latencies_map)
+        # threshold = 0.2
+        # threshold_key = largest_key*threshold
 
         for gsn, timestamp in append_start_timestamps.items():
             if gsn < threshold_key:
@@ -122,6 +128,8 @@ def analyze():
                 with open(start_compute_times_file_path_i, 'r') as file:
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
+                        if int(gsn) < threshold_key:
+                            continue
                         compute_start_times_map[int(gsn)] = int(timestamp)
 
         queuing_delay = 0
@@ -233,12 +241,13 @@ def analyze():
         ]
 
         # Print header
-        print("\t".join(columns))
+        print(",".join(columns))
 
         # Print each row of statistics
         for stat_name, values in stats.items():
             row = [str(value) for value in values]
             print(",".join(row))
+        print(" ")
 
         analyzing_trial += 1
 

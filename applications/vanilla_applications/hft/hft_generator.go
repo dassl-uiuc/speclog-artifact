@@ -93,6 +93,13 @@ func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPol
 
 	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "/proj/rasl-PG0/JiyuHu23/speclog/.scalog.yaml")
 
+	idOffset := int32(0)
+	if appenderId == 0 || appenderId == 1 {
+		idOffset = 0
+	} else if appenderId == 2 || appenderId == 3 {
+		idOffset = 2
+	}
+
 	currStockId := int32(0)
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
@@ -104,9 +111,9 @@ func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPol
 			return
 		}
 
-		scalogApi.FilterAppend(record, currStockId)
+		scalogApi.FilterAppend(record, currStockId+idOffset)
 		currStockId++
-		if currStockId >= maxStockId {
+		if currStockId >= 2 {
 			currStockId = 0
 		}
 
