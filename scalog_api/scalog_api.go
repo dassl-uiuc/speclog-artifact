@@ -33,6 +33,7 @@ type Scalog struct {
 	Stop        chan bool // stop scalog client subscribing, must be closed by app, closes confirmation thread
 	stopConf    chan bool // stop confirmation thread
 	StopAck     chan bool // stop ack thread, must be closed by app
+	misSpecC    chan client.MisSpecRange
 }
 
 func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) error {
@@ -168,7 +169,8 @@ func (s *Scalog) SubscribeToAssignedShard(readerId int32, startGsn int64) {
 }
 
 func (s *Scalog) SubscribeThread(startGsn int64) {
-	stream, conf, err := s.client.Subscribe(startGsn)
+	stream, conf, misSpecC, err := s.client.Subscribe(startGsn)
+	s.misSpecC = misSpecC
 	if err != nil {
 		log.Errorf("%v", err)
 	}
@@ -217,6 +219,16 @@ func (s *Scalog) GetLatestOffset() int64 {
 
 func (s *Scalog) Read(index int64) client.CommittedRecord {
 	return s.records[index]
+}
+
+func (s *Scalog) CheckMisSpec() (bool, client.MisSpecRange) {
+	select {
+	case misSpecRange := <-s.misSpecC:
+		<-s.misSpecC
+		return true, misSpecRange
+	default:
+		return false, client.MisSpecRange{}
+	}
 }
 
 // rate limit: if intended to be used for append stream
@@ -273,6 +285,7 @@ func CreateClient(rateLimit int, shardingHint int, configFile string) *Scalog {
 		Stats:     stats,
 		Stop:      make(chan bool, 1),
 		StopAck:   make(chan bool, 1),
+		misSpecC:  make(chan client.MisSpecRange, 4096),
 	}
 
 	return scalogClient
@@ -323,6 +336,7 @@ func CreateBurstClient(shardingHint int, configFile string, burstSize int32) *Sc
 		Stats:     stats,
 		Stop:      make(chan bool, 1),
 		StopAck:   make(chan bool, 1),
+		misSpecC:  make(chan client.MisSpecRange, 4096),
 	}
 
 	return scalogClient

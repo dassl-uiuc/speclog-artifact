@@ -40,6 +40,12 @@ type SpeculationConf struct {
 type CommittedRecord struct {
 	GSN    int64
 	Record string
+	// ViewID int32
+}
+
+type MisSpecRange struct {
+	Begin int64
+	End   int64
 }
 
 type Client struct {
@@ -55,6 +61,7 @@ type Client struct {
 	AckC               chan *datapb.Ack
 	subC               chan CommittedRecord
 	confC              chan SpeculationConf
+	misSpecC           chan MisSpecRange
 	committedRecords   map[int64]CommittedRecord
 	committedRecordsMu sync.RWMutex
 	nextConf           int64
@@ -105,6 +112,7 @@ func NewClientForBurst(dataAddr address.DataAddr, discAddr address.DiscAddr, num
 	c.committedRecords = make(map[int64]CommittedRecord)
 	c.speculationConfs = make(map[int64]*datapb.Record)
 	c.confC = make(chan SpeculationConf, 4096)
+	c.misSpecC = make(chan MisSpecRange, 4096)
 	c.shardsSubscribedTo = make(map[int32]bool)
 	c.isReader = false
 	err := c.UpdateDiscovery()
@@ -141,6 +149,7 @@ func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscA
 	c.committedRecords = make(map[int64]CommittedRecord)
 	c.speculationConfs = make(map[int64]*datapb.Record)
 	c.confC = make(chan SpeculationConf, 4096)
+	c.misSpecC = make(chan MisSpecRange, 4096)
 	c.shardsSubscribedTo = make(map[int32]bool)
 	c.isReader = false
 	err := c.UpdateDiscovery()
@@ -176,6 +185,7 @@ func NewClient(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica 
 	c.committedRecords = make(map[int64]CommittedRecord)
 	c.speculationConfs = make(map[int64]*datapb.Record)
 	c.confC = make(chan SpeculationConf, 4096)
+	c.misSpecC = make(chan MisSpecRange, 4096)
 	c.shardsSubscribedTo = make(map[int32]bool)
 	c.isReader = false
 	err := c.UpdateDiscovery()
@@ -471,7 +481,12 @@ func (c *Client) processAssignedAppend() {
 }
 
 func (c *Client) AppendToAssignedShard(appenderId int32, record string) (int64, int32, error) {
-	c.outstandingRequestsChan <- true
+	select {
+	case c.outstandingRequestsChan <- true:
+	case <-time.After(1 * time.Second):
+		log.Printf("Timeout waiting for outstanding requests")
+		return 0, 0, fmt.Errorf("timeout waiting for outstanding requests")
+	}
 	r := &datapb.Record{
 		ClientID:   c.clientID,
 		ClientSN:   c.getNextClientSN(),
@@ -518,7 +533,7 @@ func (c *Client) Read(gsn int64, shard, replica int32) (string, error) {
 	return record.Record, nil
 }
 
-func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, chan SpeculationConf, error) {
+func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, chan SpeculationConf, chan MisSpecRange, error) {
 	c.committedRecordsMu.Lock()
 	c.nextGSN = gsn
 	c.nextConf = gsn
@@ -533,7 +548,7 @@ func (c *Client) Subscribe(gsn int64) (chan CommittedRecord, chan SpeculationCon
 	}
 	c.isReader = true
 
-	return c.subC, c.confC, nil
+	return c.subC, c.confC, c.misSpecC, nil
 }
 
 func (c *Client) SubscribeToAssignedShard(gsn int64, readerId int32) (chan CommittedRecord, chan SpeculationConf, error) {
@@ -606,6 +621,9 @@ func (c *Client) subscribeShardServer(shard, replica int32) {
 	dataClient := datapb.NewDataClient(conn)
 	globalSN := &datapb.GlobalSN{GSN: c.nextGSN}
 	stream, err := dataClient.Subscribe(context.Background(), globalSN, opts...)
+	misSpecSent := false
+	misSpecRange := MisSpecRange{0, 0}
+	inFailureHandling := false
 	if err != nil {
 		log.Errorf("%v", err)
 		return
@@ -623,11 +641,63 @@ func (c *Client) subscribeShardServer(shard, replica int32) {
 
 		c.committedRecordsMu.Lock()
 		if record.ClientID != -1 {
-			c.committedRecords[record.GlobalSN] = CommittedRecord{
-				GSN:    record.GlobalSN,
-				Record: record.Record,
+			respond := false
+			if misSpecRange.Begin > 0 && record.GlobalSN >= misSpecRange.End {
+				misSpecRange = MisSpecRange{0, 0}
+				c.misSpecC <- misSpecRange // notify that correct records have all been delivered
 			}
-			if record.GlobalSN == c.nextGSN {
+			if record.GlobalSN1 == 0 { // regular record
+				c.committedRecords[record.GlobalSN] = CommittedRecord{
+					GSN:    record.GlobalSN,
+					Record: record.Record,
+				}
+			} else {
+				log.Debugf("from (%v,%v) filling holes for %v:%v, [%v, %v] nextGSN %v, nextConf %v", shard, replica, record.ShardID, record.LocalReplicaID, record.GlobalSN, record.GlobalSN1, c.nextGSN, c.nextConf)
+				if !inFailureHandling { // todo: very ad-hoc, only do this once
+					inFailureHandling = true
+					if record.GlobalSN > c.nextConf { // when the misspec is received for the first time, that indicates all entries before it are committed
+						for i := c.nextConf; i < record.GlobalSN; i++ {
+							delete(c.speculationConfs, i)
+						}
+						c.confC <- SpeculationConf{StartGSN: c.nextConf, EndGSN: record.GlobalSN - 1}
+
+						log.Printf("implicitly confirmed [%v, %v] from (%v, %v)", c.nextConf, record.GlobalSN-1, shard, replica)
+						c.nextConf = record.GlobalSN
+					}
+				}
+				if record.GlobalSN < c.nextGSN {
+					if !misSpecSent { // todo: very ad-hoc, only inform once
+						misSpecRange = MisSpecRange{
+							Begin: c.nextConf,
+							End:   c.nextGSN - 1,
+						}
+						c.misSpecC <- misSpecRange // ad-hoc: only notify
+						misSpecSent = true
+						log.Printf("[%v, %v] sent from (%v, %v)", misSpecRange.Begin, misSpecRange.End, shard, replica)
+					}
+					if record.GlobalSN1 >= c.nextGSN { // this is needed when only part of the entries in that quota are received
+						for i := c.nextGSN; i <= record.GlobalSN1; i++ {
+							c.committedRecords[i] = CommittedRecord{
+								GSN:    i,
+								Record: record.Record,
+							}
+						}
+						respond = true // adding these records will advance the nextGSN
+					}
+				} else {
+					for i := int32(0); i < record.NumHoles; i++ {
+						c.committedRecords[record.GlobalSN+int64(i)] = CommittedRecord{
+							GSN:    record.GlobalSN + int64(i),
+							Record: record.Record,
+						}
+					}
+				}
+				c.speculationConfs[record.GlobalSN] = record // this kind of record serves as both speculation record and confirmation
+				if record.GlobalSN == c.nextConf {
+					c.confirmToClient()
+				}
+			}
+			if record.GlobalSN == c.nextGSN || respond {
 				c.respondToClient()
 			}
 		} else {
