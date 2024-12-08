@@ -131,6 +131,18 @@ start_reconfig_clients() {
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run reconfig.go $2 $3 $4 $5 $6 $7 > ${LOGDIR}/client_$1.log 2>&1" &
 }
 
+# args: client node, runtime secs, numAppendersPerShard, new client join time, computation time, filepath
+start_qc_e2e_clients() {
+    go_path="/usr/local/go/bin/go"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run quota_change_e2e.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1.log 2>&1" &
+}
+
+# args: client node, runtime secs, numAppendersPerShard, computationTime, filepath
+start_lagfix_e2e_clients() {
+    go_path="/usr/local/go/bin/go"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run lagfix_e2e.go $2 $3 $4 $5 > ${LOGDIR}/client_$1.log 2>&1" &
+}
+
 start_random_read_clients() {
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; ./run_random_read_client.sh $2 $3 $1 $4 $5 $6 > ${LOGDIR}/client_$1.log 2>&1" &
 }
