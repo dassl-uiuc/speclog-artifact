@@ -8,10 +8,10 @@ LOGDIR="/data"
 order=("node0" "node1" "node2")
 
 # index into remote_nodes/ips for data shards
-data_pri=("node3" "node5" "node7" "node9")
-data_sec=("node4" "node6" "node8" "node10")
+data_pri=("node3" "node5" "node7" "node9" "node11")
+data_sec=("node4" "node6" "node8" "node10" "node12")
 
-client_nodes=("node13" "node14" "node15" "node12")
+client_nodes=("node13" "node14" "node15")
 intrusion_detection_dir="../../applications/vanilla_applications/intrusion_detection"
 transaction_analysis_dir="../../applications/vanilla_applications/transaction_analysis"
 
@@ -124,6 +124,12 @@ start_append_clients() {
 start_e2e_clients() {
     go_path="/usr/local/go/bin/go"
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run single_client_e2e.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1_$4.log 2>&1" &
+}
+
+# args: client node, computation time, runtime secs, shardId, numAppenders, filepath
+start_straggler_clients() {
+    go_path="/usr/local/go/bin/go"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run straggler.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1_$4.log 2>&1" &
 }
 
 # args: client node, computation time, runtime secs, new client runtime (s1), numAppendersPerShard, filepath, withConsumer
