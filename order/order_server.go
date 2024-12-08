@@ -14,6 +14,8 @@ import (
 )
 
 const reconfigExpt = false
+const lagfixExpt bool = false
+const qcExpt bool = false
 
 type RealTimeTput struct {
 	count atomic.Int64
@@ -85,7 +87,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.replicasFinalizeStandby = make(map[int32]int64)
 	s.replicasAddingStandby = make(map[int32]bool)
 	s.stats = Stats{}
-	if reconfigExpt {
+	if reconfigExpt || qcExpt {
 		go s.stats.RealTimeTput.LoggerThread()
 	}
 	s.shardsFinalized = make(map[int32]bool)
@@ -182,7 +184,7 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		ccut[rid] = chosen
 	}
 
-	if reconfigExpt {
+	if reconfigExpt || qcExpt {
 		totalCommitted := s.computeCutDiff(s.prevCut, ccut)
 		s.stats.RealTimeTput.Add(totalCommitted)
 	}
@@ -234,6 +236,10 @@ func (s *OrderServer) processReport() {
 						}
 					}
 					if valid {
+						if lagfixExpt || qcExpt {
+							log.Printf("%v", lc)
+						}
+
 						lcs[id] = lc
 					}
 				}
@@ -292,7 +298,7 @@ func (s *OrderServer) processReport() {
 func (s *OrderServer) processCommit() {
 	for e := range s.commitC {
 		if s.isLeader {
-			if reconfigExpt {
+			if lagfixExpt || reconfigExpt || qcExpt {
 				log.Printf("%v", e)
 			} else {
 				log.Debugf("%v", e)

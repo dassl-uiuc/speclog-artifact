@@ -75,6 +75,40 @@ type Client struct {
 	isReader           bool
 }
 
+func NewClientForBurst(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32, shardingHint int64, burstSize int32) (*Client, error) {
+	c := &Client{
+		clientID:     generateClientID(),
+		numReplica:   numReplica,
+		nextCSN:      -1,
+		nextGSN:      0,
+		viewID:       0,
+		dataAddr:     dataAddr,
+		discAddr:     discAddr,
+		shardingHint: shardingHint,
+	}
+	c.outstandingRequestsLimit = 2 * burstSize
+	c.outstandingRequestsChan = make(chan bool, c.outstandingRequestsLimit)
+	c.shardingPolicy = NewShardingPolicyWithHint(numReplica, shardingHint)
+	c.viewC = make(chan *discpb.View, 4096)
+	c.appendC = make(chan *datapb.Record, 4096)
+	c.assignedAppendC = make(chan *datapb.Record, c.outstandingRequestsLimit)
+	c.AckC = make(chan *datapb.Ack, 4096)
+	c.subC = make(chan CommittedRecord, 4096)
+	c.dataConn = make(map[int32]*grpc.ClientConn)
+	c.dataAppendClient = make(map[int32]datapb.Data_AppendClient)
+	c.view = view.NewView()
+	c.committedRecords = make(map[int64]CommittedRecord)
+	c.shardsSubscribedTo = make(map[int32]bool)
+	c.isReader = false
+	err := c.UpdateDiscovery()
+	if err != nil {
+		return nil, err
+	}
+	go c.subscribeView()
+	c.Start()
+	return c, nil
+}
+
 func NewClientWithShardingHint(dataAddr address.DataAddr, discAddr address.DiscAddr, numReplica int32, shardingHint int64) (*Client, error) {
 	c := &Client{
 		clientID:     generateClientID(),

@@ -19,6 +19,11 @@ import (
 const backendOnly = false
 const measureOrderingInterval = false
 const reconfigExpt bool = false
+const lagfixExpt bool = false
+const qcExpt bool = false
+
+var qcBurstLSN int64 = -1
+var qcBurstLocalCutNumber int64 = -1
 
 type clientSubscriber struct {
 	state    clientSubscriberState
@@ -104,6 +109,8 @@ type DataServer struct {
 
 	recordsInPipeline atomic.Int64
 	stopReport        chan bool
+
+	localCutNum int64
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -148,6 +155,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.replStartTime = make(map[int64]time.Time)
 	s.recordsInPipeline.Store(0)
 	s.stopReport = make(chan bool, 1)
+	s.localCutNum = 0
 
 	path := fmt.Sprintf("/data/storage-%v-%v", shardID, replicaID) // TODO configure path
 	segLen := int32(1000)                                          // TODO configurable segment length
@@ -504,6 +512,19 @@ func (s *DataServer) processSelfReplicate() {
 		s.replMu.Lock()
 		log.Debugf("replication latency: %v", time.Since(s.replStartTime[recordID]).Nanoseconds())
 		s.replMu.Unlock()
+
+		if lagfixExpt {
+			if record.Record[0] == 'b' {
+				log.Printf("burst record with lsn %v", lsn)
+			}
+		}
+
+		if qcExpt {
+			if record.Record[0] == 'b' && qcBurstLSN == -1 {
+				qcBurstLSN = lsn
+				log.Printf("first burst record stored with lsn %v", lsn)
+			}
+		}
 	}
 }
 
@@ -593,6 +614,15 @@ func (s *DataServer) reportLocalCut() {
 
 			log.Debugf("records sent: %v", lcs.Cuts[0].Cut[s.replicaID]-prevCut)
 			prevCut = lcs.Cuts[0].Cut[s.replicaID]
+
+			s.localCutNum += 1
+			if qcExpt {
+				if qcBurstLSN != -1 && prevCut > qcBurstLSN && qcBurstLocalCutNumber == -1 {
+					qcBurstLocalCutNumber = s.localCutNum
+					log.Printf("burst local cut number %v", qcBurstLocalCutNumber)
+				}
+			}
+			lcs.Cuts[0].LocalCutNum = s.localCutNum
 
 			// log.Debugf("Data report: %v", lcs)
 			err := (*s.orderClient).Send(lcs)
