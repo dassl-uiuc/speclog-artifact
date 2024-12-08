@@ -15,7 +15,7 @@ import (
 	"go.etcd.io/etcd/raft/raftpb"
 )
 
-const reconfigExpt bool = false
+const reconfigExpt bool = true
 const failExpt bool = false
 const lagfixExpt bool = false
 const lagfixEnabled bool = true

@@ -26,6 +26,7 @@ var wg sync.WaitGroup
 // time at which a record was computed on
 var timeCompute map[int64]time.Time
 var timeBeginCompute map[int64]time.Time
+var timeRecompute map[int64]time.Time
 var computationTimeUs int64
 
 var runTimeSecs int
@@ -39,11 +40,16 @@ func appendThread(scalog *scalog_api.Scalog, id int, shardId int, timeSecs int) 
 	ticker := time.After(time.Duration(timeSecs) * time.Second)
 	for {
 		str := strings.Repeat("a", 4096)
-		_ = scalog.AppendToAssignedShard(int32(shardId), str)
+		err := scalog.AppendToAssignedShard(int32(shardId), str)
+		if err != nil {
+			goto end
+		}
+
 		if numRecords%1000 == 0 {
 			log.Printf("[single_client_e2e]: client %v appended %v records", id, numRecords)
 		}
 		numRecords++
+	end:
 		select {
 		case <-ticker:
 			log.Printf("[single_client_e2e]: stopping client %v", id)
@@ -61,6 +67,16 @@ func computationThread(c *scalog_api.Scalog) {
 	printTicker := time.NewTicker(1 * time.Second)
 	nextExpectedOffset := int64(0)
 	for {
+		if mis, misSpecRange := c.CheckMisSpec(); mis {
+			log.Printf("mis-spec %v", misSpecRange)
+			start := time.Now()
+			for time.Now().Sub(start).Microseconds() < computationTimeUs {
+				continue // recompute
+			}
+			for i := misSpecRange.Begin; i <= misSpecRange.End; i++ {
+				timeRecompute[i] = time.Now()
+			}
+		}
 		latestOffset := c.GetLatestOffset()
 		latestOffset -= 1
 		if latestOffset >= nextExpectedOffset {
@@ -103,6 +119,7 @@ func main() {
 	// initialize global data structures
 	timeCompute = make(map[int64]time.Time, 30000)
 	timeBeginCompute = make(map[int64]time.Time, 30000)
+	timeRecompute = make(map[int64]time.Time, 30000)
 	stop = make(chan bool)
 	computationTime, err := strconv.Atoi(os.Args[1])
 	if err != nil {
@@ -132,7 +149,7 @@ func main() {
 	// start consumer
 	for i := 0; i < 1; i++ {
 		consumer = scalog_api.CreateClient(0, -1, "../../.scalog.yaml")
-		consumer.SubscribeToAssignedShard(int32(shardId), 0)
+		consumer.Subscribe(0)
 		go computationThread(consumer)
 	}
 
@@ -141,7 +158,7 @@ func main() {
 	wg.Add(numAppenders)
 	for i := 0; i < numAppenders; i++ {
 		c := scalog_api.CreateClient(1000, shardId, "../../.scalog.yaml")
-		go appendThread(c, i, shardId, runTimeSecs)
+		go appendThread(c, i, i%4, runTimeSecs)
 		appendClients = append(appendClients, c)
 	}
 	wg.Wait()
@@ -192,17 +209,41 @@ func main() {
 	appendWriter.Flush()
 
 	e2eWriter := csv.NewWriter(e2eMetrics)
-	header = []string{"gsn", "delivery latency (us)", "confirm latency (us)", "compute latency (us)", "e2e latency (us)", "queuing delay (us)"}
+	header = []string{"gsn", "delivery latency (us)", "confirm latency (us)", "compute latency (us)", "e2e latency (us)", "queuing delay (us)", "recompute latency (us)", "start time"}
 	e2eWriter.Write(header)
 	for _, latency := range appendLatencies {
 		confirmTime, inConfirm := consumer.Stats.ConfirmTime[latency.GSN]
 		computeTime, inCompute := timeCompute[latency.GSN]
 		deliveryTime, inDelivery := consumer.Stats.DeliveryTime[latency.GSN]
 		if inConfirm && inCompute && inDelivery {
-			e2eWriter.Write([]string{strconv.Itoa(int(latency.GSN)), strconv.Itoa(int(deliveryTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())), strconv.Itoa(int(max(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds(), computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds()))), strconv.Itoa(int(timeBeginCompute[latency.GSN].Sub(consumer.Stats.DeliveryTime[latency.GSN]).Microseconds()))})
+			recomputeTime, inRecompute := timeRecompute[latency.GSN]
+			var recomputeLatStr string
+			if inRecompute {
+				recomputeLatStr = strconv.Itoa(int(recomputeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds()))
+				log.Printf("recompute latency %v", recomputeLatStr)
+			} else {
+				recomputeLatStr = "0"
+			}
+			e2eWriter.Write([]string{
+				strconv.Itoa(int(latency.GSN)),
+				strconv.Itoa(int(deliveryTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())),
+				strconv.Itoa(int(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())),
+				strconv.Itoa(int(computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds())),
+				strconv.Itoa(int(max(confirmTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds(), computeTime.Sub(appendStartTimeMap[latency.GSN]).Microseconds()))),
+				strconv.Itoa(int(timeBeginCompute[latency.GSN].Sub(consumer.Stats.DeliveryTime[latency.GSN]).Microseconds())),
+				recomputeLatStr,
+				appendStartTimeMap[latency.GSN].Format("15:04:05.000000"),
+			})
+		} else {
+			e2eWriter.Write([]string{
+				strconv.Itoa(int(latency.GSN)),
+				strconv.FormatBool(inConfirm),
+				strconv.FormatBool(inCompute),
+				strconv.FormatBool(inDelivery)})
 		}
 	}
 	e2eWriter.Flush()
 
+	log.Printf("recompute times %v", timeRecompute)
 	log.Printf("[single_client_e2e]: benchmark complete")
 }
