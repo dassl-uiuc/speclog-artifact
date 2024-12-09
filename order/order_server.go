@@ -351,31 +351,30 @@ func (s *OrderServer) getLags(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
 	return lags
 }
 
-func (s *OrderServer) getSlowShards(slowShards map[int32]bool) bool {
-	for rid, delta := range s.avgDelta {
-		// Check if the shard exceeds the threshold
-		if delta.Avg() > 4*float64(s.batchingInterval.Nanoseconds()) {
-			meta, ok := s.slowShardDetection[rid]
-			if !ok {
-				// Initialize detection metadata for the shard
-				s.slowShardDetection[rid] = SlowShardMeta{count: 1}
-			} else if time.Since(meta.lastDetected) >= 2*time.Second {
-				// Increment count if not in the cooldown period
-				meta.count++
-				s.slowShardDetection[rid] = meta
-			} else {
-				// Reset count if still in cooldown
-				s.slowShardDetection[rid] = SlowShardMeta{
-					count:        0,
-					lastDetected: meta.lastDetected,
-				}
+func (s *OrderServer) updateSlowShard(rid int32, delta float64) {
+	meta, ok := s.slowShardDetection[rid]
+	if delta > 4*float64(s.batchingInterval.Nanoseconds()) {
+		if !ok {
+			s.slowShardDetection[rid] = SlowShardMeta{count: 1}
+		} else {
+			s.slowShardDetection[rid] = SlowShardMeta{
+				count: meta.count + 1,
+			}
+		}
+	} else {
+		// not consecutive
+		if ok {
+			s.slowShardDetection[rid] = SlowShardMeta{
+				count: 0,
 			}
 		}
 	}
+}
 
+func (s *OrderServer) getSlowShards(slowShards map[int32]bool) bool {
 	for rid, meta := range s.slowShardDetection {
 		// If the shard has been consistently slow and is not in cooldown
-		if meta.count > 10 && time.Since(meta.lastDetected) >= 2*time.Second {
+		if meta.count > 3 && time.Since(meta.lastDetected) >= 2*time.Second {
 			// Mark the shard as slow
 			slowShards[rid] = true
 
@@ -597,6 +596,7 @@ func (s *OrderServer) evalCommittedCut(lcs map[int32]*orderpb.LocalCut) {
 		vid := atomic.LoadInt32(&s.viewID)
 		var ce *orderpb.CommittedEntry
 
+		var forceCloseWindow bool = false
 		if s.isReadyToAssignQuota() {
 			if s.assignWindow != 0 {
 				s.stats.timeToDecideQuota += time.Since(s.stats.quotaStartTime).Nanoseconds()
@@ -632,6 +632,10 @@ func (s *OrderServer) evalCommittedCut(lcs map[int32]*orderpb.LocalCut) {
 					s.replicasGrounded[rid] = remaining - 1
 					log.Printf("replica %v grounded for %v windows", rid, remaining-1)
 					s.quota[s.assignWindow][rid] = 0 // mark grounded replicas with 0 quota
+					// if not currently grounded, ask everybody to close out window
+					if s.quota[s.assignWindow-1][rid] != 0 {
+						forceCloseWindow = true
+					}
 				}
 			}
 
@@ -737,6 +741,12 @@ func (s *OrderServer) evalCommittedCut(lcs map[int32]*orderpb.LocalCut) {
 					}
 					ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
 					s.getSignificantLags(&lags)
+					if forceCloseWindow {
+						for rid := range s.quota[s.assignWindow-2] {
+							lags[rid] = s.diff(s.localCutChangeWindow-1, s.assignWindow-2, lcs[rid].LocalCutNum, lcs[rid].WindowNum)
+						}
+						log.Printf("force closing window: %v", lags)
+					}
 					ce.CommittedCut.AdjustmentSignal.Lag = lags
 					s.lastLag = lags
 				}
@@ -797,6 +807,9 @@ func (s *OrderServer) processReport() {
 							if _, ok := s.lastCutTime[id]; ok {
 								numCuts := s.diff(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum)
 								s.avgDelta[id].Add(float64(time.Since(s.lastCutTime[id]).Nanoseconds()) / float64(numCuts))
+								if slowShardExpt {
+									s.updateSlowShard(id, float64(time.Since(s.lastCutTime[id]).Nanoseconds())/float64(numCuts))
+								}
 							}
 							s.lastCutTime[id] = time.Now()
 						}
