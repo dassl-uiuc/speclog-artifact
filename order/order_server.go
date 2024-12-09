@@ -72,7 +72,7 @@ func (r *RealTimeTput) Add(delta int64) {
 }
 
 func (r *RealTimeTput) LoggerThread() {
-	duration := 50 * time.Millisecond
+	duration := 10 * time.Millisecond
 	ticker := time.NewTicker(duration)
 	prev := int64(0)
 	for range ticker.C {
@@ -152,7 +152,8 @@ type OrderServer struct {
 	startCommittedCut       map[int32]int64 // first committed cut in the window for each replica
 	// committedCutInWindow    map[int64](map[int32]int64) // number of committed cuts in the window for each replica
 	// stats
-	stats Stats
+	stats          Stats
+	failedReplicas map[int32]interface{} // committed cut number at the time of failure
 
 	prevLowestWindowNum   int64
 	prevLowestLocalCutNum int64
@@ -219,6 +220,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 		s.stats.holesFilled = make(map[int32](map[int64]int64))
 	}
 	s.stats.numLagFixes = make(map[int32]int64)
+	s.failedReplicas = make(map[int32]interface{})
 	return s
 }
 
@@ -353,9 +355,18 @@ func (s *OrderServer) getNumHolesCommitted(lowestWindowNum int64, lowestLocalCut
 		currentWindow := i / s.localCutChangeWindow
 		for rid := range s.quota[currentWindow] {
 			if _, ok := s.stats.holesFilled[rid]; !ok {
-				log.Errorf("err, cannot happen")
+				if _, ok := s.failedReplicas[rid]; ok {
+					s.stats.holesFilled[rid] = make(map[int64]int64)
+				} else {
+					log.Errorf("err, cannot happen")
+				}
 			}
 			if _, ok := s.stats.holesFilled[rid][i]; !ok {
+				if _, ok := s.failedReplicas[rid]; ok {
+					s.stats.holesFilled[rid][i] = s.quota[currentWindow][rid] // this is a failed shard, all entries in that cut are filled with holes
+				} else {
+					log.Errorf("err, cannot happen")
+				}
 				log.Errorf("err, cannot happen")
 			}
 			numHolesCommitted += s.stats.holesFilled[rid][i]
@@ -493,7 +504,6 @@ func (s *OrderServer) processReport() {
 	numFailed := int(0)
 	lastWindowNumForFailed := int64(0)
 
-	failedReplicas := make(map[int32]interface{}, 0) // committed cut number at the time of failure
 	numCommittedCuts := int64(0)
 	ticker := time.NewTicker(s.batchingInterval)
 	var quotaStartTime time.Time
@@ -627,14 +637,14 @@ func (s *OrderServer) processReport() {
 				failedReplicasSlice := make([]int32, 0) //xxx
 
 				ccut := s.computeCommittedCut(lcs)
-				if len(failedReplicas) > 0 {
+				if len(s.failedReplicas) > 0 {
 					lowestWindowNum := getLowestWindowNum(lcs)
 					if lowestWindowNum == lastWindowNumForFailed {
 						if s.getLowestLocalCutNum(lcs, lowestWindowNum) == s.localCutChangeWindow-1 {
-							for rid := range failedReplicas {
+							for rid := range s.failedReplicas {
 								delete(lcs, rid)
 							}
-							failedReplicas = make(map[int32]interface{})
+							s.failedReplicas = make(map[int32]interface{})
 							numFailed = 0
 							lastWindowNumForFailed = 0
 							log.Printf("live replicas have surpassed failed replicas")
@@ -653,12 +663,12 @@ func (s *OrderServer) processReport() {
 						log.Printf("[lag detected] %v", t.Format("2006/01/02 15:04:05.000000"))
 						log.Printf("[last cut] %v", s.lastCutTime[rid].Format("2006/01/02 15:04:05.000000"))
 						sid := rid / s.dataNumReplica
-						if _, ok := failedReplicas[rid]; ok {
+						if _, ok := s.failedReplicas[rid]; ok {
 							continue
 						}
 						for i := int32(0); i < s.dataNumReplica; i++ { // then all replicas in the same physical shard are failed
 							rid := sid*s.dataNumReplica + i
-							failedReplicas[rid] = struct{}{}
+							s.failedReplicas[rid] = struct{}{}
 							numFailed++
 							// delete(lcs, rid)
 							delete(s.replicasInReserve, rid) // don't know if this is required, do it for safe
@@ -693,7 +703,7 @@ func (s *OrderServer) processReport() {
 					log.Printf("Incrementing view ID to %v as replicas failed", s.viewID)
 				}
 
-				lags := s.getLags(lcs, failedReplicas)
+				lags := s.getLags(lcs, s.failedReplicas)
 				s.stats.timeToComputeCommittedCut += time.Since(start).Nanoseconds()
 				s.stats.numCommittedCuts++
 				vid := atomic.LoadInt32(&s.viewID)

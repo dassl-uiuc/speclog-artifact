@@ -41,7 +41,7 @@ df = pd.DataFrame({
 })
 df = df.sort_values(by='time')
 
-zoom = (25, 26)
+zoom = (28, 29)
 
 start_time = all_time[0] + timedelta(seconds=zoom[0])
 end_time = all_time[0] + timedelta(seconds=zoom[1])
@@ -67,7 +67,7 @@ with open('../results/e2e_2000/client_node11_0.log', 'r') as f:
 
 plot, ax = plt.subplots(figsize=(10,6))
 ax.plot(df_zoomed['relative_time_s'], df_zoomed['e2e_mov_avg'], label='e2e latency')
-ax.plot(df_zoomed['relative_time_s'], df_zoomed['app_mov_avg'], color='grey', label='append latency')
+# ax.plot(df_zoomed['relative_time_s'], df_zoomed['app_mov_avg'], color='grey', label='append latency')
 ax.axvline((failure_ev - min_time).total_seconds(), color='brown', alpha=0.7, linestyle='--', label="shard fail")
 ax.axvline((viewchange_ev - min_time).total_seconds(), color='crimson', alpha=0.7, linestyle='--', label="view change notified")
 ax.set_xlim(left=zoom[0], right=zoom[1])
