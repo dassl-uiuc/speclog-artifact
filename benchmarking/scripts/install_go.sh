@@ -24,3 +24,11 @@ export PATH=$PATH:/usr/local/go/bin
 
 # install goreman
 go install github.com/mattn/goreman@latest
+
+
+# own user
+sudo chown -R sgbhat3 ~
+
+# install packages
+sudo apt-get install texlive-font-utils gnuplot -y 
+
