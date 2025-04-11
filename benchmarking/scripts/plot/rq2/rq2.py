@@ -187,11 +187,11 @@ df_e2e_scalog_4shard = pd.DataFrame(columns=[
     'mean_delivery_latency', 'mean_e2e_latency', 'p99_e2e_latency'
 ])
 
-for path in glob.glob("/users/sgbhat3/data/speclog/e2e_4shard/*"):
+for path in glob.glob("PATH/e2e/speclog/e2e_4shard/*"):
     df_e2e_speclog_4shard = get_e2e_metrics_speclog(path + "/", df_e2e_speclog_4shard)
     df_splits_speclog_4shard = get_splits_speclog(path + "/", df_splits_speclog_4shard)
 
-for path in glob.glob("/users/sgbhat3/data/scalog/e2e_4shard/*"):
+for path in glob.glob("PATH/e2e/scalog/e2e_4shard/*"):
     df_e2e_scalog_4shard = get_e2e_metrics_scalog(path + "/", df_e2e_scalog_4shard)
     df_splits_scalog_4shard = get_splits_scalog(path + "/", df_splits_scalog_4shard)
 

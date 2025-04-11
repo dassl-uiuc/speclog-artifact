@@ -74,7 +74,7 @@ def get_avg_throughput(directory, num_bytes_per_op):
     return None
 
 
-root_path="/Users/shreesha00/Downloads/append/"
+root_path="PATH/append/"
 
 df_scalog = pd.DataFrame(columns=["mean", "stddev"])
 df_speclog = pd.DataFrame(columns=["mean", "stddev"])

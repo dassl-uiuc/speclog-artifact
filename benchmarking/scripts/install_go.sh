@@ -30,5 +30,5 @@ go install github.com/mattn/goreman@latest
 sudo chown -R sgbhat3 ~
 
 # install packages
-sudo apt-get install texlive-font-utils gnuplot -y 
+sudo apt-get install pip texlive-font-utils gnuplot -y 
 
