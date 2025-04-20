@@ -1,12 +1,12 @@
 #!/bin/bash
 
-source ./common.sh
+source ../../common.sh
+pushd $benchmark_dir/scripts
 
 # parameters
-runtime_secs=120
-# computation_time=(100 200 500 800 1000 1200 1500 2000 5000 4000 3800 3300 3000 2800 2500 2200)
-computation_time=(100)
-num_shards=1
+runtime_secs=60
+computation_time=(100 500 1000 1500 2000 2500 3000 4000 5000)
+num_shards=2
 
 for ct in "${computation_time[@]}";
 do 
@@ -22,8 +22,8 @@ do
     sleep 1
     start_e2e_clients ${client_nodes[0]} $ct $runtime_secs 0 10 $benchmark_dir/logs/
     start_e2e_clients ${client_nodes[1]} $ct $runtime_secs 1 10 $benchmark_dir/logs/
-    # start_e2e_clients ${client_nodes[2]} $ct $runtime_secs 2 10 $benchmark_dir/logs/
-    # start_e2e_clients ${client_nodes[3]} $ct $runtime_secs 3 10 $benchmark_dir/logs/
+    start_e2e_clients ${client_nodes[2]} $ct $runtime_secs 2 10 $benchmark_dir/logs/
+    start_e2e_clients ${client_nodes[3]} $ct $runtime_secs 3 10 $benchmark_dir/logs/
     echo "Waiting for clients to terminate"
 
     wait 
@@ -33,7 +33,9 @@ do
     collect_logs $num_shards
 
     # move logs to a different folder
-    mkdir -p "$benchmark_dir/results/e2e_${ct}"
-    mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e_${ct}"
+    mkdir -p "$benchmark_dir/results/e2e/speclog/e2e_4shard/e2e_${ct}"
+    mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e/speclog/e2e_4shard/e2e_${ct}"
 done
+
+popd
 

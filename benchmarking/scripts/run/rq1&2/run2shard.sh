@@ -1,11 +1,11 @@
 #!/bin/bash
 
-source ./common.sh
+source ../../common.sh
+pushd $benchmark_dir/scripts
 
 # parameters
-runtime_secs=120
-# computation_time=(100 200 500 800 1000 1200 1500 2000 5000 4000 3800 3300 3000 2800 2500 2200)
-computation_time=(100)
+runtime_secs=60
+computation_time=(100 500 1000 1500 2000 2500 3000 4000 5000)
 num_shards=1
 
 for ct in "${computation_time[@]}";
@@ -33,7 +33,9 @@ do
     collect_logs $num_shards
 
     # move logs to a different folder
-    mkdir -p "$benchmark_dir/results/e2e_${ct}"
-    mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e_${ct}"
+    mkdir -p "$benchmark_dir/results/e2e/speclog/e2e_2shard/e2e_${ct}"
+    mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e/speclog/e2e_2shard/e2e_${ct}"
 done
+
+popd
 

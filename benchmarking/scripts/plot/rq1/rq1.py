@@ -90,22 +90,22 @@ df_e2e_scalog_4shard = pd.DataFrame(columns=[
     'mean_delivery_latency', 'mean_e2e_latency', 'p99_e2e_latency'
 ])
 
-for path in glob.glob("PATH/e2e/speclog/e2e_2shard/e2e_1500"):
+for path in glob.glob("../../results/e2e/speclog/e2e_2shard/e2e_1500"):
     df_e2e_speclog_2shard = get_e2e_metrics_speclog(path + "/", df_e2e_speclog_2shard)
 
-for path in glob.glob("PATH/e2e/scalog/e2e_2shard/e2e_1500"): 
+for path in glob.glob("../../results/e2e/scalog/e2e_2shard/e2e_1500"): 
     df_e2e_scalog_2shard = get_e2e_metrics_scalog(path + "/", df_e2e_scalog_2shard)
 
-for path in glob.glob("PATH/e2e/speclog/e2e_4shard/e2e_1500"):
+for path in glob.glob("../../results/e2e/speclog/e2e_4shard/e2e_1500"):
     df_e2e_speclog_4shard = get_e2e_metrics_speclog(path + "/", df_e2e_speclog_4shard)
 
-for path in glob.glob("PATH/e2e/scalog/e2e_4shard/e2e_1500"):
+for path in glob.glob("../../results/e2e/scalog/e2e_4shard/e2e_1500"):
     df_e2e_scalog_4shard = get_e2e_metrics_scalog(path + "/", df_e2e_scalog_4shard)
 
-print(df_e2e_scalog_2shard)
-print(df_e2e_scalog_4shard)
-print(df_e2e_speclog_2shard)
-print(df_e2e_speclog_4shard)
+# print(df_e2e_scalog_2shard)
+# print(df_e2e_scalog_4shard)
+# print(df_e2e_speclog_2shard)
+# print(df_e2e_speclog_4shard)
 
 with open("rq1_speclog.dat", "w") as f:
     f.write(f"\"2-shards\" {round(df_e2e_speclog_2shard.loc[1500, 'mean_e2e_latency'], 2)} {round(df_e2e_speclog_2shard.loc[1500, 'p99_e2e_latency'], 2)} 0 {round(float(df_e2e_scalog_2shard.loc[1500, 'mean_e2e_latency'])/df_e2e_speclog_2shard.loc[1500, 'mean_e2e_latency'], 2)}X {round(df_e2e_speclog_2shard.loc[1500, 'mean_delivery_latency'], 2)} {round(float(df_e2e_scalog_2shard.loc[1500, 'mean_delivery_latency'])/df_e2e_speclog_2shard.loc[1500, 'mean_delivery_latency'], 2)}X\n")
