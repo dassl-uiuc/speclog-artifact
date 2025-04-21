@@ -13,7 +13,7 @@ import (
 	"go.etcd.io/etcd/raft/raftpb"
 )
 
-const reconfigExpt = false
+const reconfigExpt bool = false
 const lagfixExpt bool = false
 const qcExpt bool = false
 
