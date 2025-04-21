@@ -34,7 +34,6 @@ popd
 sleep 5
 echo "Running with lagfix enabled"
 pushd $benchmark_dir/scripts
-
 # single shard involved in this expt
 num_shards=1
 
@@ -42,6 +41,7 @@ num_shards=1
 
 # parameters
 runtime_secs=30
+computation_time=(800)
 
 cleanup_clients
 cleanup_servers
@@ -58,8 +58,7 @@ start_data_nodes $num_shards
 sleep 5
 
 # start clients
-start_lagfix_clients ${client_nodes[0]} $runtime_secs 0 3 $benchmark_dir/logs/
-start_lagfix_clients ${client_nodes[1]} $runtime_secs 1 3 $benchmark_dir/logs/
+start_lagfix_e2e_clients ${client_nodes[0]} $runtime_secs 3 $computation_time $benchmark_dir/logs/
 echo "Waiting for clients to terminate"
 
 wait 
@@ -91,7 +90,6 @@ sleep 5
 echo "Running with lagfix disabled"
 
 pushd $benchmark_dir/scripts
-
 # single shard involved in this expt
 num_shards=1
 
@@ -99,6 +97,7 @@ num_shards=1
 
 # parameters
 runtime_secs=30
+computation_time=(800)
 
 cleanup_clients
 cleanup_servers
@@ -115,8 +114,7 @@ start_data_nodes $num_shards
 sleep 5
 
 # start clients
-start_lagfix_clients ${client_nodes[0]} $runtime_secs 0 3 $benchmark_dir/logs/
-start_lagfix_clients ${client_nodes[1]} $runtime_secs 1 3 $benchmark_dir/logs/
+start_lagfix_e2e_clients ${client_nodes[0]} $runtime_secs 3 $computation_time $benchmark_dir/logs/
 echo "Waiting for clients to terminate"
 
 wait 
