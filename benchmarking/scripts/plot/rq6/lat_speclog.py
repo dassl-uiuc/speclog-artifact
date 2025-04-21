@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-## Analyze latencies for lagfix experiment
+import re
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import bisect
-import re
+import os 
 import sys
 
-timestamp_pattern = r"(\d{2}:\d{2}:\d{2}\.\d{6})"
 jt = float(sys.argv[1])
+# File path
+path = "../../../results/reconfig_800_speclog_with_e2e/"
+## Analyze latencies for lagfix experiment
 
-path = "PATH/reconfig_800_scalog_with_e2e/"
+timestamp_pattern = r"(\d{2}:\d{2}:\d{2}\.\d{6})"
+
 
 def parse_timestamp(time):
     return datetime.strptime(time, "%H:%M:%S.%f")
@@ -39,8 +42,8 @@ def analyze_reconfig(path):
         for line in lines:
             parts = line.strip().split(',')
             gsn = int(parts[0])
-            e2e_latency = int(parts[2])
-            timestamp = parts[4]
+            e2e_latency = int(parts[4])
+            timestamp = parts[6]
             gsns.append(gsn)
             latencies.append(e2e_latency)
             timestamps.append(datetime.strptime(timestamp, "%H:%M:%S.%f"))
@@ -56,26 +59,23 @@ def analyze_reconfig(path):
     window_size = 2000  # Set window size for moving average
     df['moving_avg'] = df['latency'].rolling(window=window_size, min_periods=1).mean()
 
+
     # Calculate relative time
     min_time = df['time'].min()
     # Plot join and leave markers
     join_time_relative = (parse_timestamp(join_time) - min_time).total_seconds() * 1000
     leave_time_relative = (parse_timestamp(leave_time) - min_time).total_seconds() * 1000
     df['relative_time_ms'] = (df['time'] - min_time).dt.total_seconds() * 1000
-
-    start_offset = join_time_relative - jt
+    start_offset = join_time_relative - jt 
     print("Start offset: " + str(start_offset))
     df['relative_time_ms'] =  df['relative_time_ms'] - start_offset
-    df[['relative_time_ms', 'moving_avg']].to_csv('scalog_lat.csv', index=False, sep='\t') 
-    # Plot moving average and markers
-    
+    df[['relative_time_ms', 'moving_avg']].to_csv('speclog_lat.csv', index=False, sep='\t') 
+
+
     print(str(join_time_relative-start_offset) + "\t" + 'Shard Added')
     print(str(leave_time_relative-start_offset) + "\t" + 'Shard Removed')
 
     # Calculate the average latency
     average_latency = df['latency'].mean()
-
     print(average_latency)
-
-
 analyze_reconfig(path)
