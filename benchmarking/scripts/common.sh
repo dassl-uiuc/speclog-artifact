@@ -59,6 +59,21 @@ drop_server_caches() {
     ./run_script_on_servers.sh ./drop_caches.sh ${run_server_suffix}
 }
 
+set_bool_variable_in_file() {
+    local file="$1"
+    local var="$2"
+    local value="$3"
+
+    if [[ ! -f "$file" ]]; then
+        echo "File '$file' does not exist."
+        return 1
+    fi
+
+    echo "Setting $var to $value in $file"
+
+    sed -i -E "s/^const[[:space:]]+$var[[:space:]]+bool[[:space:]]*=[[:space:]]*(true|false)/const $var bool = $value/" "$file"
+}
+
 collect_logs() {
     for svr in ${order[@]};
     do 
