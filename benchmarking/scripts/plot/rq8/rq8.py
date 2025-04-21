@@ -20,7 +20,7 @@ def get_straggler_lsn_wsn(path):
                 return match.group(1), match.group(2)
             
 
-path = "PATH/slowshard/"
+path = "../../../results/slowshard/"
 lsn, wn = get_straggler_lsn_wsn(path)
 print(f"lsn: {lsn}, wn: {wn}")
 
@@ -164,7 +164,7 @@ def get_latencies(path):
     return e2e_latency_values, straggler_trigger
 
 # CONFIGURE PATH HERE
-path = "PATH/slowshard/"
+path = "../../../results/slowshard/"
 e2e_latency_values, straggler_trigger = get_latencies(path)
 ## e2e latency plots
 
@@ -255,9 +255,9 @@ gnuplot_script = rf"""
 	set style function linespoints
 	set trange [0:30]
 	set parametric
-	plot 19923.52-{min_time},t title "straggle starts" dt 1 lw 4 ps 0 lc rgb 'purple',\
-		 20061.77-{min_time},t title "quota set to 0" dt 2 lw 4 ps 0 lc rgb 'blue',\
-		 20477.443-{min_time},t title "quota reset" dt 3 lw 4 ps 0 lc rgb 'black',\
+	plot {start_time_relative}-{min_time},t title "straggle starts" dt 1 lw 4 ps 0 lc rgb 'purple',\
+		 {straggler_quarantined}-{min_time},t title "quota set to 0" dt 2 lw 4 ps 0 lc rgb 'blue',\
+		 {straggler_quarantine_ended}-{min_time},t title "quota reset" dt 3 lw 4 ps 0 lc rgb 'black',\
 		 "e2edata" using (\$1-{min_time}):(\$2/1000) title 'Belfast' with lines lc rgb '#009988'  dashtype 1 lw 4
 		
 EOF
