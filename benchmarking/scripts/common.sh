@@ -8,10 +8,22 @@ LOGDIR="/data"
 order=("node0" "node1" "node2")
 
 # index into remote_nodes/ips for data shards
-data_pri=("node3" "node5" "node7" "node9")
-data_sec=("node4" "node6" "node8" "node10")
+if [ "$five_shard" = "true" ]; then 
+    data_pri=("node3" "node5" "node7" "node9" "node11")
+    data_sec=("node4" "node6" "node8" "node10" "node12")
 
-client_nodes=("node13" "node14" "node15" "node12")
+    client_nodes=("node13" "node14" "node15")
+    
+    run_server_suffix="13"
+    run_client_suffix="3"
+else 
+    data_pri=("node3" "node5" "node7" "node9")
+    data_sec=("node4" "node6" "node8" "node10")
+
+    client_nodes=("node13" "node14" "node15" "node12")
+    run_server_suffix="11"
+    run_client_suffix="4"
+fi 
 intrusion_detection_dir="../../applications/vanilla_applications/intrusion_detection"
 transaction_analysis_dir="../../applications/vanilla_applications/transaction_analysis"
 
@@ -24,27 +36,27 @@ modify_batching_intervals() {
 
 clear_server_logs() {
     # mount storage and clear existing logs if any
-    ./run_script_on_servers.sh ./setup_disk.sh
+    ./run_script_on_servers.sh ./setup_disk.sh ${run_server_suffix}
 }
 
 clear_client_logs() {
     # mount storage and clear existing logs if any
-    ./run_script_on_clients.sh ./setup_disk.sh
-    ./run_script_on_clients.sh ./client_tmp_clear.sh
+    ./run_script_on_clients.sh ./setup_disk.sh ${run_client_suffix}
+    ./run_script_on_clients.sh ./client_tmp_clear.sh ${run_client_suffix}
 }
 
 cleanup_servers() {
     # kill existing servers
-    ./run_script_on_servers.sh ./kill_all_goreman.sh
+    ./run_script_on_servers.sh ./kill_all_goreman.sh ${run_server_suffix}
 }
 
 cleanup_clients() {
     # kill existing clients
-    ./run_script_on_clients.sh ./kill_all_benchmark.sh
+    ./run_script_on_clients.sh ./kill_all_benchmark.sh ${run_client_suffix}
 }
 
 drop_server_caches() {
-    ./run_script_on_servers.sh ./drop_caches.sh
+    ./run_script_on_servers.sh ./drop_caches.sh ${run_server_suffix}
 }
 
 collect_logs() {
