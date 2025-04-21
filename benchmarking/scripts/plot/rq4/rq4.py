@@ -49,8 +49,8 @@ def process_logs(logfile1, logfile2, logfile3):
 
 
 suffix = 'with_e2e'
-logfile1 = "PATH/lagfix_" + suffix + "/data-0-0.log"
-logfile2 = "PATH/lagfix_" + suffix + "/order-0.log"
+logfile1 = "../../../results/lagfix_" + suffix + "/data-0-0.log"
+logfile2 = "../../../results/lagfix_" + suffix + "/order-0.log"
 logfile3 = "output.log"
 
 y = process_logs(logfile1, logfile2, logfile3)

@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import sys
 
-path = "PATH/lagfix_" + sys.argv[1] + "_e2e/"
+path = "../../../results/lagfix_" + sys.argv[1] + "_e2e/"
 
 def get_latency_metrics_for_lagfix(path):
     e2e_file_pattern = path + "e2e_metrics.csv"

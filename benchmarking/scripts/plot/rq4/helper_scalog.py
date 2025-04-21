@@ -32,7 +32,7 @@ def get_latency_metrics_for_lagfix(path):
                 gsn, timestamp, latency = int(parts[0]), parts[1], int(parts[2])
                 append_latency_values[gsn] = [latency, timestamp]
     
-    client_file = path + "client_node7.log"
+    client_file = path + "client_node13.log"
     with open(client_file, 'r') as f:
         log_data = f.read()
         for line in log_data.splitlines():
@@ -47,7 +47,7 @@ def get_latency_metrics_for_lagfix(path):
     return append_latency_values, e2e_latency_values, gsns
 
 
-path = "PATH/scalog_lagfix/"
+path = "../../../results/scalog_lagfix/"
 append_latency_values, e2e_latency_values, gsns = get_latency_metrics_for_lagfix(path)
 
 append_latency_array = np.array([append_latency_values[gsn][0] for gsn in append_latency_values])
