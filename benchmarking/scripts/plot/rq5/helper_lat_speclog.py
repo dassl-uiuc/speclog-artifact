@@ -145,7 +145,7 @@ def get_lat_ts(path):
                 gsn, e2e_latency, delivery_timestamp = int(parts[0]), int(parts[4]), parse_timestamp(parts[6])
                 e2e_latency_values[gsn] = [e2e_latency, delivery_timestamp]
 
-    with open(path + "client_node7.log", 'r') as f:
+    with open(path + "client_node13.log", 'r') as f:
         lines = f.readlines()
         for line in lines:
             if "first append start time" in line:
