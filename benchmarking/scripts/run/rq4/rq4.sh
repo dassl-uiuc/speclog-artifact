@@ -76,4 +76,8 @@ set_bool_variable_in_file \
     "lagfixExpt" \
     "false"
 
+pushd $benchmark_dir/../
+go build
+popd
+
 popd
