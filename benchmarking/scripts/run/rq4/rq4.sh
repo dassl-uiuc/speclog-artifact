@@ -159,4 +159,8 @@ set_bool_variable_in_file \
     "lagfixEnabled" \
     "true"
 
+pushd $benchmark_dir/../
+go build
+popd
+
 popd
