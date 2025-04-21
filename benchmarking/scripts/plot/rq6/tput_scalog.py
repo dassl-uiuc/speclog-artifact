@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import pandas as pd
 # File path
-log_file = "PATH/reconfig_800_scalog_with_e2e/order-0.log"
+log_file = "../../../results/reconfig_800_scalog_with_e2e/order-0.log"
 
 # Regex patterns
 tput_pattern = r"\[real-time tput\]: (\d+) ops/sec"
