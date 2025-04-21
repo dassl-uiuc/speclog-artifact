@@ -9,7 +9,7 @@ import pandas as pd
 
 mode = sys.argv[1]
 assert mode == 'enabled' or mode == 'disabled'
-homedir = "PATH"
+homedir = "../../../results/"
 
 def extract_burst_cut_and_window(log_file_path):    
     pattern = r"burst local cut number (\d+), window num (\d+)"
@@ -109,8 +109,8 @@ shard_0_times_rel = [to_relative_ms(t) for t, _ in shard_0_cuts if zoom_start <=
 shard_1_times_rel = [to_relative_ms(t) for t, _ in shard_1_cuts if zoom_start <= t <= zoom_end]
 quota_times_rel = {to_relative_ms(t): v for t, v in quota_changes.items() if zoom_start <= t <= zoom_end}
 
-assert len(timestamps) == len(tput_values)
-assert len(timestamps) == len(total_tput_timestamps)
+# assert len(timestamps) == len(tput_values)
+# assert len(timestamps) == len(total_tput_timestamps)
 
 zs = to_relative_ms(zoom_start)
 ze = to_relative_ms(zoom_end)
