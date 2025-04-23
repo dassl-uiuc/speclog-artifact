@@ -11,8 +11,8 @@ client_number="$3"
 reader_id="$4"
 
 # output directory for the test output
-output_dir="../results/${interval}/intrusion_detection_read_${total_clients}"
-mkdir -p $output_dir
+# output_dir="../results/${interval}/intrusion_detection_read_${total_clients}"
+# mkdir -p $output_dir
 
 echo "Running intrusion detection reader on node $client_id with reader id $reader_id"
 for ((i=0; i<$client_number; i++)); do
