@@ -26,6 +26,7 @@ else
 fi 
 intrusion_detection_dir="../../applications/vanilla_applications/intrusion_detection"
 transaction_analysis_dir="../../applications/vanilla_applications/transaction_analysis"
+hft_dir="../../applications/vanilla_applications/hft"
 
 batching_intervals=("1ms")
 
@@ -245,4 +246,12 @@ start_transaction_analysis_clients() {
 
 start_transaction_analysis_generator_clients() {
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $transaction_analysis_dir/transaction_analysis_generator_client.sh $1 $2 $3 $4 $5 > ${LOGDIR}/client_writer_$1_$5.log 2>&1" &
+}
+
+start_hft_clients() {
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $hft_dir/hft_client.sh $1 $2 $3 $4 > ${LOGDIR}/client_reader_$1_$4.log 2>&1" &
+}
+
+start_hft_generator_clients() {
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $hft_dir/hft_generator_client.sh $1 $2 $3 $4 $5 > ${LOGDIR}/client_writer_$1_$5.log 2>&1" &
 }

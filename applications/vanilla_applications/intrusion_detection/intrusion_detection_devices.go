@@ -170,7 +170,7 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 	}
 	runTime := int64(viper.GetInt("consume-run-time"))
 
-	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, -1, "../../../.scalog.yaml")
 
 	scalogApi.SubscribeToAssignedShard(readerId, 0)
 
