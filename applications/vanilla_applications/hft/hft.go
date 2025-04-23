@@ -228,7 +228,7 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 	}
 
 	filterValue := numReadClients
-	scalogApi := scalog_api.CreateClient(1000, -1, "../../../.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, -1, "../../.scalog.yaml")
 
 	scalogApi.FilterSubscribeDouble(0, readerId, readerId2, filterValue)
 
@@ -461,8 +461,8 @@ func HftProcessing(readerId int32, readerId2 int32, clientNumber int) {
 // 	fmt.Printf("runtime=%ds\n", runTime)
 
 // 	filterValue := numReadClients
-// 	scalogApi1 := scalog_api.CreateClient(1000, -1, "../../../.scalog.yaml")
-// 	scalogApi2 := scalog_api.CreateClient(1000, -1, "../../../.scalog.yaml")
+// 	scalogApi1 := scalog_api.CreateClient(1000, -1, "../../.scalog.yaml")
+// 	scalogApi2 := scalog_api.CreateClient(1000, -1, "../../.scalog.yaml")
 
 // 	scalogApi1.FilterSubscribe(0, readerId, filterValue)
 // 	scalogApi2.FilterSubscribe(0, readerId2, filterValue)

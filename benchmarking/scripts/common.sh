@@ -16,6 +16,14 @@ if [ "$five_shard" = "true" ]; then
     
     run_server_suffix="13"
     run_client_suffix="3"
+elif [ "$apps" = "true" ]; then 
+    data_pri=("node3" "node5")
+    data_sec=("node4" "node6")
+
+    client_nodes=("node13" "node14")
+    
+    run_server_suffix="7"
+    run_client_suffix="2"
 else 
     data_pri=("node3" "node5" "node7" "node9")
     data_sec=("node4" "node6" "node8" "node10")

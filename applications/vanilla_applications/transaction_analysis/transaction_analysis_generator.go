@@ -37,7 +37,7 @@ func Append_One_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy
 	runTime := int64(viper.GetInt("produce-run-time"))
 	// numReadClients := int32(viper.GetInt("num-read-clients"))
 
-	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "../../../.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "../../.scalog.yaml")
 
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
@@ -74,7 +74,7 @@ func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPol
 	numUsers := int32(viper.GetInt("num-users"))
 
 	rand.Seed(time.Now().UnixNano())
-	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "../../../.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "../../.scalog.yaml")
 
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
