@@ -12,8 +12,8 @@ append_type="$4"
 appender_id="$5"
 
 # output directory for the test output
-output_dir="../results/${interval}/intrusion_detection_append_${total_clients}"
-mkdir -p $output_dir
+# output_dir="../results/${interval}/intrusion_detection_append_${total_clients}"
+# mkdir -p $output_dir
 
 echo "Running intrusion detection appender on node $client_id with appender id $appender_id"
 for ((i=0; i<$client_number; i++)); do

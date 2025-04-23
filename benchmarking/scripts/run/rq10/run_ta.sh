@@ -85,12 +85,12 @@ run_ta() {
 }
 
 n=$1
-for i in $(seq 1 $n)
+for trial in $(seq 1 $n)
 do
-    echo "Running $i-th time"
+    echo "Running $trial-th time"
     run_ta
-    mkdir -p $benchmark_dir/results/apps/transaction_analysis/speclog_$i
-    sudo cp -r ../../applications/vanilla_applications/transaction_analysis/data $benchmark_dir/results/apps/transaction_analysis/speclog_$i
+    mkdir -p $benchmark_dir/results/apps/transaction_analysis/speclog_$trial
+    sudo cp -r ../../applications/vanilla_applications/transaction_analysis/data $benchmark_dir/results/apps/transaction_analysis/speclog_$trial
 done
 
 popd

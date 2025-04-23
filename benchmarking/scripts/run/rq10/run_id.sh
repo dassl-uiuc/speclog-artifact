@@ -85,12 +85,12 @@ run_id() {
 }
 
 n=$1
-for i in $(seq 1 $n)
+for trial in $(seq 1 $n)
 do
-    echo "Running $i-th time"
+    echo "Running $trial-th time"
     run_id
-    mkdir -p $benchmark_dir/results/apps/intrusion_detection/speclog_$i
-    sudo cp -r ../../applications/vanilla_applications/intrusion_detection/data $benchmark_dir/results/apps/intrusion_detection/speclog_$i
+    mkdir -p $benchmark_dir/results/apps/intrusion_detection/speclog_$trial
+    sudo cp -r ../../applications/vanilla_applications/intrusion_detection/data $benchmark_dir/results/apps/intrusion_detection/speclog_$trial
 done
 
 popd

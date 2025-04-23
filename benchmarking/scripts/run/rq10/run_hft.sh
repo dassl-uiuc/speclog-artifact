@@ -85,12 +85,12 @@ run_hft() {
 }
 
 n=$1
-for i in $(seq 1 $n)
+for trial in $(seq 1 $n)
 do
-    echo "Running $i-th time"
+    echo "Running $trial-th time"
     run_hft
-    mkdir -p $benchmark_dir/results/apps/hft/speclog_$i
-    sudo cp -r ../../applications/vanilla_applications/hft/data $benchmark_dir/results/apps/hft/speclog_$i
+    mkdir -p $benchmark_dir/results/apps/hft/speclog_$trial
+    sudo cp -r ../../applications/vanilla_applications/hft/data $benchmark_dir/results/apps/hft/speclog_$trial
 done
 
 popd
