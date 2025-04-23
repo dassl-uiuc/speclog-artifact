@@ -30,3 +30,7 @@ coverage.txt
 
 # Benchmarking results
 benchmarking/results/*
+
+applications/vanilla_applications/hft/data/
+applications/vanilla_applications/intrusion_detection/data/
+applications/vanilla_applications/transaction_analysis/data/
