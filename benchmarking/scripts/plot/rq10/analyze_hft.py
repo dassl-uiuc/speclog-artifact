@@ -6,7 +6,7 @@ import numpy as np
 num_replicas = 2
 num_append_clients_per_replica = 10
 num_read_clients_per_replica = 1
-num_trials = 5
+num_trials = 3
 
 def largest_common_key(*maps):
     # Find the intersection of all keys across the maps
@@ -24,15 +24,15 @@ def analyze_scalog(root_path):
     analyzing_trial = 1
     list_lat = []
     while analyzing_trial <= num_trials:
-        append_throughput_file_path = root_path + str(analyzing_trial) + "/append_throughput_"
-        append_start_timestamps_file_path = root_path + str(analyzing_trial) + "/append_start_timestamps_"
-        compute_e2e_end_times_file_path = root_path + str(analyzing_trial) + "/compute_e2e_end_times_"
-        delivery_latencies_file_path = root_path + str(analyzing_trial) + "/delivery_latencies_"
-        read_throughput_file_path = root_path + str(analyzing_trial) + "/read_throughput_"
-        append_records_produced_file_path = root_path + str(analyzing_trial) + "/append_records_produced_"
-        records_received_file_path = root_path + str(analyzing_trial) + "/records_received_"
-        start_compute_times_file_path = root_path + str(analyzing_trial) + "/start_compute_times_"
-        avg_batch_size_file_path = root_path + str(analyzing_trial) + "/batch_sizes_"
+        append_throughput_file_path = root_path + str(analyzing_trial) + "/data/append_throughput_"
+        append_start_timestamps_file_path = root_path + str(analyzing_trial) + "/data/append_start_timestamps_"
+        compute_e2e_end_times_file_path = root_path + str(analyzing_trial) + "/data/compute_e2e_end_times_"
+        delivery_latencies_file_path = root_path + str(analyzing_trial) + "/data/delivery_latencies_"
+        read_throughput_file_path = root_path + str(analyzing_trial) + "/data/read_throughput_"
+        append_records_produced_file_path = root_path + str(analyzing_trial) + "/data/append_records_produced_"
+        records_received_file_path = root_path + str(analyzing_trial) + "/data/records_received_"
+        start_compute_times_file_path = root_path + str(analyzing_trial) + "/data/start_compute_times_"
+        avg_batch_size_file_path = root_path + str(analyzing_trial) + "/data/batch_sizes_"
 
         records_produced = 0
         for i in range(num_replicas):

@@ -6,13 +6,17 @@ toolchain go1.22.0
 
 require (
 	github.com/RobinUS2/golang-moving-average v1.0.0
+	github.com/boltdb/bolt v1.3.1
 	github.com/golang/protobuf v1.3.2
+	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/spf13/cobra v0.0.5
 	github.com/spf13/viper v1.4.0
 	github.com/stretchr/testify v1.9.0
+	go.etcd.io/bbolt v1.3.11
 	go.etcd.io/etcd v0.0.0-20190703195757-48f5bb6d2822
 	go.uber.org/zap v1.10.0
+	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4
 	gonum.org/v1/gonum v0.15.1
 	google.golang.org/grpc v1.21.1
 	k8s.io/api v0.0.0-20190814101207-0772a1bdf941
@@ -21,19 +25,13 @@ require (
 )
 
 require (
-	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.0 // indirect
-	github.com/boltdb/bolt v1.3.1 // indirect
-	github.com/buger/jsonparser v1.1.1 // indirect
-	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20190620071333-e64a0ec8b42a // indirect
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
-	github.com/go-redis/redis/v8 v8.11.5 // indirect
 	github.com/gogo/protobuf v1.2.2-0.20190723190241-65acae22fc9d // indirect
 	github.com/google/gofuzz v1.0.0 // indirect
 	github.com/googleapis/gnostic v0.3.1 // indirect
@@ -41,8 +39,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.7 // indirect
 	github.com/magiconair/properties v1.8.1 // indirect
-	github.com/mailru/easyjson v0.7.7 // indirect
-	github.com/mattn/go-sqlite3 v1.14.24 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/mitchellh/mapstructure v1.1.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -58,10 +54,7 @@ require (
 	github.com/spf13/cast v1.3.0 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.3 // indirect
-	github.com/tecbot/gorocksdb v0.0.0-20191217155057-f0fad39f321c // indirect
-	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
-	go.etcd.io/bbolt v1.3.11 // indirect
 	go.uber.org/atomic v1.4.0 // indirect
 	go.uber.org/multierr v1.1.0 // indirect
 	golang.org/x/crypto v0.15.0 // indirect
@@ -71,7 +64,6 @@ require (
 	golang.org/x/sys v0.14.0 // indirect
 	golang.org/x/term v0.14.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
-	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
 	google.golang.org/appengine v1.6.1 // indirect
 	google.golang.org/genproto v0.0.0-20190611190212-a7e196e89fd3 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect

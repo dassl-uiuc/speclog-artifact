@@ -1,8 +1,8 @@
 import subprocess
 
-subprocess.run(["python3", "analyze_id.py", "PATH/apps/intrusion_detection/"], check=True)
-subprocess.run(["python3", "analyze_ta.py", "PATH/apps/transaction_analysis/"], check=True)
-subprocess.run(["python3", "analyze_hft.py", "PATH/apps/hft/"], check=True)
+# subprocess.run(["python3", "analyze_id.py", "../../../results/apps/intrusion_detection/"], check=True)
+# subprocess.run(["python3", "analyze_ta.py", "../../../results/apps/transaction_analysis/"], check=True)
+subprocess.run(["python3", "analyze_hft.py", "../../../results/apps/hft/"], check=True)
 
 
 gnuplot = rf"""
