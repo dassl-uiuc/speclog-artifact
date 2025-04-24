@@ -98,3 +98,5 @@ if [ "$num_shards" -gt 3 ]; then
     # wait for NFS to sync
     sleep 5 
 fi 
+
+popd
