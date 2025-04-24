@@ -68,3 +68,5 @@ do
         rm -rf $benchmark_dir/results/$interval
     done
 done 
+
+popd
