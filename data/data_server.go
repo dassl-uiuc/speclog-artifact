@@ -25,6 +25,7 @@ const lagfixExpt bool = false
 const qcExpt bool = false
 const qcEnabled bool = true
 const slowShardExpt bool = false
+const staggeringFactor int64 = -1
 
 var qcBurstLSN int64 = -1
 var qcBurstLocalCutNumber int64 = -1
@@ -1287,230 +1288,470 @@ func (s *DataServer) receiveCommittedCut() {
 }
 
 func (s *DataServer) processCommittedEntry() {
-	initStartGSN := int64(-1)
-	for entry := range s.committedEntryC {
-		if entry.CommittedCut != nil {
-			log.Debugf("Processing committed cut: %v", entry.CommittedCut)
-			startTime := time.Now()
-			// update quota if new quota is received
-			rid := s.shardID*s.numReplica + s.replicaID
-			if entry.CommittedCut.IsShardQuotaUpdated {
-				_, quotaExists := s.quotas[entry.CommittedCut.WindowNum]
-				if !quotaExists {
-					s.quotas[entry.CommittedCut.WindowNum] = entry.CommittedCut.ShardQuotas
-					replicaList := make([]int32, 0)
-					for k := range entry.CommittedCut.ShardQuotas {
-						replicaList = append(replicaList, k)
+	if staggeringFactor == -1 {
+		initStartGSN := int64(-1)
+		for entry := range s.committedEntryC {
+			if entry.CommittedCut != nil {
+				log.Debugf("Processing committed cut: %v", entry.CommittedCut)
+				startTime := time.Now()
+				// update quota if new quota is received
+				rid := s.shardID*s.numReplica + s.replicaID
+				if entry.CommittedCut.IsShardQuotaUpdated {
+					_, quotaExists := s.quotas[entry.CommittedCut.WindowNum]
+					if !quotaExists {
+						s.quotas[entry.CommittedCut.WindowNum] = entry.CommittedCut.ShardQuotas
+						s.views[entry.CommittedCut.WindowNum] = entry.CommittedCut.ViewID
 					}
-					sort.Slice(replicaList, func(i, j int) bool {
-						return replicaList[i] < replicaList[j]
-					})
-					s.sortedReplicaList[entry.CommittedCut.WindowNum] = replicaList
-					s.views[entry.CommittedCut.WindowNum] = entry.CommittedCut.ViewID
-				}
-				if quota, ok := entry.CommittedCut.ShardQuotas[rid]; ok {
-					if s.windowNumber == -1 {
-						s.windowNumber = entry.CommittedCut.WindowNum
-						s.nextExpectedLocalCutNum = 0
-						s.nextExpectedWindowNum = s.windowNumber
-						s.prevCommittedCut.Cut = make(map[int32]int64)
-						for k, v := range entry.CommittedCut.PrevCut {
-							s.prevCommittedCut.Cut[k] = v
-						}
-						initStartGSN = entry.CommittedCut.WindowStartGSN
-					}
-					// needs to happen before sending the quota
-					s.waitForNewQuota <- quota
-					quotasCopy := make(map[int32]int64)
-					for k, v := range entry.CommittedCut.ShardQuotas {
-						quotasCopy[k] = v
-					}
-					s.nextAssignableWindowAndQuotas <- &WindowAndQuota{
-						windowNum: entry.CommittedCut.WindowNum,
-						quota:     quotasCopy,
-						viewID:    entry.CommittedCut.ViewID,
-						startGSN:  entry.CommittedCut.WindowStartGSN,
-					}
-				}
-			}
-
-			if entry.CommittedCut.AdjustmentSignal != nil {
-				_, ok := entry.CommittedCut.AdjustmentSignal.Lag[rid]
-				if ok {
-					s.fixLag <- entry.CommittedCut.AdjustmentSignal.Lag[rid]
-				}
-			}
-
-			// we cannot proceed beyond this point if we aren't yet included in any windows
-			if s.windowNumber == -1 {
-				continue
-			} else {
-				// window is assigned but we are not yet included in the window?
-				_, ok := entry.CommittedCut.Cut[rid]
-				if !ok {
-					continue
-				}
-			}
-
-			startReplicaID := s.shardID * s.numReplica
-			startGSN := max(entry.CommittedCut.StartGSN, initStartGSN)
-			// numCuts := int64(0)
-			for {
-				log.Debugf("processing next expected local cut num: %v, next expected window num: %v", s.nextExpectedLocalCutNum, s.nextExpectedWindowNum)
-				log.Debugf("entry.CommittedCut.Cut: %v", entry.CommittedCut.Cut)
-				log.Debugf("prevCommittedCut.Cut: %v", s.prevCommittedCut.Cut)
-				terminate := true
-				for rid, lsn := range entry.CommittedCut.Cut {
-					_, ok := s.prevCommittedCut.Cut[rid]
-					if !ok || lsn != s.prevCommittedCut.Cut[rid] {
-						terminate = false
-						break
-					}
-				}
-				if terminate {
-					break
-				}
-
-				broken := false
-				for _, rid := range s.sortedReplicaList[s.nextExpectedWindowNum] {
-					if s.nextRid != -1 && rid < s.nextRid {
-						continue
-					}
-					lsn := entry.CommittedCut.Cut[rid]
-					if rid < startReplicaID || rid >= startReplicaID+s.numReplica {
-						diff := lsn
-						if l, ok := s.prevCommittedCut.Cut[rid]; ok {
-							diff = lsn - l
-						}
-						if diff > 0 {
-							startGSN += s.quotas[s.nextExpectedWindowNum][rid]
-							s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
-						} else {
-							s.nextRid = rid
-							broken = true
-							break
-						}
-					} else {
-						lsn := entry.CommittedCut.Cut[rid]
-						diff := int32(lsn)
-						start := int64(0)
-						if l, ok := s.prevCommittedCut.Cut[rid]; ok {
-							start = l
-							diff = int32(lsn - l)
-						}
-						if diff > 0 {
-							diff := int32(s.quotas[s.nextExpectedWindowNum][rid])
-							s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
-							err := s.storage.Assign(rid-startReplicaID, start, diff, startGSN)
-							if err != nil {
-								log.Errorf("Assign GSN to storage error: %v", err)
-								continue
+					if quota, ok := entry.CommittedCut.ShardQuotas[rid]; ok {
+						if s.windowNumber == -1 {
+							s.windowNumber = entry.CommittedCut.WindowNum
+							s.nextExpectedLocalCutNum = 0
+							s.nextExpectedWindowNum = s.windowNumber
+							s.prevCommittedCut.Cut = make(map[int32]int64)
+							for k, v := range entry.CommittedCut.PrevCut {
+								s.prevCommittedCut.Cut[k] = v
 							}
-							if rid-startReplicaID == s.replicaID {
-								for j := int32(0); j < diff; j++ {
-									s.recordsMu.Lock()
-									record, ok := s.records[start+int64(j)]
-									if ok {
-										delete(s.records, start+int64(j))
-									}
-									s.recordsMu.Unlock()
-									if !ok {
-										log.Errorf("error, not able to find records")
-										continue
-									}
-
-									// reply back to clients only for non-holes
-									if record.ClientID != s.holeID {
-										ack := &datapb.Ack{
-											ClientID:       record.ClientID,
-											ClientSN:       record.ClientSN,
-											ShardID:        s.shardID,
-											LocalReplicaID: s.replicaID,
-											ViewID:         s.viewID,
-											GlobalSN:       startGSN + int64(j),
-										}
-
-										s.ackC <- ack
-									}
-
-									// verify speculated records
-									s.committedRecordsMu.RLock()
-									if r, ok := s.committedRecords[startGSN+int64(j)]; ok {
-										if r.ClientID != record.ClientID || r.ClientSN != record.ClientSN {
-											log.Errorf("error, speculated record does not match")
-											log.Errorf("Speculated record: %v, Actual record: %v, Correct GSN: %v", r, record, startGSN+int64(j))
-										}
-									}
-									s.committedRecordsMu.RUnlock()
-
-									// send record on exposable records channel
-									// record.GlobalSN = startGSN + int64(j)
-									// record.LocalReplicaID = s.replicaID
-									// record.ShardID = s.shardID
-									// record.ViewID = s.viewID
-
-									// s.committedRecordsMu.Lock()
-									// s.committedRecords[startGSN+int64(j)] = record
-									// s.committedRecordsMu.Unlock()
-
-									// s.liveSubscribeC <- record.GlobalSN
-								}
-
-								log.Debugf("Sending confirmations for records %v to %v", startGSN, startGSN+int64(diff)-1)
-								// send a batch of acks for all these records on the spec confirmation channel
-								s.speculationConfC <- &datapb.Record{
-									ClientID:  -1, // mark this as a confirmation record
-									ViewID:    s.views[s.nextExpectedWindowNum],
-									GlobalSN:  startGSN,
-									GlobalSN1: startGSN + int64(diff) - 1,
-								}
-							}
-							startGSN += int64(diff)
-						} else {
-							s.nextRid = rid
-							broken = true
-							break
+							initStartGSN = entry.CommittedCut.WindowStartGSN
+						}
+						// needs to happen before sending the quota
+						s.waitForNewQuota <- quota
+						quotasCopy := make(map[int32]int64)
+						for k, v := range entry.CommittedCut.ShardQuotas {
+							quotasCopy[k] = v
+						}
+						s.nextAssignableWindowAndQuotas <- &WindowAndQuota{
+							windowNum: entry.CommittedCut.WindowNum,
+							quota:     quotasCopy,
+							viewID:    entry.CommittedCut.ViewID,
+							startGSN:  entry.CommittedCut.WindowStartGSN,
 						}
 					}
 				}
-				if broken {
+
+				if entry.CommittedCut.AdjustmentSignal != nil {
+					_, ok := entry.CommittedCut.AdjustmentSignal.Lag[rid]
+					if ok {
+						s.fixLag <- entry.CommittedCut.AdjustmentSignal.Lag[rid]
+					}
+				}
+
+				// we cannot proceed beyond this point if we aren't yet included in any windows
+				if s.windowNumber == -1 {
 					continue
 				} else {
+					// window is assigned but we are not yet included in the window?
+					_, ok := entry.CommittedCut.Cut[rid]
+					if !ok {
+						continue
+					}
+				}
+
+				startReplicaID := s.shardID * s.numReplica
+				startGSN := max(entry.CommittedCut.StartGSN, initStartGSN)
+				// numCuts := int64(0)
+				for {
+					log.Debugf("processing next expected local cut num: %v, next expected window num: %v", s.nextExpectedLocalCutNum, s.nextExpectedWindowNum)
+					log.Debugf("entry.CommittedCut.Cut: %v", entry.CommittedCut.Cut)
+					log.Debugf("prevCommittedCut.Cut: %v", s.prevCommittedCut.Cut)
+					terminate := true
+					for rid, lsn := range entry.CommittedCut.Cut {
+						_, ok := s.prevCommittedCut.Cut[rid]
+						if !ok || lsn != s.prevCommittedCut.Cut[rid] {
+							terminate = false
+							break
+						}
+					}
+					if terminate {
+						break
+					}
+					// compute startGSN using the number of records stored
+					// in shards with smaller ids
+					for rid, lsn := range entry.CommittedCut.Cut {
+						_, ok := s.quotas[s.nextExpectedWindowNum][rid]
+						if !ok {
+							continue
+						}
+						if rid < startReplicaID {
+							diff := lsn
+							if l, ok := s.prevCommittedCut.Cut[rid]; ok {
+								diff = lsn - l
+							}
+							if diff > 0 {
+								startGSN += s.quotas[s.nextExpectedWindowNum][rid]
+							}
+						}
+					}
+					_, ok := s.quotas[s.nextExpectedWindowNum][startReplicaID]
+					if ok {
+						// assign gsn to records in my shard
+						for i := int32(0); i < s.numReplica; i++ {
+							rid := startReplicaID + i
+							lsn := entry.CommittedCut.Cut[rid]
+							diff := int32(lsn)
+							start := int64(0)
+							if l, ok := s.prevCommittedCut.Cut[rid]; ok {
+								start = l
+								diff = int32(lsn - l)
+							}
+							if diff > 0 {
+								diff := int32(s.quotas[s.nextExpectedWindowNum][rid])
+								err := s.storage.Assign(i, start, diff, startGSN)
+								if err != nil {
+									log.Errorf("Assign GSN to storage error: %v", err)
+									continue
+								}
+								if i == s.replicaID {
+									for j := int32(0); j < diff; j++ {
+										s.recordsMu.Lock()
+										record, ok := s.records[start+int64(j)]
+										if ok {
+											delete(s.records, start+int64(j))
+										}
+										s.recordsMu.Unlock()
+										if !ok {
+											log.Errorf("error, not able to find records")
+											continue
+										}
+
+										// reply back to clients only for non-holes
+										if record.ClientID != s.holeID {
+											ack := &datapb.Ack{
+												ClientID:       record.ClientID,
+												ClientSN:       record.ClientSN,
+												ShardID:        s.shardID,
+												LocalReplicaID: s.replicaID,
+												ViewID:         s.viewID,
+												GlobalSN:       startGSN + int64(j),
+											}
+
+											s.ackC <- ack
+										}
+
+										// verify speculated records
+										s.committedRecordsMu.RLock()
+										if r, ok := s.committedRecords[startGSN+int64(j)]; ok {
+											if r.ClientID != record.ClientID || r.ClientSN != record.ClientSN {
+												log.Errorf("error, speculated record does not match")
+												log.Errorf("Speculated record: %v, Actual record: %v, Correct GSN: %v", r, record, startGSN+int64(j))
+											}
+										}
+										s.committedRecordsMu.RUnlock()
+
+										// send record on exposable records channel
+										// record.GlobalSN = startGSN + int64(j)
+										// record.LocalReplicaID = s.replicaID
+										// record.ShardID = s.shardID
+										// record.ViewID = s.viewID
+
+										// s.committedRecordsMu.Lock()
+										// s.committedRecords[startGSN+int64(j)] = record
+										// s.committedRecordsMu.Unlock()
+
+										// s.liveSubscribeC <- record.GlobalSN
+									}
+
+									log.Debugf("Sending confirmations for records %v to %v", startGSN, startGSN+int64(diff)-1)
+									// send a batch of acks for all these records on the spec confirmation channel
+									s.speculationConfC <- &datapb.Record{
+										ClientID:  -1, // mark this as a confirmation record
+										ViewID:    s.views[s.nextExpectedWindowNum],
+										GlobalSN:  startGSN,
+										GlobalSN1: startGSN + int64(diff) - 1,
+									}
+								}
+								startGSN += int64(diff)
+							}
+						}
+					}
+
+					for rid, lsn := range entry.CommittedCut.Cut {
+						_, ok := s.quotas[s.nextExpectedWindowNum][rid]
+						if !ok {
+							continue
+						}
+						if rid > startReplicaID+s.numReplica-1 {
+							diff := lsn
+							if l, ok := s.prevCommittedCut.Cut[rid]; ok {
+								diff = lsn - l
+							}
+							if diff > 0 {
+								startGSN += s.quotas[s.nextExpectedWindowNum][rid]
+							}
+						}
+					}
+
+					// update previous committed cut's cut portion
+					for rid := range entry.CommittedCut.Cut {
+						if s.prevCommittedCut.Cut == nil {
+							s.prevCommittedCut.Cut = make(map[int32]int64)
+						}
+						if _, ok := s.quotas[s.nextExpectedWindowNum][rid]; ok {
+							s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
+						}
+					}
+
 					// update next expected local cut number and window
 					s.nextExpectedLocalCutNum = s.nextExpectedLocalCutNum + 1
 					if s.nextExpectedLocalCutNum == s.numLocalCutsThreshold {
 						s.nextExpectedLocalCutNum = 0
 						s.nextExpectedWindowNum = s.nextExpectedWindowNum + 1
 					}
-					s.nextRid = -1
+
+					// numCuts++
 				}
-				// numCuts++
-			}
 
-			// for i := 0; i < int(numCuts); i++ {
-			// 	<-s.outstandingCuts
-			// }
+				// for i := 0; i < int(numCuts); i++ {
+				// 	<-s.outstandingCuts
+				// }
 
-			// update stats for cuts
-			nextCommittedCutNum := s.nextExpectedWindowNum*s.numLocalCutsThreshold + s.nextExpectedLocalCutNum
-			timeStamp := time.Now()
-			s.cutTimeStartMutex.Lock()
-			for cutId, time := range s.cutTimeStart {
-				if cutId < nextCommittedCutNum {
-					s.stats.timeToOrderCut.Add(float64(timeStamp.Sub(time).Nanoseconds()))
-					delete(s.cutTimeStart, cutId)
+				// update stats for cuts
+				nextCommittedCutNum := s.nextExpectedWindowNum*s.numLocalCutsThreshold + s.nextExpectedLocalCutNum
+				timeStamp := time.Now()
+				s.cutTimeStartMutex.Lock()
+				for cutId, time := range s.cutTimeStart {
+					if cutId < nextCommittedCutNum {
+						s.stats.timeToOrderCut.Add(float64(timeStamp.Sub(time).Nanoseconds()))
+						delete(s.cutTimeStart, cutId)
+					}
 				}
+				s.cutTimeStartMutex.Unlock()
+
+				// replace previous committed cut
+				s.prevCommittedCut = entry.CommittedCut
+
+				s.stats.timeToComputeCommittedCutNs += time.Since(startTime).Nanoseconds()
+				s.stats.numCommittedCuts++
 			}
-			s.cutTimeStartMutex.Unlock()
-
-			// replace previous committed cut
-			s.prevCommittedCut = entry.CommittedCut
-
-			s.stats.timeToComputeCommittedCutNs += time.Since(startTime).Nanoseconds()
-			s.stats.numCommittedCuts++
+			if entry.FinalizeShards != nil { //nolint
+				// TODO
+			}
 		}
-		if entry.FinalizeShards != nil { //nolint
-			// TODO
+	} else {
+		initStartGSN := int64(-1)
+		for entry := range s.committedEntryC {
+			if entry.CommittedCut != nil {
+				log.Debugf("Processing committed cut: %v", entry.CommittedCut)
+				startTime := time.Now()
+				// update quota if new quota is received
+				rid := s.shardID*s.numReplica + s.replicaID
+				if entry.CommittedCut.IsShardQuotaUpdated {
+					_, quotaExists := s.quotas[entry.CommittedCut.WindowNum]
+					if !quotaExists {
+						s.quotas[entry.CommittedCut.WindowNum] = entry.CommittedCut.ShardQuotas
+						replicaList := make([]int32, 0)
+						for k := range entry.CommittedCut.ShardQuotas {
+							replicaList = append(replicaList, k)
+						}
+						sort.Slice(replicaList, func(i, j int) bool {
+							return replicaList[i] < replicaList[j]
+						})
+						s.sortedReplicaList[entry.CommittedCut.WindowNum] = replicaList
+						s.views[entry.CommittedCut.WindowNum] = entry.CommittedCut.ViewID
+					}
+					if quota, ok := entry.CommittedCut.ShardQuotas[rid]; ok {
+						if s.windowNumber == -1 {
+							s.windowNumber = entry.CommittedCut.WindowNum
+							s.nextExpectedLocalCutNum = 0
+							s.nextExpectedWindowNum = s.windowNumber
+							s.prevCommittedCut.Cut = make(map[int32]int64)
+							for k, v := range entry.CommittedCut.PrevCut {
+								s.prevCommittedCut.Cut[k] = v
+							}
+							initStartGSN = entry.CommittedCut.WindowStartGSN
+						}
+						// needs to happen before sending the quota
+						s.waitForNewQuota <- quota
+						quotasCopy := make(map[int32]int64)
+						for k, v := range entry.CommittedCut.ShardQuotas {
+							quotasCopy[k] = v
+						}
+						s.nextAssignableWindowAndQuotas <- &WindowAndQuota{
+							windowNum: entry.CommittedCut.WindowNum,
+							quota:     quotasCopy,
+							viewID:    entry.CommittedCut.ViewID,
+							startGSN:  entry.CommittedCut.WindowStartGSN,
+						}
+					}
+				}
+
+				if entry.CommittedCut.AdjustmentSignal != nil {
+					_, ok := entry.CommittedCut.AdjustmentSignal.Lag[rid]
+					if ok {
+						s.fixLag <- entry.CommittedCut.AdjustmentSignal.Lag[rid]
+					}
+				}
+
+				// we cannot proceed beyond this point if we aren't yet included in any windows
+				if s.windowNumber == -1 {
+					continue
+				} else {
+					// window is assigned but we are not yet included in the window?
+					_, ok := entry.CommittedCut.Cut[rid]
+					if !ok {
+						continue
+					}
+				}
+
+				startReplicaID := s.shardID * s.numReplica
+				startGSN := max(entry.CommittedCut.StartGSN, initStartGSN)
+				// numCuts := int64(0)
+				for {
+					log.Debugf("processing next expected local cut num: %v, next expected window num: %v", s.nextExpectedLocalCutNum, s.nextExpectedWindowNum)
+					log.Debugf("entry.CommittedCut.Cut: %v", entry.CommittedCut.Cut)
+					log.Debugf("prevCommittedCut.Cut: %v", s.prevCommittedCut.Cut)
+					terminate := true
+					for rid, lsn := range entry.CommittedCut.Cut {
+						_, ok := s.prevCommittedCut.Cut[rid]
+						if !ok || lsn != s.prevCommittedCut.Cut[rid] {
+							terminate = false
+							break
+						}
+					}
+					if terminate {
+						break
+					}
+
+					broken := false
+					for _, rid := range s.sortedReplicaList[s.nextExpectedWindowNum] {
+						if s.nextRid != -1 && rid < s.nextRid {
+							continue
+						}
+						lsn := entry.CommittedCut.Cut[rid]
+						if rid < startReplicaID || rid >= startReplicaID+s.numReplica {
+							diff := lsn
+							if l, ok := s.prevCommittedCut.Cut[rid]; ok {
+								diff = lsn - l
+							}
+							if diff > 0 {
+								startGSN += s.quotas[s.nextExpectedWindowNum][rid]
+								s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
+							} else {
+								s.nextRid = rid
+								broken = true
+								break
+							}
+						} else {
+							lsn := entry.CommittedCut.Cut[rid]
+							diff := int32(lsn)
+							start := int64(0)
+							if l, ok := s.prevCommittedCut.Cut[rid]; ok {
+								start = l
+								diff = int32(lsn - l)
+							}
+							if diff > 0 {
+								diff := int32(s.quotas[s.nextExpectedWindowNum][rid])
+								s.prevCommittedCut.Cut[rid] += s.quotas[s.nextExpectedWindowNum][rid]
+								err := s.storage.Assign(rid-startReplicaID, start, diff, startGSN)
+								if err != nil {
+									log.Errorf("Assign GSN to storage error: %v", err)
+									continue
+								}
+								if rid-startReplicaID == s.replicaID {
+									for j := int32(0); j < diff; j++ {
+										s.recordsMu.Lock()
+										record, ok := s.records[start+int64(j)]
+										if ok {
+											delete(s.records, start+int64(j))
+										}
+										s.recordsMu.Unlock()
+										if !ok {
+											log.Errorf("error, not able to find records")
+											continue
+										}
+
+										// reply back to clients only for non-holes
+										if record.ClientID != s.holeID {
+											ack := &datapb.Ack{
+												ClientID:       record.ClientID,
+												ClientSN:       record.ClientSN,
+												ShardID:        s.shardID,
+												LocalReplicaID: s.replicaID,
+												ViewID:         s.viewID,
+												GlobalSN:       startGSN + int64(j),
+											}
+
+											s.ackC <- ack
+										}
+
+										// verify speculated records
+										s.committedRecordsMu.RLock()
+										if r, ok := s.committedRecords[startGSN+int64(j)]; ok {
+											if r.ClientID != record.ClientID || r.ClientSN != record.ClientSN {
+												log.Errorf("error, speculated record does not match")
+												log.Errorf("Speculated record: %v, Actual record: %v, Correct GSN: %v", r, record, startGSN+int64(j))
+											}
+										}
+										s.committedRecordsMu.RUnlock()
+
+										// send record on exposable records channel
+										// record.GlobalSN = startGSN + int64(j)
+										// record.LocalReplicaID = s.replicaID
+										// record.ShardID = s.shardID
+										// record.ViewID = s.viewID
+
+										// s.committedRecordsMu.Lock()
+										// s.committedRecords[startGSN+int64(j)] = record
+										// s.committedRecordsMu.Unlock()
+
+										// s.liveSubscribeC <- record.GlobalSN
+									}
+
+									log.Debugf("Sending confirmations for records %v to %v", startGSN, startGSN+int64(diff)-1)
+									// send a batch of acks for all these records on the spec confirmation channel
+									s.speculationConfC <- &datapb.Record{
+										ClientID:  -1, // mark this as a confirmation record
+										ViewID:    s.views[s.nextExpectedWindowNum],
+										GlobalSN:  startGSN,
+										GlobalSN1: startGSN + int64(diff) - 1,
+									}
+								}
+								startGSN += int64(diff)
+							} else {
+								s.nextRid = rid
+								broken = true
+								break
+							}
+						}
+					}
+					if broken {
+						continue
+					} else {
+						// update next expected local cut number and window
+						s.nextExpectedLocalCutNum = s.nextExpectedLocalCutNum + 1
+						if s.nextExpectedLocalCutNum == s.numLocalCutsThreshold {
+							s.nextExpectedLocalCutNum = 0
+							s.nextExpectedWindowNum = s.nextExpectedWindowNum + 1
+						}
+						s.nextRid = -1
+					}
+					// numCuts++
+				}
+
+				// for i := 0; i < int(numCuts); i++ {
+				// 	<-s.outstandingCuts
+				// }
+
+				// update stats for cuts
+				nextCommittedCutNum := s.nextExpectedWindowNum*s.numLocalCutsThreshold + s.nextExpectedLocalCutNum
+				timeStamp := time.Now()
+				s.cutTimeStartMutex.Lock()
+				for cutId, time := range s.cutTimeStart {
+					if cutId < nextCommittedCutNum {
+						s.stats.timeToOrderCut.Add(float64(timeStamp.Sub(time).Nanoseconds()))
+						delete(s.cutTimeStart, cutId)
+					}
+				}
+				s.cutTimeStartMutex.Unlock()
+
+				// replace previous committed cut
+				s.prevCommittedCut = entry.CommittedCut
+
+				s.stats.timeToComputeCommittedCutNs += time.Since(startTime).Nanoseconds()
+				s.stats.numCommittedCuts++
+			}
+			if entry.FinalizeShards != nil { //nolint
+				// TODO
+			}
 		}
 	}
 }

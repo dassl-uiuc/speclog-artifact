@@ -9,6 +9,7 @@ num_shards=$1
 if [ "$num_shards" -gt 3 ]; then 
     # switch to the staggered version 
     sed -i 's/const staggeringFactor int64 = -1/const staggeringFactor int64 = 2/' ../../order/order_server.go
+    sed -i 's/const staggeringFactor int64 = -1/const staggeringFactor int64 = 2/' ../../data/data_server.go
 
     pushd $benchmark_dir/../ 
     go build
@@ -89,7 +90,7 @@ done
 if [ "$num_shards" -gt 3 ]; then 
     # switch to the staggered version 
     sed -i 's/const staggeringFactor int64 = 2/const staggeringFactor int64 = -1/' ../../order/order_server.go
-
+    sed -i 's/const staggeringFactor int64 = 2/const staggeringFactor int64 = -1/' ../../data/data_server.go
     pushd $benchmark_dir/../ 
     go build
     popd 

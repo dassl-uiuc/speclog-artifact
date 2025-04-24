@@ -23,7 +23,7 @@ const qcEnabled bool = true
 const lagfixEnabled bool = true
 const slowShardExpt bool = false
 const lagfixThres float64 = 0.03
-const staggeringFactor int64 = 2
+const staggeringFactor int64 = -1
 
 func (s *OrderServer) getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)
