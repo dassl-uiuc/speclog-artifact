@@ -84,3 +84,16 @@ do
         rm -rf $benchmark_dir/results/$interval
     done
 done 
+
+
+if [ "$num_shards" -gt 3 ]; then 
+    # switch to the staggered version 
+    sed -i 's/const staggeringFactor int64 = 2/const staggeringFactor int64 = -1/' ../../order/order_server.go
+
+    pushd $benchmark_dir/../ 
+    go build
+    popd 
+
+    # wait for NFS to sync
+    sleep 5 
+fi 
