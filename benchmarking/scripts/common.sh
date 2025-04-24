@@ -8,12 +8,33 @@ LOGDIR="/data"
 order=("node0" "node1" "node2")
 
 # index into remote_nodes/ips for data shards
-data_pri=("node3" "node5" "node7" "node9" "node11")
-data_sec=("node4" "node6" "node8" "node10" "node12")
+if [ "$five_shard" = "true" ]; then 
+    data_pri=("node3" "node5" "node7" "node9" "node11")
+    data_sec=("node4" "node6" "node8" "node10" "node12")
 
-client_nodes=("node13" "node14" "node15")
+    client_nodes=("node13" "node14" "node15")
+    
+    run_server_suffix="13"
+    run_client_suffix="3"
+elif [ "$apps" = "true" ]; then 
+    data_pri=("node3" "node5")
+    data_sec=("node4" "node6")
+
+    client_nodes=("node13" "node14")
+    
+    run_server_suffix="7"
+    run_client_suffix="2"
+else 
+    data_pri=("node3" "node5" "node7" "node9")
+    data_sec=("node4" "node6" "node8" "node10")
+
+    client_nodes=("node13" "node14" "node15" "node12")
+    run_server_suffix="11"
+    run_client_suffix="4"
+fi 
 intrusion_detection_dir="../../applications/vanilla_applications/intrusion_detection"
 transaction_analysis_dir="../../applications/vanilla_applications/transaction_analysis"
+hft_dir="../../applications/vanilla_applications/hft"
 
 batching_intervals=("1ms")
 
@@ -24,27 +45,42 @@ modify_batching_intervals() {
 
 clear_server_logs() {
     # mount storage and clear existing logs if any
-    ./run_script_on_servers.sh ./setup_disk.sh
+    ./run_script_on_servers.sh ./setup_disk.sh ${run_server_suffix}
 }
 
 clear_client_logs() {
     # mount storage and clear existing logs if any
-    ./run_script_on_clients.sh ./setup_disk.sh
-    ./run_script_on_clients.sh ./client_tmp_clear.sh
+    ./run_script_on_clients.sh ./setup_disk.sh ${run_client_suffix}
+    ./run_script_on_clients.sh ./client_tmp_clear.sh ${run_client_suffix}
 }
 
 cleanup_servers() {
     # kill existing servers
-    ./run_script_on_servers.sh ./kill_all_goreman.sh
+    ./run_script_on_servers.sh ./kill_all_goreman.sh ${run_server_suffix}
 }
 
 cleanup_clients() {
     # kill existing clients
-    ./run_script_on_clients.sh ./kill_all_benchmark.sh
+    ./run_script_on_clients.sh ./kill_all_benchmark.sh ${run_client_suffix}
 }
 
 drop_server_caches() {
-    ./run_script_on_servers.sh ./drop_caches.sh
+    ./run_script_on_servers.sh ./drop_caches.sh ${run_server_suffix}
+}
+
+set_bool_variable_in_file() {
+    local file="$1"
+    local var="$2"
+    local value="$3"
+
+    if [[ ! -f "$file" ]]; then
+        echo "File '$file' does not exist."
+        return 1
+    fi
+
+    echo "Setting $var to $value in $file"
+
+    sed -i -E "s/^const[[:space:]]+$var[[:space:]]+bool[[:space:]]*=[[:space:]]*(true|false)/const $var bool = $value/" "$file"
 }
 
 collect_logs() {
@@ -126,6 +162,12 @@ start_e2e_clients() {
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run single_client_e2e.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1_$4.log 2>&1" &
 }
 
+# args: client node, computation time, runtime secs, shardId, numAppenders, filepath
+start_straggler_clients() {
+    go_path="/usr/local/go/bin/go"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run straggler.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1_$4.log 2>&1" &
+}
+
 # args: client node, computation time, runtime secs, new client runtime (s1), numAppendersPerShard, filepath, withConsumer
 start_reconfig_clients() {
     go_path="/usr/local/go/bin/go"
@@ -138,10 +180,22 @@ start_qc_clients() {
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run quota_change.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1_$3_$5.log 2>&1" &
 }
 
+# args: client node, runtime secs, numAppendersPerShard, new client join time, computation time, filepath
+start_qc_e2e_clients() {
+    go_path="/usr/local/go/bin/go"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run quota_change_e2e.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1.log 2>&1" &
+}
+
 # args: client node, runtime secs, shardId, numAppenders, filepath
 start_lagfix_clients() {
     go_path="/usr/local/go/bin/go"
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run lagfix.go $2 $3 $4 $5 > ${LOGDIR}/client_$1_$3.log 2>&1" &
+}
+
+# args: client node, runtime secs, numAppendersPerShard, computationTime, filepath
+start_lagfix_e2e_clients() {
+    go_path="/usr/local/go/bin/go"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run lagfix_e2e.go $2 $3 $4 $5 > ${LOGDIR}/client_$1.log 2>&1" &
 }
 
 start_random_read_clients() {
@@ -200,4 +254,12 @@ start_transaction_analysis_clients() {
 
 start_transaction_analysis_generator_clients() {
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $transaction_analysis_dir/transaction_analysis_generator_client.sh $1 $2 $3 $4 $5 > ${LOGDIR}/client_writer_$1_$5.log 2>&1" &
+}
+
+start_hft_clients() {
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $hft_dir/hft_client.sh $1 $2 $3 $4 > ${LOGDIR}/client_reader_$1_$4.log 2>&1" &
+}
+
+start_hft_generator_clients() {
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; sudo $hft_dir/hft_generator_client.sh $1 $2 $3 $4 $5 > ${LOGDIR}/client_writer_$1_$5.log 2>&1" &
 }

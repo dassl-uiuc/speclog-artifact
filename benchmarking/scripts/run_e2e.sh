@@ -9,7 +9,7 @@ computation_time=(1200)
 # num_shards=(1 2 3 4 5)
 num_shards=(4)
 
-for computation_time in "${computation_time[@]}";
+for ct in "${computation_time[@]}";
 do 
     for shards in "${num_shards[@]}";
     do 
@@ -25,7 +25,7 @@ do
         sleep 5
         num_clients=$((2*$shards))
         for (( i = 0; i < $num_clients; i++ )); do
-            start_e2e_clients ${client_nodes[i % ${#client_nodes[@]}]} $computation_time $runtime_secs $i 10 $benchmark_dir/logs/
+            start_e2e_clients ${client_nodes[i % ${#client_nodes[@]}]} $ct $runtime_secs $i 10 $benchmark_dir/logs/
         done
         echo "Waiting for clients to terminate"
 
@@ -36,8 +36,8 @@ do
         collect_logs $shards
 
         # move logs to a different folder
-        mkdir -p "$benchmark_dir/results/e2e_${computation_time}_${shards}"
-        mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e_${computation_time}_${shards}"
+        mkdir -p "$benchmark_dir/results/e2e_${ct}_${shards}"
+        mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e_${ct}_${shards}"
     done 
 done
 

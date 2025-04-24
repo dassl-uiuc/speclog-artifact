@@ -21,10 +21,11 @@ const qcExpt bool = false
 const lagfixExpt bool = false
 const qcEnabled bool = true
 const lagfixEnabled bool = true
+const slowShardExpt bool = false
 const lagfixThres float64 = 0.03
 const staggeringFactor int64 = 2
 
-func getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
+func (s *OrderServer) getLowestWindowNum(lcs map[int32]*orderpb.LocalCut) int64 {
 	lowestWindowNum := int64(math.MaxInt64)
 	for _, lc := range lcs {
 		if lc.WindowNum < lowestWindowNum {
@@ -45,6 +46,10 @@ func (s *OrderServer) getLowestLocalCutNum(lcs map[int32]*orderpb.LocalCut, wind
 
 	for rid := range s.quota[windowNum] {
 		lc, ok := lcs[rid]
+		if s.quota[windowNum][rid] == 0 {
+			// this replica is grounded, skip
+			continue
+		}
 		if !ok || lc.WindowNum < windowNum {
 			// if any replica has not reached the window yet, return math.MaxInt64
 			return math.MaxInt64
@@ -167,6 +172,7 @@ type OrderServer struct {
 	processWindow           int64           // window number till which quota has been processed
 	prevCutTime             map[int32]time.Time
 	startCommittedCut       map[int32]int64
+	replicasGrounded        map[int32]int64 // replicas that have been grounded, and how many remaining windows they are to be grounded for
 	// stats
 	stats Stats
 
@@ -175,6 +181,16 @@ type OrderServer struct {
 	prevLowestWindowNum   int64
 	prevLowestLocalCutNum int64
 	prevSeqReached        int64
+
+	slowShardDetection map[int32]SlowShardMeta
+
+	// saved lcs for grounded replicas
+	savedLcs map[int32]*orderpb.LocalCut
+}
+
+type SlowShardMeta struct {
+	lastDetected time.Time
+	count        int64
 }
 
 // fraction of the local cut window at which quota change decisions are made for a shard
@@ -222,6 +238,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.prevLowestLocalCutNum = s.localCutChangeWindow - 1
 	s.prevSeqReached = 0
 	s.sortedReplicaList = make(map[int64][]int32)
+	s.replicasGrounded = make(map[int32]int64)
 
 	s.rnConfChangeC = make(chan raftpb.ConfChange)
 	s.rnProposeC = make(chan string)
@@ -239,7 +256,7 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.stats = Stats{}
 	s.stats.RealTimeTput.IsHole = false
 	s.stats.RealTimeTotalTput.IsHole = true
-	if reconfigExpt || qcExpt {
+	if reconfigExpt || qcExpt || slowShardExpt {
 		go s.stats.RealTimeTput.LoggerThread()
 		go s.stats.RealTimeTotalTput.LoggerThread()
 		s.stats.holesFilled = make(map[int32](map[int64]int64))
@@ -247,6 +264,8 @@ func NewOrderServer(index, numReplica, dataNumReplica int32, batchingInterval ti
 	s.stats.numLagFixes = make(map[int32]int64)
 	s.stats.numCutsCommited = make(map[int64]int64)
 	s.lastLag = make(map[int32]int64)
+	s.slowShardDetection = make(map[int32]SlowShardMeta)
+	s.savedLcs = make(map[int32]*orderpb.LocalCut)
 	return s
 }
 
@@ -315,7 +334,13 @@ func (s *OrderServer) isReadyToAssignQuota() bool {
 	if s.assignWindow == 0 {
 		return len(s.replicasInReserve) >= 2
 	}
-	return s.numQuotaChanged == int64(len(s.quota[s.assignWindow-1]))
+	lenNonZero := 0
+	for _, q := range s.quota[s.assignWindow-1] {
+		if q != 0 {
+			lenNonZero++
+		}
+	}
+	return s.numQuotaChanged == int64(lenNonZero)
 }
 
 // this function finds the amount of lag in the cuts across all replicas
@@ -335,6 +360,44 @@ func (s *OrderServer) getLags(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
 		lags[rid] = highestCut - cutNum
 	}
 	return lags
+}
+
+func (s *OrderServer) updateSlowShard(rid int32, delta float64) {
+	meta, ok := s.slowShardDetection[rid]
+	if delta > 4*float64(s.batchingInterval.Nanoseconds()) {
+		if !ok {
+			s.slowShardDetection[rid] = SlowShardMeta{count: 1}
+		} else {
+			s.slowShardDetection[rid] = SlowShardMeta{
+				count: meta.count + 1,
+			}
+		}
+	} else {
+		// not consecutive
+		if ok {
+			s.slowShardDetection[rid] = SlowShardMeta{
+				count: 0,
+			}
+		}
+	}
+}
+
+func (s *OrderServer) getSlowShards(slowShards map[int32]bool) bool {
+	for rid, meta := range s.slowShardDetection {
+		// If the shard has been consistently slow and is not in cooldown
+		if meta.count > 3 && time.Since(meta.lastDetected) >= 2*time.Second {
+			// Mark the shard as slow
+			slowShards[rid] = true
+
+			// Reset detection count and update cooldown time
+			s.slowShardDetection[rid] = SlowShardMeta{
+				count:        0,
+				lastDetected: time.Now(),
+			}
+		}
+	}
+
+	return len(slowShards) > 0
 }
 
 // logs the avg lag in cuts and returns true if there is a significant lag in the cuts
@@ -379,14 +442,16 @@ func (s *OrderServer) getNumHolesCommitted(lowestWindowNum int64, lowestLocalCut
 	numHolesCommitted := int64(0)
 	for i := prevCutIndex + 1; i <= currCutIndex; i++ {
 		currentWindow := i / s.localCutChangeWindow
-		for rid := range s.quota[currentWindow] {
-			if _, ok := s.stats.holesFilled[rid]; !ok {
-				log.Errorf("err, cannot happen")
+		for rid, q := range s.quota[currentWindow] {
+			if q != 0 {
+				if _, ok := s.stats.holesFilled[rid]; !ok {
+					log.Errorf("err, cannot happen")
+				}
+				if _, ok := s.stats.holesFilled[rid][i]; !ok {
+					log.Errorf("err, cannot happen")
+				}
+				numHolesCommitted += s.stats.holesFilled[rid][i]
 			}
-			if _, ok := s.stats.holesFilled[rid][i]; !ok {
-				log.Errorf("err, cannot happen")
-			}
-			numHolesCommitted += s.stats.holesFilled[rid][i]
 		}
 	}
 	return numHolesCommitted
@@ -414,7 +479,7 @@ func (s *OrderServer) getNumSeqReached(localCutNum int64, windowNum int64, lcs m
 
 func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[int32]int64 {
 	// find lowest numbered window across all replicas
-	lowestWindowNum := getLowestWindowNum(lcs)
+	lowestWindowNum := s.getLowestWindowNum(lcs)
 
 	if lowestWindowNum == math.MaxInt64 {
 		return s.prevCut
@@ -441,8 +506,6 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 					if cut.Cut[localReplicaID] > 0 {
 						chosen = s.adjustToMinimums(rid, cut, lowestWindowNum, lowestLocalCutNum)
 					}
-				} else {
-					chosen = int64(0)
 				}
 			}
 			ccut[rid] = chosen
@@ -471,6 +534,13 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		s.stats.numCutsCommited[validCommitLen]++
 	}
 
+	for rid, q := range s.quota[lowestWindowNum] {
+		if q == 0 {
+			// this is a grounded replica, set its committed cut to the prev value
+			ccut[rid] = s.prevCut[rid]
+		}
+	}
+
 	// check if lcs num is equal to localCutChangeWindow-1
 	// If so we can clear some state
 	removableReplicas := make([]int32, 0)
@@ -490,6 +560,23 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 		}
 	}
 
+	groundedReplicas := make([]int32, 0)
+	// remove replicas from lcs if they have been grounded and they have sent everything for the previous windows
+	for rid, lc := range lcs {
+		if lowestWindowNum == lc.WindowNum && lowestLocalCutNum == s.localCutChangeWindow-1 && s.quota[lowestWindowNum+1][rid] == 0 {
+			groundedReplicas = append(groundedReplicas, rid)
+			s.savedLcs[rid] = lc
+		}
+	}
+
+	// remove grounded replicas from lcs
+	for _, rid := range groundedReplicas {
+		delete(lcs, rid)
+		if slowShardExpt {
+			log.Printf("Replica %v grounded and hence removed from lcs", rid)
+		}
+	}
+
 	for _, rid := range removableReplicas {
 		delete(s.avgHoles, rid)
 		delete(s.avgDelta, rid)
@@ -502,7 +589,7 @@ func (s *OrderServer) computeCommittedCut(lcs map[int32]*orderpb.LocalCut) map[i
 
 	// uncomment for reconfig expt
 	// update records stat
-	if reconfigExpt || qcExpt {
+	if reconfigExpt || qcExpt || slowShardExpt {
 		totalCommitted := s.computeCutDiff(s.prevCut, ccut)
 		holesCommitted := s.getNumHolesCommitted(lowestWindowNum, lowestLocalCutNum)
 		s.stats.RealTimeTput.Add(totalCommitted - holesCommitted)
@@ -565,6 +652,7 @@ func (s *OrderServer) evalCommittedCut(lcs map[int32]*orderpb.LocalCut) {
 		vid := atomic.LoadInt32(&s.viewID)
 		var ce *orderpb.CommittedEntry
 
+		var forceCloseWindow bool = false
 		if s.isReadyToAssignQuota() {
 			if s.assignWindow != 0 {
 				s.stats.timeToDecideQuota += time.Since(s.stats.quotaStartTime).Nanoseconds()
@@ -583,6 +671,28 @@ func (s *OrderServer) evalCommittedCut(lcs map[int32]*orderpb.LocalCut) {
 			// assign quota to replicas in reserve
 			for rid, q := range s.replicasInReserve {
 				s.quota[s.assignWindow][rid] = q
+			}
+
+			// check if any replica has to be grounded
+			for rid, remaining := range s.replicasGrounded {
+				if remaining == 0 {
+					delete(s.replicasGrounded, rid)
+					log.Printf("ungrounding replica %v", rid)
+					s.quota[s.assignWindow][rid] = 1 // mark ungrounded replicas with 1 quota, they have to earn it back
+					// catch up the local cut number and window number for the grounded replica
+					lcs[rid] = s.savedLcs[rid]
+					delete(s.savedLcs, rid)
+					lcs[rid].LocalCutNum = s.localCutChangeWindow - 1
+					lcs[rid].WindowNum = s.assignWindow - 1
+				} else {
+					s.replicasGrounded[rid] = remaining - 1
+					log.Printf("replica %v grounded for %v windows", rid, remaining-1)
+					s.quota[s.assignWindow][rid] = 0 // mark grounded replicas with 0 quota
+					// if not currently grounded, ask everybody to close out window
+					if s.quota[s.assignWindow-1][rid] != 0 {
+						forceCloseWindow = true
+					}
+				}
 			}
 
 			shardsFinalized := false
@@ -693,8 +803,27 @@ func (s *OrderServer) evalCommittedCut(lcs map[int32]*orderpb.LocalCut) {
 					}
 					ce.CommittedCut.AdjustmentSignal = &orderpb.Control{}
 					s.getSignificantLags(&lags)
+					if forceCloseWindow {
+						for rid := range s.quota[s.assignWindow-2] {
+							lags[rid] = s.diff(s.localCutChangeWindow-1, s.assignWindow-2, lcs[rid].LocalCutNum, lcs[rid].WindowNum)
+						}
+						log.Printf("force closing window: %v", lags)
+					}
 					ce.CommittedCut.AdjustmentSignal.Lag = lags
 					s.lastLag = lags
+				}
+			}
+		}
+
+		if slowShardExpt {
+			slowShards := make(map[int32]bool)
+			if s.getSlowShards(slowShards) {
+				for rid := range slowShards {
+					_, ok := s.replicasGrounded[rid]
+					if !ok {
+						log.Printf("slow shard: %v, being grounded for 5 window", rid/s.dataNumReplica)
+						s.replicasGrounded[rid] = 5
+					}
 				}
 			}
 		}
@@ -732,7 +861,7 @@ func (s *OrderServer) processReport() {
 						}
 					}
 					if valid {
-						if lagfixExpt || qcExpt {
+						if lagfixExpt || qcExpt || slowShardExpt {
 							log.Printf("%v", lc)
 						}
 						if !e.FixingLag {
@@ -740,6 +869,9 @@ func (s *OrderServer) processReport() {
 							if _, ok := s.lastCutTime[id]; ok {
 								numCuts := s.diff(lc.LocalCutNum, lc.WindowNum, lcs[id].LocalCutNum, lcs[id].WindowNum)
 								s.avgDelta[id].Add(float64(time.Since(s.lastCutTime[id]).Nanoseconds()) / float64(numCuts))
+								if slowShardExpt {
+									s.updateSlowShard(id, float64(time.Since(s.lastCutTime[id]).Nanoseconds())/float64(numCuts))
+								}
 							}
 							s.lastCutTime[id] = time.Now()
 						}
@@ -766,7 +898,7 @@ func (s *OrderServer) processReport() {
 
 						lcs[id] = lc
 
-						if reconfigExpt || qcExpt {
+						if reconfigExpt || qcExpt || slowShardExpt {
 							// update hole stats
 							if _, ok := s.stats.holesFilled[id]; !ok {
 								s.stats.holesFilled[id] = make(map[int64]int64)
@@ -777,7 +909,7 @@ func (s *OrderServer) processReport() {
 				}
 
 				// try to see if I can commit a cut
-				lowestWindowNum := getLowestWindowNum(lcs)
+				lowestWindowNum := s.getLowestWindowNum(lcs)
 				if lowestWindowNum == math.MaxInt64 {
 					continue
 				}

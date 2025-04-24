@@ -24,10 +24,14 @@ const reconfigExpt bool = false
 const lagfixExpt bool = false
 const qcExpt bool = false
 const qcEnabled bool = true
+const slowShardExpt bool = false
 
 var qcBurstLSN int64 = -1
 var qcBurstLocalCutNumber int64 = -1
 var qcBurstWindowNumber int64 = -1
+
+var slowReportLocalCutNumber int64 = -1
+var slowReportWindowNumber int64 = -1
 
 type clientSubscriber struct {
 	state    clientSubscriberState
@@ -213,6 +217,9 @@ type DataServer struct {
 	// this is needed in case the confirmation records are accessible before the actual records have been speculated on
 	// in such a case we buffer the confirmation records in the subsequent array @confirmationRecords and send them only after the actual records have been submitted to the clients
 	confirmationRecords map[int64]*datapb.Record
+
+	// if this is turned on, i will report very slowly to the ordering layer
+	slowReports bool
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -263,6 +270,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.sortedReplicaList = make(map[int64][]int32)
 	s.views = make(map[int64]int32)
 	s.nextRid = -1
+	s.slowReports = false
 	// s.outstandingCuts = make(chan bool, 2)
 
 	s.quota = 10
@@ -650,23 +658,30 @@ func (s *DataServer) processSingleRecord(record *datapb.Record, nextGsn *int64, 
 
 		*avlInQuota = (*quotas)[rid]
 	}
+	if *avlInQuota > 0 {
+		// assign gsn to record
+		// send record on exposable records channel
 
-	// assign gsn to record
-	// send record on exposable records channel
+		record.GlobalSN = *nextGsn
+		record.LocalReplicaID = s.replicaID
+		record.ShardID = s.shardID
+		record.ViewID = *viewID
 
-	record.GlobalSN = *nextGsn
-	record.LocalReplicaID = s.replicaID
-	record.ShardID = s.shardID
-	record.ViewID = *viewID
+		s.committedRecordsMu.Lock()
+		s.committedRecords[*nextGsn] = record
+		s.committedRecordsMu.Unlock()
 
-	s.committedRecordsMu.Lock()
-	s.committedRecords[*nextGsn] = record
-	s.committedRecordsMu.Unlock()
+		s.liveSubscribeC <- record.GlobalSN
 
-	s.liveSubscribeC <- record.GlobalSN
+		*nextGsn++
+		*avlInQuota--
+	}
+	// only triggered when I am grounded and I have quota 0
+}
 
-	*nextGsn++
-	*avlInQuota--
+func (s *DataServer) triggerSlowReports() {
+	log.Printf("slow reports triggered")
+	s.slowReports = true
 }
 
 // handles speculative subscribes for records that have been replicated but not yet ordered
@@ -803,6 +818,12 @@ func (s *DataServer) processSelfReplicate() {
 			if record.ClientID != s.holeID && record.Record[0] == 'b' && qcBurstLSN == -1 {
 				qcBurstLSN = lsn
 				log.Printf("first burst record stored with lsn %v", lsn)
+			}
+		}
+
+		if slowShardExpt && s.shardID == 1 && s.replicaID == 1 {
+			if record.ClientID != s.holeID && record.Record[0] == 'b' && !s.slowReports {
+				s.triggerSlowReports()
 			}
 		}
 
@@ -974,6 +995,16 @@ func (s *DataServer) reportLocalCut() {
 
 				// s.outstandingCuts <- true
 				log.Debugf("Data report: %v", lcs)
+				if slowShardExpt && s.slowReports {
+					if slowReportLocalCutNumber == -1 {
+						slowReportLocalCutNumber = s.localCutNum
+						slowReportWindowNumber = s.windowNumber
+						log.Printf("start slow report local cut number %v, window num %v", slowReportLocalCutNumber, slowReportWindowNumber)
+					}
+					startTime := time.Now()
+					for time.Since(startTime) < 5*time.Millisecond {
+					}
+				}
 				err := (*s.orderClient).Send(lcs)
 				if prevLocalCutTime.IsZero() {
 					prevLocalCutTime = time.Now()
@@ -996,12 +1027,26 @@ func (s *DataServer) reportLocalCut() {
 				s.prevSentLocalCut += s.quota
 
 				if s.localCutNum == s.numLocalCutsThreshold-1 {
-					startTime := time.Now()
-					s.quota = <-s.waitForNewQuota
-					s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
-					s.stats.numQuotas++
-					s.windowNumber++
-					s.localCutNum = -1
+					grounded := false
+					for {
+						startTime := time.Now()
+						s.quota = <-s.waitForNewQuota
+						s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
+						s.stats.numQuotas++
+						s.windowNumber++
+						s.localCutNum = -1
+						if s.quota != 0 {
+							if grounded {
+								log.Printf("I am no longer grounded in window %v", s.windowNumber)
+								if slowShardExpt && s.slowReports {
+									s.slowReports = false
+								}
+							}
+							break
+						}
+						log.Printf("I am grounded :( in window %v, I need to wait for the next window", s.windowNumber)
+						grounded = true
+					}
 				}
 
 				// reset hole timer
@@ -1034,6 +1079,7 @@ func (s *DataServer) reportLocalCut() {
 
 			fixed := 0
 			timeout := false
+			grounded := false
 			for i := int64(1); i <= lag && !timeout; i++ {
 				s.localCutNum += 1
 				fixed += 1
@@ -1063,6 +1109,8 @@ func (s *DataServer) reportLocalCut() {
 				}
 
 				if s.localCutNum == s.numLocalCutsThreshold-1 {
+					// ugly, but need to resort to labels here
+				retryQuota:
 					startTime := time.Now()
 					// there can be a deadlock here, as there could be a mismatch between the percieved lag at the ordering layer and the actual lag, in such a case, make it best effort and send as many cuts as you can.
 					select {
@@ -1071,6 +1119,18 @@ func (s *DataServer) reportLocalCut() {
 						s.stats.numQuotas++
 						s.windowNumber++
 						s.localCutNum = -1
+						if s.quota == 0 {
+							// I am grounded :( I need to wait for the next quota
+							log.Printf("I am grounded :( in window %v, I need to wait for the next window", s.windowNumber)
+							grounded = true
+							goto retryQuota
+						}
+						if grounded {
+							log.Printf("I am no longer grounded in window %v", s.windowNumber)
+							if slowShardExpt && s.slowReports {
+								s.slowReports = false
+							}
+						}
 					case <-time.After(s.batchingInterval):
 						log.Printf("timed out waiting for new quota")
 						// simply continue, we will send as many cuts as we can
@@ -1121,6 +1181,16 @@ func (s *DataServer) reportLocalCut() {
 			// 	s.outstandingCuts <- true
 			// }
 			log.Debugf("Data report: %v", lcs)
+			if slowShardExpt && s.slowReports {
+				if slowReportLocalCutNumber == -1 {
+					slowReportLocalCutNumber = s.localCutNum
+					slowReportWindowNumber = s.windowNumber
+					log.Printf("start slow report local cut number %v, window num %v", slowReportLocalCutNumber, slowReportWindowNumber)
+				}
+				startTime := time.Now()
+				for time.Since(startTime) < 5*time.Millisecond {
+				}
+			}
 			err := (*s.orderClient).Send(lcs)
 			if prevLocalCutTime.IsZero() {
 				prevLocalCutTime = time.Now()
@@ -1145,13 +1215,28 @@ func (s *DataServer) reportLocalCut() {
 			s.prevSentLocalCut += numEntries
 
 			// in case there has been a timeout, I now need to wait for the next quota
-			if timeout && s.localCutNum == s.numLocalCutsThreshold-1 {
-				startTime := time.Now()
-				s.quota = <-s.waitForNewQuota
-				s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
-				s.stats.numQuotas++
-				s.windowNumber++
-				s.localCutNum = -1
+			if (timeout && s.localCutNum == s.numLocalCutsThreshold-1) || grounded {
+				grounded := false
+				for {
+					startTime := time.Now()
+					s.quota = <-s.waitForNewQuota
+					s.stats.waitingForNextQuotaNs += time.Since(startTime).Nanoseconds()
+					s.stats.numQuotas++
+					s.windowNumber++
+					s.localCutNum = -1
+					if s.quota != 0 {
+						if grounded {
+							log.Printf("I am no longer grounded in window %v", s.windowNumber)
+							if slowShardExpt && s.slowReports {
+								s.slowReports = false
+							}
+						}
+						break
+					}
+					// I am grounded :( I need to wait for the next quota
+					log.Printf("I am grounded :( in window %v, I need to wait for the next window", s.windowNumber)
+					grounded = true
+				}
 			}
 
 			// reset hole timer

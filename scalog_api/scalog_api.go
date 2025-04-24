@@ -58,6 +58,35 @@ func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) error {
 	return nil
 }
 
+func (s *Scalog) QuotaExpAppendToAssignedShard(appenderId int32, record string, clientId int, numRecords int) error {
+	// first call creates rate limiter
+	if s.rateLimiter == nil {
+		s.rateLimiter = rateLimiter.NewLimiter(rateLimiter.Limit(s.rate), 1)
+		// start ack thread
+		go s.Ack()
+	}
+
+	err := s.rateLimiter.Wait(context.Background())
+	if err != nil {
+		return fmt.Errorf("rate limiter error: %v", err)
+	}
+
+	_, _, err = s.client.AppendToAssignedShard(appenderId, record)
+	if err != nil {
+		log.Errorf("%v", err)
+		return err
+	}
+
+	appendStartTime := time.Now()
+
+	if clientId == 2  && numRecords == 0 {
+		log.Printf("[quota_change]: first append start time %v", appendStartTime.Format("15:04:05.000000"))
+	}
+
+	s.Stats.AppendStartTimeChan <- appendStartTime
+	return nil
+}
+
 func (s *Scalog) Ack() {
 	for {
 		select {
@@ -232,12 +261,51 @@ func (s *Scalog) FilterSubscribeThread(startGsn int64, readerId int32, filterVal
 	}
 }
 
+func (s *Scalog) FilterSubscribeThreadDouble(startGsn int64, readerId int32, readerId2 int32, filterValue int32) {
+	stream, conf, err := s.client.FilterSubscribeDouble(startGsn, readerId, readerId2, filterValue)
+	if err != nil {
+		log.Errorf("%v", err)
+	}
+	s.stopConf = make(chan bool)
+	go s.ConfirmationThread(conf)
+	prevGsn := int64(-1)
+
+	for {
+		select {
+		case <-s.Stop:
+			close(s.stopConf)
+			return
+		case r := <-stream:
+			if r.GSN != prevGsn+1 {
+				log.Errorf("[scalog_api]: out of order record: %v", r.GSN)
+			}
+			prevGsn = r.GSN
+
+			// This means we received a "dummy" record that was used for ordering or we received a hole
+			if r.Record == "" || r.Record == "0xDEADBEEF" {
+				continue
+			} else {
+				index := atomic.LoadInt64(&s.atomicInt)
+				s.records[index] = r
+				atomic.AddInt64(&s.atomicInt, 1)
+				s.Stats.DeliveryTime[r.GSN] = time.Now()
+				// log.Infof(r.Record[0:7])
+				continue
+			}
+		}
+	}
+}
+
 func (s *Scalog) SubscribeToAssignedShard(readerId int32, startGsn int64) {
 	go s.SubscribeToAssignedShardThread(readerId, startGsn)
 }
 
 func (s *Scalog) FilterSubscribe(startGsn int64, readerId int32, filterValue int32) {
 	go s.FilterSubscribeThread(startGsn, readerId, filterValue)
+}
+
+func (s *Scalog) FilterSubscribeDouble(startGsn int64, readerId int32, readerId2 int32, filterValue int32) {
+	go s.FilterSubscribeThreadDouble(startGsn, readerId, readerId2, filterValue)
 }
 
 func (s *Scalog) SubscribeThread(startGsn int64) {

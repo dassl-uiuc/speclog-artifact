@@ -57,7 +57,7 @@ func Append_One_Ping(appenderId int32, clientNumber int) {
 	}
 	runTime := int64(viper.GetInt("produce-run-time"))
 
-	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, -1, "../../.scalog.yaml")
 
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()
@@ -90,7 +90,7 @@ func Append_Stream_Ping(appenderId int32, clientNumber int) {
 	}
 	runTime := int64(viper.GetInt("produce-run-time"))
 
-	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, -1, "../../.scalog.yaml")
 
 	recordsProduced := 0
 	startTimeInSeconds := time.Now().Unix()

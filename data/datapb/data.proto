@@ -11,6 +11,7 @@ service Data {
 	// the servers don't need to know the sources of the following requests
 	rpc Subscribe(GlobalSN) returns (stream Record) {}
 	rpc FilterSubscribe(FilterGlobalSN) returns (stream Record) {}
+	rpc FilterSubscribeDouble(FilterGlobalSN) returns (stream Record) {}
 	rpc Trim(GlobalSN) returns (Ack) {}
 	rpc Read(GlobalSN) returns (Record) {}
 }
@@ -46,7 +47,8 @@ message GlobalSN {
 message FilterGlobalSN {
 	int64 gSN = 1;
 	int32 readerID = 2;
-	int32 filterValue = 3;
+	int32 readerID2 = 3;
+	int32 filterValue = 4;
 }
 
 message Empty {}
