@@ -74,7 +74,7 @@ def get_avg_throughput(directory, num_bytes_per_op):
     return None
 
 
-root_path="PATH/append/"
+root_path="../../../results/"
 
 df_scalog = pd.DataFrame(columns=["mean", "stddev"])
 df_speclog = pd.DataFrame(columns=["mean", "stddev"])
@@ -95,7 +95,7 @@ for tput in tputs:
     for i in [1, 2, 3]:
         speclog_path = root_path + "append_wo/" + str(i) + "/1ms/append_bench_" + str(tput)
         if tput == 100:
-            speclog_path = root_path + "append_with/" + str(i) + "/1ms/append_bench_" + str(tput)
+            speclog_path = root_path + "append_wi/" + str(i) + "/1ms/append_bench_" + str(tput)
         latencies = get_latencies(speclog_path)
         mean, p50, p99 = get_latency_metrics(latencies)
         means = np.append(means, mean)
