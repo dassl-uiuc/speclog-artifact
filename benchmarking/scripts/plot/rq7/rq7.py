@@ -157,32 +157,35 @@ with open("lat_data", "w") as f:
     for shards in df_speclog.index:
         f.write(f"{shards*2}\t{df_speclog.loc[shards]['mean_e2e_latency']}\t{df_scalog.loc[shards]['mean_e2e_latency']}\n")
 
-wo_staggering = f"../../../results/e2e_scalability/runs_3_wo_sc/1/e2e_1200_5/"
-wi_staggering = f"../../../results/e2e_scalability/runs_3_wi_sc/1/e2e_1200_5/"
-scalog = f"../../../results/e2e_scalability/runs_3_scalog/1/e2e_1200_5/"
-
 latencies_wo_staggering = {"e2e": []}
-
-for file_name in os.listdir(wo_staggering):
-    if file_name.startswith("e2e") and file_name.endswith(".csv"):
-        file_path = os.path.join(wo_staggering, file_name)
-        df = pd.read_csv(file_path)
-        latencies_wo_staggering['e2e'].extend(df['e2e latency (us)'])
-
 latencies_wi_staggering = {"e2e": []}
-for file_name in os.listdir(wi_staggering):
-    if file_name.startswith("e2e") and file_name.endswith(".csv"):
-        file_path = os.path.join(wi_staggering, file_name)
-        df = pd.read_csv(file_path)
-        latencies_wi_staggering['e2e'].extend(df['e2e latency (us)'])
-
-
 latencies_scalog = {"e2e": []}
-for file_name in os.listdir(scalog):
-    if file_name.startswith("e2e") and file_name.endswith(".csv"):
-        file_path = os.path.join(scalog, file_name)
-        df = pd.read_csv(file_path)
-        latencies_scalog['e2e'].extend(df['e2e latency (us)'])
+
+
+for run in [1, 2, 3]:
+    wo_staggering = f"../../../results/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_5/"
+    wi_staggering = f"../../../results/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_5/"
+    scalog = f"../../../results/e2e_scalability/runs_3_scalog/{run}/e2e_1200_5/"
+
+
+    for file_name in os.listdir(wo_staggering):
+        if file_name.startswith("e2e") and file_name.endswith(".csv"):
+            file_path = os.path.join(wo_staggering, file_name)
+            df = pd.read_csv(file_path)
+            latencies_wo_staggering['e2e'].extend(df['e2e latency (us)'])
+
+    for file_name in os.listdir(wi_staggering):
+        if file_name.startswith("e2e") and file_name.endswith(".csv"):
+            file_path = os.path.join(wi_staggering, file_name)
+            df = pd.read_csv(file_path)
+            latencies_wi_staggering['e2e'].extend(df['e2e latency (us)'])
+
+
+    for file_name in os.listdir(scalog):
+        if file_name.startswith("e2e") and file_name.endswith(".csv"):
+            file_path = os.path.join(scalog, file_name)
+            df = pd.read_csv(file_path)
+            latencies_scalog['e2e'].extend(df['e2e latency (us)'])
 
 
 for key, value in latencies_wi_staggering.items():
