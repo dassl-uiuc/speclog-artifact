@@ -70,4 +70,34 @@ do
     done 
 done
 
+# also run 5 shard wo sc
+ct=1200
+shards=5
+cleanup_clients
+cleanup_servers
+clear_server_logs
+clear_client_logs
+
+start_order_nodes
+start_discovery
+start_data_nodes $shards
+
+sleep 5
+num_clients=$((2*$shards))
+for (( i = 0; i < $num_clients; i++ )); do
+    start_e2e_clients ${client_nodes[i % ${#client_nodes[@]}]} $ct $runtime_secs $i 10 $benchmark_dir/logs/
+done
+echo "Waiting for clients to terminate"
+
+wait 
+
+cleanup_clients
+cleanup_servers
+collect_logs $shards
+
+suffix="wo_sc"
+mkdir -p "$benchmark_dir/results/e2e_scalability/runs_3_wo_sc/1/e2e_${ct}_${shards}"
+mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e_scalability/runs_3_wo_sc/1/e2e_${ct}_${shards}"
+
+
 popd
