@@ -117,10 +117,10 @@ for run in [1, 2, 3]:
     ])
 
     for shards in [1, 2, 3, 4, 5]:
-        path_scalog = f"PATH/e2e_scalability/runs_3_scalog/{run}/e2e_1200_{shards}/"
-        path_speclog = f"PATH/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_{shards}/"
-        if shards >= 6: 
-            path_speclog = f"PATH/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_{shards}/" 
+        path_scalog = f"../../../results/e2e_scalability/runs_3_scalog/{run}/e2e_1200_{shards}/"
+        path_speclog = f"../../../results/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_{shards}/"
+        if shards >= 3: 
+            path_speclog = f"../../../results/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_{shards}/" 
         scalog = get_append_metrics(path_scalog, scalog)
         scalog = get_e2e_metrics_scalog(path_scalog, scalog)
         speclog = get_append_metrics(path_speclog, speclog)
@@ -157,9 +157,9 @@ with open("lat_data", "w") as f:
     for shards in df_speclog.index:
         f.write(f"{shards*2}\t{df_speclog.loc[shards]['mean_e2e_latency']}\t{df_scalog.loc[shards]['mean_e2e_latency']}\n")
 
-wo_staggering = f"PATH/e2e_scalability/runs_3_wo_sc/2/e2e_1200_5/"
-wi_staggering = f"PATH/e2e_scalability/runs_3_wi_sc/2/e2e_1200_5/"
-scalog = f"PATH/e2e_scalability/runs_3_scalog/2/e2e_1200_5/"
+wo_staggering = f"../../../results/e2e_scalability/runs_3_wo_sc/1/e2e_1200_5/"
+wi_staggering = f"../../../results/e2e_scalability/runs_3_wi_sc/1/e2e_1200_5/"
+scalog = f"../../../results/e2e_scalability/runs_3_scalog/1/e2e_1200_5/"
 
 latencies_wo_staggering = {"e2e": []}
 
