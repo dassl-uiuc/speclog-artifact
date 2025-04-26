@@ -80,8 +80,8 @@ do
             append_suffix="wi"
         fi
         # move logs to a different folder
-        mkdir -p "$benchmark_dir/results/append_${append_suffix}/$iter/$interval/append_bench_${c}"
-        mv $benchmark_dir/results/$interval/append_bench_${c}/* $benchmark_dir/results/append_${append_suffix}/$iter/$interval/append_bench_${c}
+        mkdir -p "$results_dir/append_${append_suffix}/$iter/$interval/append_bench_${c}"
+        mv $benchmark_dir/results/$interval/append_bench_${c}/* $results_dir/append_${append_suffix}/$iter/$interval/append_bench_${c}
         rm -rf $benchmark_dir/results/$interval
     done
 done 

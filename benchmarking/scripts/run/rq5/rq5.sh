@@ -73,8 +73,8 @@ cleanup_servers
 collect_logs $num_shards
 
 # move logs to a different folder
-mkdir -p "$benchmark_dir/results/qc_enabled_e2e"
-mv $benchmark_dir/logs/* "$benchmark_dir/results/qc_enabled_e2e"
+mkdir -p "$results_dir/qc_enabled_e2e"
+mv $benchmark_dir/logs/* "$results_dir/qc_enabled_e2e"
 
 
 popd
@@ -138,8 +138,8 @@ cleanup_servers
 collect_logs $num_shards
 
 # move logs to a different folder
-mkdir -p "$benchmark_dir/results/qc_disabled_e2e"
-mv $benchmark_dir/logs/* "$benchmark_dir/results/qc_disabled_e2e"
+mkdir -p "$results_dir/qc_disabled_e2e"
+mv $benchmark_dir/logs/* "$results_dir/qc_disabled_e2e"
 
 
 popd

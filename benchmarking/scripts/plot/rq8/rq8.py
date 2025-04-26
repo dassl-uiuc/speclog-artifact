@@ -7,7 +7,9 @@ from datetime import timedelta
 from matplotlib.ticker import MultipleLocator, MaxNLocator, FuncFormatter
 import pandas as pd
 import subprocess
+import os 
 
+results_dir = os.getenv("results_dir")
 
 straggler_pattern = r"start slow report local cut number (\d+), window num (\d+)"
 
@@ -20,7 +22,7 @@ def get_straggler_lsn_wsn(path):
                 return match.group(1), match.group(2)
             
 
-path = "../../../results/slowshard/"
+path = results_dir + "/slowshard/"
 lsn, wn = get_straggler_lsn_wsn(path)
 print(f"lsn: {lsn}, wn: {wn}")
 
@@ -164,7 +166,7 @@ def get_latencies(path):
     return e2e_latency_values, straggler_trigger
 
 # CONFIGURE PATH HERE
-path = "../../../results/slowshard/"
+path = results_dir + "/slowshard/"
 e2e_latency_values, straggler_trigger = get_latencies(path)
 ## e2e latency plots
 

@@ -33,8 +33,8 @@ do
     collect_logs $num_shards
 
     # move logs to a different folder
-    mkdir -p "$benchmark_dir/results/e2e/speclog/e2e_4shard/e2e_${ct}"
-    mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e/speclog/e2e_4shard/e2e_${ct}"
+    mkdir -p "$results_dir/e2e/speclog/e2e_4shard/e2e_${ct}"
+    mv $benchmark_dir/logs/* "$results_dir/e2e/speclog/e2e_4shard/e2e_${ct}"
 done
 
 popd

@@ -6,6 +6,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from datetime import datetime, timedelta
 import sys
+import os 
+
+results_dir = os.getenv("results_dir")
 
 # analyze logs to get latency metrics for lagfix experiment
 def get_latency_metrics_for_lagfix(path):
@@ -47,7 +50,7 @@ def get_latency_metrics_for_lagfix(path):
     return append_latency_values, e2e_latency_values, gsns
 
 
-path = "../../../results/scalog_lagfix/"
+path = results_dir + "/scalog_lagfix/"
 append_latency_values, e2e_latency_values, gsns = get_latency_metrics_for_lagfix(path)
 
 append_latency_array = np.array([append_latency_values[gsn][0] for gsn in append_latency_values])

@@ -74,8 +74,8 @@ cleanup_servers
 collect_logs $num_shards
 
 # move logs to a different folder
-mkdir -p "$benchmark_dir/results/reconfig_${computation_time}_speclog_with_e2e"
-mv $benchmark_dir/logs/* "$benchmark_dir/results/reconfig_${computation_time}_speclog_with_e2e"
+mkdir -p "$results_dir/reconfig_${computation_time}_speclog_with_e2e"
+mv $benchmark_dir/logs/* "$results_dir/reconfig_${computation_time}_speclog_with_e2e"
 
 
 set_bool_variable_in_file \

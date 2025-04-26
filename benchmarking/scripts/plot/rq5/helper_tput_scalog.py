@@ -6,6 +6,9 @@ from datetime import datetime, timedelta
 import sys
 import glob
 import pandas as pd
+import os 
+
+results_dir = os.getenv("results_dir")
 
 def extract_burst_cut(log_file_path):    
     pattern = r"burst local cut number (\d+)"
@@ -19,7 +22,7 @@ def extract_burst_cut(log_file_path):
         return None
 
 # CONFIGURE PATH HERE
-logfile = "../../../results/scalog_qc/data-0-0.log"
+logfile = results_dir + "/scalog_qc/data-0-0.log"
 burst_cut_num = extract_burst_cut(logfile)
 print(f"Burst cut number: {burst_cut_num}")
 
@@ -29,7 +32,7 @@ def parse_timestamp(ts):
     return datetime.strptime(ts, "%H:%M:%S.%f")
 
 # File path
-log_file = "../../../results/scalog_qc/order-0.log"
+log_file = results_dir + "/scalog_qc/order-0.log"
 
 # Regex patterns
 tput_pattern = r"\[real-time tput\]: (\d+) ops/sec"

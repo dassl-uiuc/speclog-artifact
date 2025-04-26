@@ -61,8 +61,8 @@ cleanup_servers
 collect_logs $num_shards
 
 # move logs to a different folder
-mkdir -p "$benchmark_dir/results/slowshard"
-mv $benchmark_dir/logs/* "$benchmark_dir/results/slowshard"
+mkdir -p "$results_dir/slowshard"
+mv $benchmark_dir/logs/* "$results_dir/slowshard"
 
 set_bool_variable_in_file \
     ../../data/data_server.go \

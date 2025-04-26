@@ -89,8 +89,8 @@ for trial in $(seq 1 $n)
 do
     echo "Running $trial-th time"
     run_ta
-    mkdir -p $benchmark_dir/results/apps/transaction_analysis/speclog_$trial
-    cp -r ../../applications/vanilla_applications/transaction_analysis/data $benchmark_dir/results/apps/transaction_analysis/speclog_$trial
+    mkdir -p $results_dir/apps/transaction_analysis/speclog_$trial
+    cp -r ../../applications/vanilla_applications/transaction_analysis/data $results_dir/apps/transaction_analysis/speclog_$trial
 done
 
 popd

@@ -3,6 +3,9 @@ import csv
 import numpy as np 
 import pandas as pd
 import subprocess
+import os 
+
+results_dir = os.getenv("results_dir")
 
 # def check_timeouts(directory):
 #     for filename in os.listdir(directory):
@@ -74,7 +77,7 @@ def get_avg_throughput(directory, num_bytes_per_op):
     return None
 
 
-root_path="../../../results/"
+root_path=results_dir + "/"
 
 df_scalog = pd.DataFrame(columns=["mean", "stddev"])
 df_speclog = pd.DataFrame(columns=["mean", "stddev"])

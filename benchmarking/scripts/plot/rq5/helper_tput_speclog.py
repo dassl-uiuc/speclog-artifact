@@ -6,10 +6,13 @@ from datetime import datetime, timedelta
 import sys
 import glob
 import pandas as pd
+import os 
+
+results_dir = os.getenv("results_dir")
 
 mode = sys.argv[1]
 assert mode == 'enabled' or mode == 'disabled'
-homedir = "../../../results/"
+homedir = results_dir + "/"
 
 def extract_burst_cut_and_window(log_file_path):    
     pattern = r"burst local cut number (\d+), window num (\d+)"

@@ -4,6 +4,9 @@ import pandas as pd
 import subprocess
 import os
 import matplotlib.pyplot as plt
+import os 
+
+results_dir = os.getenv("results_dir")
 
 def get_append_metrics(path, df):
     file_pattern = path + "append_metrics*.csv"
@@ -117,10 +120,10 @@ for run in [1, 2, 3]:
     ])
 
     for shards in [1, 2, 3, 4, 5]:
-        path_scalog = f"../../../results/e2e_scalability/runs_3_scalog/{run}/e2e_1200_{shards}/"
-        path_speclog = f"../../../results/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_{shards}/"
+        path_scalog = fresults_dir + "/e2e_scalability/runs_3_scalog/{run}/e2e_1200_{shards}/"
+        path_speclog = fresults_dir + "/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_{shards}/"
         if shards >= 3: 
-            path_speclog = f"../../../results/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_{shards}/" 
+            path_speclog = fresults_dir + "/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_{shards}/" 
         scalog = get_append_metrics(path_scalog, scalog)
         scalog = get_e2e_metrics_scalog(path_scalog, scalog)
         speclog = get_append_metrics(path_speclog, speclog)
@@ -163,9 +166,9 @@ latencies_scalog = {"e2e": []}
 
 
 for run in [1, 2, 3]:
-    wo_staggering = f"../../../results/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_5/"
-    wi_staggering = f"../../../results/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_5/"
-    scalog = f"../../../results/e2e_scalability/runs_3_scalog/{run}/e2e_1200_5/"
+    wo_staggering = fresults_dir + "/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_5/"
+    wi_staggering = fresults_dir + "/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_5/"
+    scalog = fresults_dir + "/e2e_scalability/runs_3_scalog/{run}/e2e_1200_5/"
 
 
     for file_name in os.listdir(wo_staggering):

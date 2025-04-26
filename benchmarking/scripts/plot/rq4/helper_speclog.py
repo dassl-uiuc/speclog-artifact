@@ -4,8 +4,11 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from datetime import datetime, timedelta
 import sys
+import os 
 
-path = "../../../results/lagfix_" + sys.argv[1] + "_e2e/"
+results_dir = os.getenv("results_dir")
+
+path = results_dir + "/lagfix_" + sys.argv[1] + "_e2e/"
 
 def get_latency_metrics_for_lagfix(path):
     e2e_file_pattern = path + "e2e_metrics.csv"

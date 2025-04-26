@@ -89,8 +89,8 @@ for trial in $(seq 1 $n)
 do
     echo "Running $trial-th time"
     run_hft
-    mkdir -p $benchmark_dir/results/apps/hft/speclog_$trial
-    cp -r ../../applications/vanilla_applications/hft/data $benchmark_dir/results/apps/hft/speclog_$trial
+    mkdir -p $results_dir/apps/hft/speclog_$trial
+    cp -r ../../applications/vanilla_applications/hft/data $results_dir/apps/hft/speclog_$trial
 done
 
 popd

@@ -6,11 +6,14 @@ from datetime import datetime, timedelta
 import bisect
 import re
 import sys
+import os 
+
+results_dir = os.getenv("results_dir")
 
 timestamp_pattern = r"(\d{2}:\d{2}:\d{2}\.\d{6})"
 jt = float(sys.argv[1])
 
-path = "../../../results/reconfig_800_scalog_with_e2e/"
+path = results_dir + "/reconfig_800_scalog_with_e2e/"
 
 def parse_timestamp(time):
     return datetime.strptime(time, "%H:%M:%S.%f")

@@ -3,8 +3,11 @@ import re
 import matplotlib.pyplot as plt
 from datetime import datetime
 import pandas as pd
+import os 
+
+results_dir = os.getenv("results_dir")
 # File path
-log_file = "../../../results/reconfig_800_speclog_with_e2e/order-0.log"
+log_file = results_dir + "/reconfig_800_speclog_with_e2e/order-0.log"
 
 # Regex patterns
 tput_pattern = r"\[real-time tput\]: (\d+) ops/sec"

@@ -53,8 +53,8 @@ do
             if [ "$shards" -ge 3 ]; then 
                 suffix="wi_sc"
             fi
-            mkdir -p "$benchmark_dir/results/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
-            mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
+            mkdir -p "$results_dir/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
+            mv $benchmark_dir/logs/* "$results_dir/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
         done
         if [ "$shards" -ge 3 ]; then 
             # switch back 
@@ -99,8 +99,8 @@ do
         collect_logs $shards
 
         suffix="wo_sc"
-        mkdir -p "$benchmark_dir/results/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
-        mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
+        mkdir -p "$results_dir/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
+        mv $benchmark_dir/logs/* "$results_dir/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
     done 
 done
 
