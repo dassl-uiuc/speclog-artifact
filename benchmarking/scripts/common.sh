@@ -2,6 +2,7 @@
 PASSLESS_ENTRY="/users/sgbhat3/.ssh/id_rsa"
 
 benchmark_dir="/proj/rasl-PG0/sgbhat3/speclog/benchmarking"
+results_dir="/users/sgbhat3/results"
 LOGDIR="/data"
 
 # index into remote_nodes/ips for order nodes

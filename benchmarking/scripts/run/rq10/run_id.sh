@@ -89,8 +89,8 @@ for trial in $(seq 1 $n)
 do
     echo "Running $trial-th time"
     run_id
-    mkdir -p $benchmark_dir/results/apps/intrusion_detection/scalog_$trial
-    cp -r ../../applications/vanilla_applications/intrusion_detection/data $benchmark_dir/results/apps/intrusion_detection/scalog_$trial
+    mkdir -p $results_dir/apps/intrusion_detection/scalog_$trial
+    cp -r ../../applications/vanilla_applications/intrusion_detection/data $results_dir/apps/intrusion_detection/scalog_$trial
 done
 
 popd

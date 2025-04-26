@@ -63,8 +63,8 @@ do
         collect_logs
 
         # move logs to a different folder
-        mkdir -p "$benchmark_dir/results/append_scalog/$iter/$interval/append_bench_${c}"
-        mv $benchmark_dir/results/$interval/append_bench_${c}/* $benchmark_dir/results/append_scalog/$iter/$interval/append_bench_${c}
+        mkdir -p "$results_dir/append_scalog/$iter/$interval/append_bench_${c}"
+        mv $benchmark_dir/results/$interval/append_bench_${c}/* $results_dir/append_scalog/$iter/$interval/append_bench_${c}
         rm -rf $benchmark_dir/results/$interval
     done
 done 

@@ -58,8 +58,8 @@ cleanup_servers
 collect_logs $num_shards
 
 # move logs to a different folder
-mkdir -p "$benchmark_dir/results/scalog_lagfix"
-mv $benchmark_dir/logs/* "$benchmark_dir/results/scalog_lagfix"
+mkdir -p "$results_dir/scalog_lagfix"
+mv $benchmark_dir/logs/* "$results_dir/scalog_lagfix"
 
 
 popd
