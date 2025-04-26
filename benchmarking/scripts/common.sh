@@ -1,9 +1,9 @@
 #!/bin/bash
-PASSLESS_ENTRY="/users/sgbhat3/.ssh/id_rsa"
+export PASSLESS_ENTRY="/users/sgbhat3/.ssh/id_rsa"
 
-benchmark_dir="/proj/rasl-PG0/sgbhat3/speclog/benchmarking"
-results_dir="/users/sgbhat3/results"
-LOGDIR="/data"
+export benchmark_dir="/proj/rasl-PG0/sgbhat3/speclog/benchmarking"
+export results_dir="/users/sgbhat3/results"
+export LOGDIR="/data"
 
 # index into remote_nodes/ips for order nodes
 order=("node0" "node1" "node2")
