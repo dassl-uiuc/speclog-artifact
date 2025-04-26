@@ -36,9 +36,9 @@ run_id() {
             # wait for 10 secs
             sleep 10
             
-            sudo mkdir "../../applications/vanilla_applications/intrusion_detection/analytics"
-            sudo rm -rf "../../applications/vanilla_applications/intrusion_detection/data"
-            sudo mkdir "../../applications/vanilla_applications/intrusion_detection/data"
+            mkdir "../../applications/vanilla_applications/intrusion_detection/analytics"
+            rm -rf "../../applications/vanilla_applications/intrusion_detection/data"
+            mkdir "../../applications/vanilla_applications/intrusion_detection/data"
 
             # Ensure even division between num_replica and client_nodes
             if (( $num_replicas % ${#client_nodes[@]} != 0 )); then
@@ -90,7 +90,7 @@ do
     echo "Running $trial-th time"
     run_id
     mkdir -p $benchmark_dir/results/apps/intrusion_detection/scalog_$trial
-    sudo cp -r ../../applications/vanilla_applications/intrusion_detection/data $benchmark_dir/results/apps/intrusion_detection/scalog_$trial
+    cp -r ../../applications/vanilla_applications/intrusion_detection/data $benchmark_dir/results/apps/intrusion_detection/scalog_$trial
 done
 
 popd
