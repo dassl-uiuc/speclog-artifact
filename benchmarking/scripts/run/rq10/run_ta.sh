@@ -36,9 +36,9 @@ run_ta() {
             # wait for 10 secs
             sleep 10
             
-            sudo mkdir "../../applications/vanilla_applications/transaction_analysis/analytics"
-            sudo rm -rf "../../applications/vanilla_applications/transaction_analysis/data"
-            sudo mkdir "../../applications/vanilla_applications/transaction_analysis/data"
+            mkdir "../../applications/vanilla_applications/transaction_analysis/analytics"
+            rm -rf "../../applications/vanilla_applications/transaction_analysis/data"
+            mkdir "../../applications/vanilla_applications/transaction_analysis/data"
 
             # Ensure even division between num_replica and client_nodes
             if (( $num_replicas % ${#client_nodes[@]} != 0 )); then
@@ -90,7 +90,7 @@ do
     echo "Running $trial-th time"
     run_ta
     mkdir -p $benchmark_dir/results/apps/transaction_analysis/speclog_$trial
-    sudo cp -r ../../applications/vanilla_applications/transaction_analysis/data $benchmark_dir/results/apps/transaction_analysis/speclog_$trial
+    cp -r ../../applications/vanilla_applications/transaction_analysis/data $benchmark_dir/results/apps/transaction_analysis/speclog_$trial
 done
 
 popd

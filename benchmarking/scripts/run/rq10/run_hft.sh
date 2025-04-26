@@ -36,9 +36,9 @@ run_hft() {
             # wait for 10 secs
             sleep 10
             
-            sudo mkdir "../../applications/vanilla_applications/hft/analytics"
-            sudo rm -rf "../../applications/vanilla_applications/hft/data"
-            sudo mkdir "../../applications/vanilla_applications/hft/data"
+            mkdir "../../applications/vanilla_applications/hft/analytics"
+            rm -rf "../../applications/vanilla_applications/hft/data"
+            mkdir "../../applications/vanilla_applications/hft/data"
 
             # Ensure even division between num_replica and client_nodes
             if (( $num_replicas % ${#client_nodes[@]} != 0 )); then
@@ -90,7 +90,7 @@ do
     echo "Running $trial-th time"
     run_hft
     mkdir -p $benchmark_dir/results/apps/hft/speclog_$trial
-    sudo cp -r ../../applications/vanilla_applications/hft/data $benchmark_dir/results/apps/hft/speclog_$trial
+    cp -r ../../applications/vanilla_applications/hft/data $benchmark_dir/results/apps/hft/speclog_$trial
 done
 
 popd
