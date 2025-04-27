@@ -1,9 +1,5 @@
 #!/bin/bash
-export PASSLESS_ENTRY="/users/sgbhat3/.ssh/id_rsa"
-
-export benchmark_dir="/proj/rasl-PG0/sgbhat3/speclog/benchmarking"
-export results_dir="/users/sgbhat3/results"
-export LOGDIR="/data"
+# WARNING: Please setup .env before running this script
 
 # index into remote_nodes/ips for order nodes
 order=("node0" "node1" "node2")
@@ -86,19 +82,19 @@ set_bool_variable_in_file() {
 collect_logs() {
     for svr in ${order[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $svr:/data/*.log $benchmark_dir/logs/ &
     done 
     for svr in ${data_pri[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $svr:/data/*.log $benchmark_dir/logs/ &
     done 
     for svr in ${data_sec[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $svr:/data/*.log $benchmark_dir/logs/ &
     done 
     for svr in ${client_nodes[@]};
     do 
-        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY sgbhat3@$svr:/data/*.log $benchmark_dir/logs/ &
+        scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $svr:/data/*.log $benchmark_dir/logs/ &
     done
     wait
 }
