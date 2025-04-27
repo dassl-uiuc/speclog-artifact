@@ -8,12 +8,13 @@ pushd $benchmark_dir/scripts
 runtime_secs=120
 computation_time=(1200)
 num_shards=(1 2 3 4 5)
+num_iter=1
 
 for ct in "${computation_time[@]}";
 do 
     for shards in "${num_shards[@]}";
     do 
-        for iter in $(seq 1 3);
+        for iter in $(seq 1 $num_iter);
         do
             cleanup_clients
             cleanup_servers

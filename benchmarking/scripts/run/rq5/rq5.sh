@@ -21,6 +21,9 @@ go build
 popd 
 
 sleep 5
+shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
+check_sync $shas
+
 pushd $benchmark_dir/scripts
 
 # one shard involved in this expt
@@ -83,5 +86,9 @@ set_bool_variable_in_file \
 pushd $benchmark_dir/../
 go build
 popd
+
+sleep 5
+shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
+check_sync $shas
 
 popd
