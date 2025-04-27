@@ -8,24 +8,27 @@ pushd $benchmark_dir/scripts
 runtime_secs=120
 computation_time=(1200)
 num_shards=(1 2 3 4 5)
+num_iter=1
 
 for ct in "${computation_time[@]}";
 do 
     for shards in "${num_shards[@]}";
     do 
         if [ "$shards" -ge 3 ]; then 
-                # switch to the staggered version 
-                sed -i 's/const staggeringFactor int64 = -1/const staggeringFactor int64 = 2/' ../../order/order_server.go
-                sed -i 's/const staggeringFactor int64 = -1/const staggeringFactor int64 = 2/' ../../data/data_server.go
+            # switch to the staggered version 
+            sed -i 's/const staggeringFactor int64 = -1/const staggeringFactor int64 = 2/' ../../order/order_server.go
+            sed -i 's/const staggeringFactor int64 = -1/const staggeringFactor int64 = 2/' ../../data/data_server.go
 
-                pushd $benchmark_dir/../ 
-                go build
-                popd 
+            pushd $benchmark_dir/../ 
+            go build
+            popd 
 
-                # wait for NFS to sync
-                sleep 5 
+            # wait for NFS to sync
+            sleep 5 
+            shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
+            check_sync $shas
         fi
-        for iter in $(seq 1 3);
+        for iter in $(seq 1 $num_iter);
         do
             cleanup_clients
             cleanup_servers
@@ -66,6 +69,8 @@ do
 
             # wait for NFS to sync
             sleep 5 
+            shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
+            check_sync $shas
         fi
     done 
 done
@@ -74,7 +79,7 @@ done
 for ct in "${computation_time[@]}";
 do 
     shards=5
-    for iter in $(seq 1 3);
+    for iter in $(seq 1 $num_iter);
     do 
         cleanup_clients
         cleanup_servers

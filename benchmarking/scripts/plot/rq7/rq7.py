@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import os 
 
 results_dir = os.getenv("results_dir")
+num_iter = 1
 
 def get_append_metrics(path, df):
     file_pattern = path + "append_metrics*.csv"
@@ -111,7 +112,7 @@ df_scalog = pd.DataFrame(columns=[
 
 
 dfs = {}
-for run in [1, 2, 3]:
+for run in range(1, num_iter + 1):
     scalog = pd.DataFrame(columns=[
         'throughput', 'mean_e2e_latency'
     ])
@@ -120,10 +121,10 @@ for run in [1, 2, 3]:
     ])
 
     for shards in [1, 2, 3, 4, 5]:
-        path_scalog = fresults_dir + "/e2e_scalability/runs_3_scalog/{run}/e2e_1200_{shards}/"
-        path_speclog = fresults_dir + "/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_{shards}/"
+        path_scalog = results_dir + f"/e2e_scalability/runs_3_scalog/{run}/e2e_1200_{shards}/"
+        path_speclog = results_dir + f"/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_{shards}/"
         if shards >= 3: 
-            path_speclog = fresults_dir + "/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_{shards}/" 
+            path_speclog = results_dir + f"/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_{shards}/" 
         scalog = get_append_metrics(path_scalog, scalog)
         scalog = get_e2e_metrics_scalog(path_scalog, scalog)
         speclog = get_append_metrics(path_speclog, speclog)
@@ -135,7 +136,7 @@ for run in [1, 2, 3]:
     }
 
 # avg over runs
-for run in [1, 2, 3]:
+for run in range(1, num_iter + 1):
     scalog = dfs[run]['scalog']
     speclog = dfs[run]['speclog']
 
@@ -146,8 +147,8 @@ for run in [1, 2, 3]:
         df_speclog += speclog
         df_scalog += scalog
 
-df_speclog = df_speclog / 3
-df_scalog = df_scalog / 3
+df_speclog = df_speclog / num_iter
+df_scalog = df_scalog / num_iter
 
 
 with open("data", "w") as f:
@@ -165,30 +166,29 @@ latencies_wi_staggering = {"e2e": []}
 latencies_scalog = {"e2e": []}
 
 
-for run in [1, 2, 3]:
-    wo_staggering = fresults_dir + "/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_5/"
-    wi_staggering = fresults_dir + "/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_5/"
-    scalog = fresults_dir + "/e2e_scalability/runs_3_scalog/{run}/e2e_1200_5/"
+wo_staggering = results_dir + f"/e2e_scalability/runs_3_wo_sc/1/e2e_1200_5/"
+wi_staggering = results_dir + f"/e2e_scalability/runs_3_wi_sc/1/e2e_1200_5/"
+scalog = results_dir + f"/e2e_scalability/runs_3_scalog/1/e2e_1200_5/"
 
 
-    for file_name in os.listdir(wo_staggering):
-        if file_name.startswith("e2e") and file_name.endswith(".csv"):
-            file_path = os.path.join(wo_staggering, file_name)
-            df = pd.read_csv(file_path)
-            latencies_wo_staggering['e2e'].extend(df['e2e latency (us)'])
+for file_name in os.listdir(wo_staggering):
+    if file_name.startswith("e2e") and file_name.endswith(".csv"):
+        file_path = os.path.join(wo_staggering, file_name)
+        df = pd.read_csv(file_path)
+        latencies_wo_staggering['e2e'].extend(df['e2e latency (us)'])
 
-    for file_name in os.listdir(wi_staggering):
-        if file_name.startswith("e2e") and file_name.endswith(".csv"):
-            file_path = os.path.join(wi_staggering, file_name)
-            df = pd.read_csv(file_path)
-            latencies_wi_staggering['e2e'].extend(df['e2e latency (us)'])
+for file_name in os.listdir(wi_staggering):
+    if file_name.startswith("e2e") and file_name.endswith(".csv"):
+        file_path = os.path.join(wi_staggering, file_name)
+        df = pd.read_csv(file_path)
+        latencies_wi_staggering['e2e'].extend(df['e2e latency (us)'])
 
 
-    for file_name in os.listdir(scalog):
-        if file_name.startswith("e2e") and file_name.endswith(".csv"):
-            file_path = os.path.join(scalog, file_name)
-            df = pd.read_csv(file_path)
-            latencies_scalog['e2e'].extend(df['e2e latency (us)'])
+for file_name in os.listdir(scalog):
+    if file_name.startswith("e2e") and file_name.endswith(".csv"):
+        file_path = os.path.join(scalog, file_name)
+        df = pd.read_csv(file_path)
+        latencies_scalog['e2e'].extend(df['e2e latency (us)'])
 
 
 for key, value in latencies_wi_staggering.items():

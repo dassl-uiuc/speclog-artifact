@@ -36,6 +36,17 @@ hft_dir="../../applications/vanilla_applications/hft"
 
 batching_intervals=("1ms")
 
+check_sync() {
+    shas=$1
+    first_sha=$(echo "$shas" | head -n 1)
+    while read -r sha; do
+        if [ "$sha" != "$first_sha" ]; then
+            echo "Error: NFS out of sync"
+            exit 1
+        fi
+    done <<< "$shas"
+}
+
 modify_batching_intervals() {
     sed -i "s|order-batching-interval: .*|order-batching-interval: $1|" "${benchmark_dir}/../.scalog.yaml"
     sed -i "s|data-batching-interval: .*|data-batching-interval: $1|" "${benchmark_dir}/../.scalog.yaml"

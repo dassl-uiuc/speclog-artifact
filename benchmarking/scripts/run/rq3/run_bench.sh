@@ -17,6 +17,8 @@ if [ "$num_shards" -gt 3 ]; then
 
     # wait for NFS to sync
     sleep 5 
+    shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
+    check_sync $shas
 fi 
 
 num_iter=3
@@ -97,6 +99,8 @@ if [ "$num_shards" -gt 3 ]; then
 
     # wait for NFS to sync
     sleep 5 
+    shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
+    check_sync $shas
 fi 
 
 popd

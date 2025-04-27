@@ -32,6 +32,8 @@ go build
 popd 
 
 sleep 5
+shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
+check_sync $shas
 echo "Running with lagfix enabled"
 pushd $benchmark_dir/scripts
 # single shard involved in this expt
@@ -87,6 +89,9 @@ go build
 popd
 
 sleep 5 
+shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
+check_sync $shas
+
 echo "Running with lagfix disabled"
 
 pushd $benchmark_dir/scripts
@@ -162,5 +167,8 @@ set_bool_variable_in_file \
 pushd $benchmark_dir/../
 go build
 popd
+
+sleep 5
+
 
 popd
