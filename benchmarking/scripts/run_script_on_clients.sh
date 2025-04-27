@@ -1,7 +1,6 @@
 #!/bin/bash
 
 remote_nodes=("node13" "node14" "node15" "node12")
-PASSLESS_ENTRY="/users/sgbhat3/.ssh/id_rsa"
 
 # Check if the correct number of arguments is provided
 if [ $# -ne 2 ]; then
@@ -18,6 +17,12 @@ if ! [[ "$num_nodes" =~ ^[0-9]+$ ]] || [ "$num_nodes" -le 0 ]; then
     exit 1
 fi
 
+# where the script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Path to the .env file
+ENV_FILE="$SCRIPT_DIR/.env"
+
 # Ensure num_nodes does not exceed the number of available remote nodes
 if [ "$num_nodes" -gt "${#remote_nodes[@]}" ]; then
     echo "Error: <num_nodes> exceeds the number of available remote nodes (${#remote_nodes[@]})."
@@ -28,7 +33,7 @@ fi
 for ((i = 0; i < num_nodes; i++)); do
     node="${remote_nodes[i]}"
     echo "Executing script on $node..."
-    ssh -o StrictHostKeyChecking=no -i ${PASSLESS_ENTRY} sgbhat3@$node "sudo bash -s" < "$local_script" &
+    ssh -o StrictHostKeyChecking=no -i ${PASSLESS_ENTRY} $node "source $ENV_FILE && sudo bash -s" < "$local_script" &
 done
 
 wait
