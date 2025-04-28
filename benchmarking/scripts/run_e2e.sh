@@ -3,11 +3,9 @@
 source ./common.sh
 
 # parameters
-runtime_secs=120
-# computation_time=(100 200 500 800 1000 1200 1500 2000 5000 4000 3800 3300 3000 2800 2500 2200)
-computation_time=(1200)
-# num_shards=(1 2 3 4 5)
-num_shards=(4)
+runtime_secs=60
+computation_time=(1000)
+num_shards=(1)
 
 for ct in "${computation_time[@]}";
 do 
@@ -36,8 +34,8 @@ do
         collect_logs $shards
 
         # move logs to a different folder
-        mkdir -p "$benchmark_dir/results/e2e_${ct}_${shards}"
-        mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e_${ct}_${shards}"
+        mkdir -p "$benchmark_dir/results/e2e_${ct}"
+        mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e_${ct}"
     done 
 done
 
