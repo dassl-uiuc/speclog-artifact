@@ -23,6 +23,10 @@ Run the following steps to install all the required dependencies on all the node
 ssh node0
 cd /sharedfs/speclog-artifact/benchmarking/scripts
 ./run_script_on_all.sh ./install_go.sh
+
+# restart bash and reload the environment 
+exec bash 
+source /sharedfs/speclog-artifact/benchmarking/scripts/.env
 ```
 
 `node0` will be used to generate the plots from the paper for which we require some additional python libraries which can be installed as follows
