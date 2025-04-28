@@ -1,12 +1,11 @@
 # SpecLog
 
 This repository is the artifact for the OSDI'25 paper titled 
-
 ```
 Low End-to-End Latency atop a Speculative Shared Log with Fix-Ante Ordering
 Shreesha G. Bhat, Tony Hong, Xuhao Luo, Jiyu Hu, Aishwarya Ganesan, Ramnatthan Alagappan
 ```
-
+This repository builds on the publicly available artifact for [scalog](https://github.com/scalog/scalog)
 ## Setup
 Belfast is a distributed system that contains multiple components, namely a sequencing layer, storage shards, clients and a discovery service. For a minimal setup a cluster with 6 nodes suffices (3 (sequencer nodes) + 2 (two storage shards with discovery service) + 1 (client)). However, for full reproduction of all the experiments in a paper, a cluster with 16 nodes is required. For ease of setup, we request that the source code and binaries be hosted on a network file-system such as NFS/AFS so that all the nodes in this system can share them. From this point on, we assume that the repository is cloned on a shared file-system mounted at `/sharedfs`, all paths in this readme are relative to the root of the repository at `/sharedfs/speclog-artifact`. We also assume that each node (`node0` to `node15`) contains a local disk mounted at `/data`. Additionally, we assume that ssh connections can be established from any node to the others. 
 
