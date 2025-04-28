@@ -29,7 +29,7 @@ cd /sharedfs/speclog-artifact/benchmarking/scripts
 ```bash
 ssh node0
 cd /sharedfs/speclog-artifact/benchmarking/scripts
-pip install requirements.txt -r
+pip install -r requirements.txt
 ```
 
 To compile the binary, run the following 
