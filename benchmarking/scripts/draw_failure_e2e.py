@@ -4,6 +4,10 @@ import csv
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# change this to draw different time range
+draw_start = 25
+draw_end = 35
+
 path='../results/e2e_2000/e2e_metrics_*.csv'
 all_e2e_metric : list[tuple[int, int, datetime]] = []
 for file in glob.glob(path):
@@ -41,7 +45,7 @@ df = pd.DataFrame({
 })
 df = df.sort_values(by='time')
 
-zoom = (28, 29)
+zoom = (draw_start, draw_end)
 
 start_time = all_time[0] + timedelta(seconds=zoom[0])
 end_time = all_time[0] + timedelta(seconds=zoom[1])

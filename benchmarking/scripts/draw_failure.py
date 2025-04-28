@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 
 path='../results/1ms/append_bench_40/<hpnode*>_1m_4096_*.csv'
 
+# change this to draw different time range
+draw_start = 25
+draw_end = 35
+
 all_metric : list[tuple[int, int, datetime]] = []
 for file in glob.glob(path):
     print(f'processing {file}')
@@ -27,18 +31,19 @@ df = pd.DataFrame({
 })
 df = df.sort_values(by='time')
 
-start_time = all_time[0] + timedelta(seconds=20)
-end_time = all_time[0] + timedelta(seconds=22.5)
+start_time = all_time[0] + timedelta(seconds=draw_start-5)
+end_time = all_time[0] + timedelta(seconds=draw_end+5)
 
 df['mov_avg'] = df['latency'].rolling(window=10, min_periods=1).mean()/1e6
 min_time = df['time'].min()
+print(f'min_time: {min_time}')
 df['relative_time_s'] = (df['time'] - min_time).dt.total_seconds()
 
 df_zoomed = df[(df['time'] >= start_time) & (df['time'] <= end_time)]
 
 failure_ev : datetime = None
 viewchange_ev : datetime = None
-with open('../results/logs/1ms/append_bench_40_1000/client_node11.log', 'r') as f:
+with open('../results/logs/1ms/append_bench_40_400/client_node11.log', 'r') as f:
     for line in f.readlines():
         if 'rpc error:' in line and failure_ev is None:
             failure_ev = datetime.strptime(line.split(' ')[2], '%H:%M:%S.%f')
@@ -51,7 +56,7 @@ plot, ax = plt.subplots(figsize=(10,6))
 ax.plot(df_zoomed['relative_time_s'], df_zoomed['mov_avg'])
 ax.axvline((failure_ev - min_time).total_seconds(), color='brown', alpha=0.7, linestyle='--', label="shard fail")
 ax.axvline((viewchange_ev - min_time).total_seconds(), color='crimson', alpha=0.7, linestyle='--', label="view change notified")
-ax.set_xlim(left=21, right=22)
+ax.set_xlim(left=draw_start, right=draw_end)
 ax.set_xlabel('Time (seconds)')
 ax.set_ylabel('Append latency (ms)')
 ax.set_title('Append Latency change (moving avg, window=10)')
@@ -64,7 +69,7 @@ plt.savefig('lat_change.pdf')
 tput = []
 time : 'list[datetime]' = []
 event : 'dict[str, tuple[datetime, str]]' = {}
-with open('../results/logs/1ms/append_bench_40_1000/order-0.log', 'r') as f:
+with open('../results/logs/1ms/append_bench_40_400/order-0.log', 'r') as f:
     for line in f.readlines():
         if '[real-time tput]' in line:
             tput.append(int(line.split(' ')[-2]))
@@ -84,7 +89,7 @@ time_in_s = [(t - start_time).total_seconds() for t in time]
 
 plot, ax = plt.subplots(figsize=(10, 6))
 ax.plot(time_in_s, tput)
-ax.set_xlim(left=21, right=22)
+ax.set_xlim(left=draw_start, right=draw_end)
 ax.grid(True)
 ax.set_xlabel("Time (seconds)")
 ax.set_ylabel("Throughput (ops/sec)")
