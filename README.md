@@ -87,9 +87,9 @@ p99, 1864.00, 3539.00, 5111.00, 5132.00, 999.00
 
 ### Reproducing the results 
 Using the base scripts from earlier, we have constructed individual scripts for each research question in the evaluation section of the paper. These scripts are available in 
-`benchmarking/scripts/run/rq*` (note, we are still working on scripts for RQ9). For our baseline, we have Scalog which is hosted in a separate branch `scalog`. This branch also contains similar scripts to reproduce results from the paper at the same path. 
+`benchmarking/scripts/run/rq*`. For our baseline, we have Scalog which is hosted in a separate branch `scalog`. This branch also contains similar scripts to reproduce results from the paper at the same path. Additionally, for RQ9, our code is hosted on a separate branch `failure-expt`.  
 
-To run all the experiments from the paper, run the following commands
+To run all the experiments from the paper, run the following sequence of commands
 ```bash
 cd /sharedfs/speclog-artifact
 git checkout main
@@ -101,6 +101,18 @@ go mod vendor
 
 cd benchmarking/scripts/run
 # run all experiments, this step should take about 90-95 mins
+./run_all.sh 
+
+# go back to root and checkout to the failure experiment branch (for RQ9)
+cd ../../..
+git checkout failure-expt
+
+# build this version
+go build
+go mod vendor
+
+# run RQ9 (should take about a minute)
+cd benchmarking/scripts/run
 ./run_all.sh 
 
 # go back to root and checkout to scalog
