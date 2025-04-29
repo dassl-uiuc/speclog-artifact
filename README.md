@@ -129,8 +129,13 @@ mkdir figs
 
 ### For artifact evaluators
 
-For artifact evaluators, we provide a cluster with 16 nodes. These nodes are already setup with the installation and setup steps. In these nodes, the repository would be hosted in an NFS at `/proj/rasl-PG0/TODO/speclog-artifact`. Please talk to us through the preferred communication medium for further instructions to access this cluster. 
+For artifact evaluators, we provide a cluster with 16 nodes. These nodes are already setup with the installation and setup steps. In these nodes, the repository would be hosted in an NFS at `/proj/rasl-PG0/<username>/speclog-artifact`. Please talk to us through the preferred communication medium for further instructions to access this cluster. 
 
+If any step or script gets stuck at any point, exit from the script and perform the following steps to cleanup any stale processes on the servers and clients
+```
+cd /sharedfs/speclog-artifact/benchmarking/script
+./run.sh 5
+```
 
 > **NOTE:** README from the original artifact for scalog below
 

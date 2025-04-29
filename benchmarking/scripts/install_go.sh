@@ -21,10 +21,10 @@ sudo rm -rf $GO_TAR
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 echo "export PATH=\$PATH:/users/${username}/go/bin" >> ~/.bashrc
 export PATH=$PATH:/usr/local/go/bin
-sudo cp /users/${username}/go/bin/goreman /usr/local/bin/
 
 # install goreman
 go install github.com/mattn/goreman@latest
+sudo cp /users/${username}/go/bin/goreman /usr/local/bin/
 
 
 # own user
