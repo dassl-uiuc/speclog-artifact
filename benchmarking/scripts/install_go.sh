@@ -19,8 +19,17 @@ wget https://go.dev/dl/$GO_TAR
 sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf $GO_TAR
 sudo rm -rf $GO_TAR
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
-echo 'export PATH=$PATH:/users/luoxh/go/bin' >> ~/.bashrc
+echo "export PATH=\$PATH:/users/${username}/go/bin" >> ~/.bashrc
 export PATH=$PATH:/usr/local/go/bin
 
 # install goreman
 go install github.com/mattn/goreman@latest
+sudo cp /users/${username}/go/bin/goreman /usr/local/bin/
+
+
+# own user
+sudo chown -R $username ~
+
+# install packages
+sudo apt-get install pip texlive-font-utils gnuplot -y 
+

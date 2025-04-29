@@ -2,8 +2,6 @@
 
 source ./common.sh
 
-user=$(whoami)
-
 shard=2
 c=40
 rate=400
@@ -50,8 +48,8 @@ done
 echo "Wait for 10s before killing 1 shard"
 sleep 30
 
-ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $user@${data_pri[0]} "sudo bash -s" < ./kill_all_goreman.sh
-ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $user@${data_sec[0]} "sudo bash -s" < ./kill_all_goreman.sh
+ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_pri[0]} "sudo bash -s" < ./kill_all_goreman.sh
+ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_sec[0]} "sudo bash -s" < ./kill_all_goreman.sh
 
 echo "Shard 0 killed, waiting for clients to finish"
 wait

@@ -1,6 +1,7 @@
 #!/bin/bash
 
-source ./common.sh
+source ../../common.sh
+pushd $benchmark_dir/scripts
 
 runtime_secs=60
 computation_time=2000
@@ -35,7 +36,7 @@ cleanup_servers
 collect_logs $num_shards
 
 # move logs to a different folder
-mkdir -p "$benchmark_dir/results/e2e_${computation_time}"
-mv $benchmark_dir/logs/* "$benchmark_dir/results/e2e_${computation_time}"
+mkdir -p "$results_dir/failure/e2e_${computation_time}"
+mv $benchmark_dir/logs/* "$results_dir/failure/e2e_${computation_time}"
 
-python3 ./draw_failure_e2e.py
+popd
