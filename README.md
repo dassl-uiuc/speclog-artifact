@@ -45,6 +45,7 @@ To compile the binary, run the following
 ssh node0
 cd /sharedfs/speclog-artifact
 go build
+go mod vendor
 ```
 
 
@@ -95,6 +96,8 @@ git checkout main
 
 # build the belfast binary 
 go build
+go mod vendor
+
 
 cd benchmarking/scripts/run
 # run all experiments, this step should take about 90-95 mins
@@ -106,6 +109,7 @@ git checkout scalog
 
 # build scalog 
 go build
+go mod vendor
 
 cd benchmarking/scripts/run
 # run all experiments for scalog, this step should take about 80-85 mins
