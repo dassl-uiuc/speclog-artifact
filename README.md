@@ -34,6 +34,10 @@ source /sharedfs/speclog-artifact/benchmarking/scripts/.env
 ssh node0
 cd /sharedfs/speclog-artifact/benchmarking/scripts
 pip install -r requirements.txt
+
+# create a logs directory
+cd ..
+mkdir logs
 ```
 
 To compile the binary, run the following 
@@ -58,8 +62,14 @@ cd /sharedfs/speclog-artifact/benchmarking/scripts
 ./run_e2e.sh 
 ```
 
-This script runs a simple e2e benchmark for 1 minute by first setting up a Belfast cluster with 2 storage shards and 3 sequencing layer nodes. Two client nodes are subsequently spawned. Each client node hosts 10 append clients and 1 consumer connected to one storage shard. Each append client appends 4k records at a rate of 1000/sec and each consumer runs a fake compute operation of 1ms/op. Once the experiment terminates, the result files are accumulated in `/sharedfs/speclog-artifact/benchmarking/results/e2e_1000`. These results can be analyzed by running the first two cells in the `analyze.ipynb` notebook. The result of the second cell should be something like the following
+This script runs a simple e2e benchmark for 1 minute by first setting up a Belfast cluster with 2 storage shards and 3 sequencing layer nodes. Two client nodes are subsequently spawned. Each client node hosts 10 append clients and 1 consumer connected to one storage shard. Each append client appends 4k records at a rate of 1000/sec and each consumer runs a fake compute operation of 1ms/op. Once the experiment terminates, the result files are accumulated in `/sharedfs/speclog-artifact/benchmarking/results/e2e_1000`. These results can be analyzed through the following command
 
+```bash
+cd /sharedfs/speclog-artifact/benchmarking/scripts
+python3 analyze_e2e.py
+```
+
+The result of the above should look something like this
 ```
 results for computation time 1000 us
 statistic/metric, latency (us)
@@ -91,7 +101,7 @@ cd benchmarking/scripts/run
 ./run_all.sh 
 
 # go back to root and checkout to scalog
-cd ../..
+cd ../../..
 git checkout scalog
 
 # build scalog 
