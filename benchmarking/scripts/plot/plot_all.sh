@@ -44,7 +44,10 @@ python3 rq8.py
 mv *.pdf ../$1
 popd
 
-# TODO RQ9 
+pushd rq9
+python3 rq9.py
+mv *.pdf ../$1
+popd
 
 pushd rq10
 python3 rq10.py
