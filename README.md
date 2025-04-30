@@ -87,7 +87,7 @@ p99, 1864.00, 3539.00, 5111.00, 5132.00, 999.00
 
 ### Reproducing the results 
 Using the base scripts from earlier, we have constructed individual scripts for each research question in the evaluation section of the paper. These scripts are available in 
-`benchmarking/scripts/run/rq*`. For our baseline, we have Scalog which is hosted in a separate branch `scalog`. This branch also contains similar scripts to reproduce results from the paper at the same path. Additionally, for RQ9, our code is hosted on a separate branch `failure-expt`.  
+`benchmarking/scripts/run/rq*`. For our baseline, we have Scalog which is hosted in a separate branch `scalog-impl`. This branch also contains similar scripts to reproduce results from the paper at the same path. Additionally, for RQ9, our code is hosted on a separate branch `failure-expt`.  
 
 To run all the experiments from the paper, run the following sequence of commands
 ```bash
@@ -117,7 +117,7 @@ cd benchmarking/scripts/run
 
 # go back to root and checkout to scalog
 cd ../../..
-git checkout scalog
+git checkout scalog-impl
 
 # build scalog 
 go build
