@@ -51,7 +51,7 @@ func Append_One_Ping(appenderId int32, clientNumber int, offsetForShardingPolicy
 	}
 	runTime := int64(viper.GetInt("produce-run-time"))
 
-	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/JiyuHu23/speclog/.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, -1, "../../.scalog.yaml")
 
 	currStockId := int32(0)
 	recordsProduced := 0
@@ -91,7 +91,7 @@ func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPol
 	runTime := int64(viper.GetInt("produce-run-time"))
 	fmt.Printf("runtime=%ds appenderID=%d maxStockId=%d\n", runTime, appenderId, maxStockId)
 
-	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "/proj/rasl-PG0/JiyuHu23/speclog/.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, offsetForShardingPolicy, "../../.scalog.yaml")
 
 	idOffset := int32(0)
 	if appenderId == 0 || appenderId == 1 {

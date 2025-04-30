@@ -125,7 +125,7 @@ func TransactionAnalysisProcessing(readerId int32, clientNumber int) {
 	numReadClients := int32(viper.GetInt("num-read-clients"))
 
 	filterValue := numReadClients
-	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, -1, "../../.scalog.yaml")
 
 	scalogApi.FilterSubscribe(0, readerId, filterValue)
 
