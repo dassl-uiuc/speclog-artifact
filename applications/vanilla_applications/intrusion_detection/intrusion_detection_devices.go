@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	movingaverage "github.com/RobinUS2/golang-moving-average"
+	"github.com/scalog/scalog/benchmark/util"
 	"github.com/scalog/scalog/client"
 	"github.com/scalog/scalog/scalog_api"
-	"github.com/scalog/scalog/benchmark/util"
 	"github.com/spf13/viper"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -168,7 +168,7 @@ func IntrusionDetectionProcessing(readerId int32, clientNumber int) {
 	}
 	runTime := int64(viper.GetInt("consume-run-time"))
 
-	scalogApi := scalog_api.CreateClient(1000, -1, "/proj/rasl-PG0/tshong/speclog/.scalog.yaml")
+	scalogApi := scalog_api.CreateClient(1000, -1, "../../.scalog.yaml")
 
 	scalogApi.SubscribeToAssignedShard(readerId, 0)
 
