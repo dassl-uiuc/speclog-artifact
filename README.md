@@ -124,7 +124,7 @@ go build
 go mod vendor
 
 cd benchmarking/scripts/run
-# run all experiments for scalog, this step should take about 80-85 mins
+# run all experiments for scalog, this step should take about 105-110 mins
 ./run_all.sh 
 ```
 
