@@ -100,7 +100,7 @@ go mod vendor
 
 
 cd benchmarking/scripts/run
-# run all experiments, this step should take about 90-95 mins
+# run all experiments, this step should take about 105-110 mins
 ./run_all.sh 
 
 # go back to root and checkout to the failure experiment branch (for RQ9)
