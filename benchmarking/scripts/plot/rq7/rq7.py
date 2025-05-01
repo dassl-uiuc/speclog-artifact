@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import os 
 
 results_dir = os.getenv("results_dir")
-num_iter = 1
+num_iter = 3
 
 def get_append_metrics(path, df):
     file_pattern = path + "append_metrics*.csv"
@@ -161,64 +161,65 @@ with open("lat_data", "w") as f:
     for shards in df_speclog.index:
         f.write(f"{shards*2}\t{df_speclog.loc[shards]['mean_e2e_latency']}\t{df_scalog.loc[shards]['mean_e2e_latency']}\n")
 
-latencies_wo_staggering = {"e2e": []}
-latencies_wi_staggering = {"e2e": []}
-latencies_scalog = {"e2e": []}
+
+for run in range(1, num_iter + 1):
+    latencies_wo_staggering = {"e2e": []}
+    latencies_wi_staggering = {"e2e": []}
+    latencies_scalog = {"e2e": []}
+
+    wo_staggering = results_dir + f"/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_5/"
+    wi_staggering = results_dir + f"/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_5/"
+    scalog = results_dir + f"/e2e_scalability/runs_3_scalog/{run}/e2e_1200_5/"
 
 
-wo_staggering = results_dir + f"/e2e_scalability/runs_3_wo_sc/1/e2e_1200_5/"
-wi_staggering = results_dir + f"/e2e_scalability/runs_3_wi_sc/1/e2e_1200_5/"
-scalog = results_dir + f"/e2e_scalability/runs_3_scalog/1/e2e_1200_5/"
+    for file_name in os.listdir(wo_staggering):
+        if file_name.startswith("e2e") and file_name.endswith(".csv"):
+            file_path = os.path.join(wo_staggering, file_name)
+            df = pd.read_csv(file_path)
+            latencies_wo_staggering['e2e'].extend(df['e2e latency (us)'])
+
+    for file_name in os.listdir(wi_staggering):
+        if file_name.startswith("e2e") and file_name.endswith(".csv"):
+            file_path = os.path.join(wi_staggering, file_name)
+            df = pd.read_csv(file_path)
+            latencies_wi_staggering['e2e'].extend(df['e2e latency (us)'])
 
 
-for file_name in os.listdir(wo_staggering):
-    if file_name.startswith("e2e") and file_name.endswith(".csv"):
-        file_path = os.path.join(wo_staggering, file_name)
-        df = pd.read_csv(file_path)
-        latencies_wo_staggering['e2e'].extend(df['e2e latency (us)'])
-
-for file_name in os.listdir(wi_staggering):
-    if file_name.startswith("e2e") and file_name.endswith(".csv"):
-        file_path = os.path.join(wi_staggering, file_name)
-        df = pd.read_csv(file_path)
-        latencies_wi_staggering['e2e'].extend(df['e2e latency (us)'])
+    for file_name in os.listdir(scalog):
+        if file_name.startswith("e2e") and file_name.endswith(".csv"):
+            file_path = os.path.join(scalog, file_name)
+            df = pd.read_csv(file_path)
+            latencies_scalog['e2e'].extend(df['e2e latency (us)'])
 
 
-for file_name in os.listdir(scalog):
-    if file_name.startswith("e2e") and file_name.endswith(".csv"):
-        file_path = os.path.join(scalog, file_name)
-        df = pd.read_csv(file_path)
-        latencies_scalog['e2e'].extend(df['e2e latency (us)'])
+    for key, value in latencies_wi_staggering.items():
+        latencies_wi_staggering[key] = np.sort(np.array(value))
+
+    for key, value in latencies_wo_staggering.items():
+        latencies_wo_staggering[key] = np.sort(np.array(value))
+
+    for key, value in latencies_scalog.items():
+        latencies_scalog[key] = np.sort(np.array(value))
 
 
-for key, value in latencies_wi_staggering.items():
-    latencies_wi_staggering[key] = np.sort(np.array(value))
+    cdf_wi_staggering = {'e2e': []}
+    cdf_wo_staggering = {'e2e': []}
+    cdf_scalog = {'e2e': []}
 
-for key, value in latencies_wo_staggering.items():
-    latencies_wo_staggering[key] = np.sort(np.array(value))
-
-for key, value in latencies_scalog.items():
-    latencies_scalog[key] = np.sort(np.array(value))
-
-
-cdf_wi_staggering = {'e2e': []}
-cdf_wo_staggering = {'e2e': []}
-cdf_scalog = {'e2e': []}
-
-# get array of percentiles from 1 to 99
-percentiles = np.linspace(0.01, 100.0, 10000)
-for key, value in latencies_wi_staggering.items():
-    cdf_wi_staggering[key] = np.percentile(value, percentiles)
-for key, value in latencies_wo_staggering.items():
-    cdf_wo_staggering[key] = np.percentile(value, percentiles)
-for key, value in latencies_scalog.items():
-    cdf_scalog[key] = np.percentile(value, percentiles)
+    # get array of percentiles from 1 to 99
+    percentiles = np.linspace(0.01, 100.0, 10000)
+    for key, value in latencies_wi_staggering.items():
+        cdf_wi_staggering[key] = np.percentile(value, percentiles)
+    for key, value in latencies_wo_staggering.items():
+        cdf_wo_staggering[key] = np.percentile(value, percentiles)
+    for key, value in latencies_scalog.items():
+        cdf_scalog[key] = np.percentile(value, percentiles)
 
 
-with open("cdfdata", 'w') as f:
-    f.write("#percentile\two\twi\tscalog\n")
-    for i in range(len(cdf_wi_staggering['e2e'])):
-        f.write(f"{percentiles[i]:.2f}\t{cdf_wo_staggering['e2e'][i]:.2f}\t{cdf_wi_staggering['e2e'][i]:.2f}\t{cdf_scalog['e2e'][i]:.2f}\n")
+    with open(f"cdfdata_{run}", 'w') as f:
+        f.write("#percentile\two\twi\tscalog\n")
+        for i in range(len(cdf_wi_staggering['e2e'])):
+            f.write(f"{percentiles[i]:.2f}\t{cdf_wo_staggering['e2e'][i]:.2f}\t{cdf_wi_staggering['e2e'][i]:.2f}\t{cdf_scalog['e2e'][i]:.2f}\n")
 
 
 gnuplot_lat = rf"""
@@ -289,7 +290,7 @@ EOF
 ) | gnuplot -persist
 """
 
-gnuplot_cdf = rf"""
+gnuplot_cdf = lambda run: rf"""
 #! /bin/bash
 #run this script to generate the lat vs thrpt graphs for c and w
 
@@ -299,7 +300,7 @@ gnuplot_cdf = rf"""
 
 (cat <<EOF
 	set terminal postscript eps enhanced color size 2.3, 1.7 font "Times-new-roman,19"
-	set output "scalecdf.eps"
+	set output "scalecdf_{run}.eps"
 	set xlabel "E2E Latency (ms)" font "Times-new-roman,22" offset 0,0.2,0
 	set ylabel "CDF" font "Times-new-roman,22" offset 1.5,0,0
 	set tmargin 3.1
@@ -317,8 +318,8 @@ gnuplot_cdf = rf"""
 	#set xtics (1,3,5,7,10) scale 0.4
 	set key at 10.5,143 font "Times-new-roman,21" samplen 1.4 maxrows 2 width -13
 	set style function linespoints
-	plot "cdfdata" using (\$4/1000):1 title "Scalog" with lines lc rgb 'coral' dashtype 3 lw 5,\
-		"cdfdata" using (\$2/1000):1 title "Belfast no-stagger" with lines lc rgb '#A9A9A9' dashtype 2 lw 4,\
+	plot "cdfdata_{run}" using (\$4/1000):1 title "Scalog" with lines lc rgb 'coral' dashtype 3 lw 5,\
+		"cdfdata_{run}" using (\$2/1000):1 title "Belfast no-stagger" with lines lc rgb '#A9A9A9' dashtype 2 lw 4,\
 		"" using (\$3/1000):1 title 'Belfast' with lines lc rgb '#009988'  dashtype 1 lw 4,\
 
 		
@@ -328,11 +329,17 @@ EOF
 
 subprocess.run(['bash'], input=gnuplot_lat, text=True)
 subprocess.run(['bash'], input=gnuplot_tput, text=True)
-subprocess.run(['bash'], input=gnuplot_cdf, text=True)
+subprocess.run(['bash'], input=gnuplot_cdf(1), text=True)
+subprocess.run(['bash'], input=gnuplot_cdf(2), text=True)
+subprocess.run(['bash'], input=gnuplot_cdf(3), text=True)
 subprocess.run(['bash'], input="epstopdf scalee2e.eps", text=True)
 subprocess.run(['bash'], input="epstopdf scaletput.eps", text=True)
-subprocess.run(['bash'], input="epstopdf scalecdf.eps", text=True)
-subprocess.run(['bash'], input="rm scalee2e.eps scaletput.eps scalecdf.eps data lat_data cdfdata", text=True)
+subprocess.run(['bash'], input=f"epstopdf scalecdf_{1}.eps", text=True)
+subprocess.run(['bash'], input=f"epstopdf scalecdf_{2}.eps", text=True)
+subprocess.run(['bash'], input=f"epstopdf scalecdf_{3}.eps", text=True)
+subprocess.run(['bash'], input="rm scalee2e.eps scaletput.eps scalecdf*.eps data lat_data cdfdata*", text=True)
 subprocess.run(['bash'], input="mv scaletput.pdf 12a.pdf", text=True)
 subprocess.run(['bash'], input="mv scalee2e.pdf 12b.pdf", text=True)
-subprocess.run(['bash'], input="mv scalecdf.pdf 12c.pdf", text=True)
+subprocess.run(['bash'], input=f"mv scalecdf_{1}.pdf 12c-sample{1}.pdf", text=True)
+subprocess.run(['bash'], input=f"mv scalecdf_{2}.pdf 12c-sample{2}.pdf", text=True)
+subprocess.run(['bash'], input=f"mv scalecdf_{3}.pdf 12c-sample{3}.pdf", text=True)
