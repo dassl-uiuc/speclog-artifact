@@ -145,14 +145,21 @@ mkdir figs
 
 ### For artifact evaluators
 
-For artifact evaluators, we provide a cluster with 16 nodes. These nodes are already setup with the installation and setup steps. In these nodes, the repository would be hosted in an NFS at `/proj/rasl-PG0/<username>/speclog-artifact`. Please talk to us through the preferred communication medium for further instructions to access this cluster. 
+For artifact evaluators, we provide a cluster with 16 nodes. These nodes are already setup with the installation and setup steps. In these nodes, the repository would be hosted in an NFS at `/proj/rasl-PG0/<username>/speclog-artifact`. Please talk to us through HotCRP for further instructions to access this cluster. 
 
 If any step or script gets stuck at any point, exit from the script and perform the following steps to cleanup any stale processes on the servers and clients
-```
-cd /sharedfs/speclog-artifact/benchmarking/script
+```bash
+cd /sharedfs/speclog-artifact/benchmarking/scripts
 ./run.sh 5
 ```
 
+While we have done our best to script the experiments, please note that some of these experiments involve very carefully injected faults, bursts or other abnormal behaviours and consequently the desired system behaviour might not be obtained in each run. If errors are encountered either at runtime or malformed figures are obtained during plotting, kindly rerun the experiments corresponding to the specific research question in the corresponding branches as below. Please contact us through HotCRP if you have any questions. 
+
+```bash 
+cd /sharedfs/speclog-artifact/benchmarking/scripts/run/rq<insert_number>
+./rq<insert_number>.sh
+```
+---
 > **NOTE:** README from the original artifact for scalog below
 
 # scalog
