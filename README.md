@@ -143,7 +143,7 @@ mkdir figs
 ```
 
 
-### For artifact evaluators
+## For artifact evaluators
 
 For artifact evaluators, we provide a cluster with 16 nodes. These nodes are already setup with the installation and setup steps. In these nodes, the repository would be hosted in an NFS at `/proj/rasl-PG0/<username>/speclog-artifact`. Please talk to us through HotCRP for further instructions to access this cluster. 
 
@@ -159,6 +159,17 @@ While we have done our best to script the experiments, please note that some of 
 cd /sharedfs/speclog-artifact/benchmarking/scripts/run/rq<insert_number>
 ./rq<insert_number>.sh
 ```
+
+## Supported Platforms
+Belfast has been tested on a cluster with the following configuration
+
+* OS: Ubuntu 22.04 LTS
+* NIC: Mellanox MT27710 Family ConnectX-4 Lx (25Gb RoCE)
+* System: 10-core Intel E5-2640v4 at 2.4 GHz with 64GB ECC Memory (4x 16 GB DDR4-2400 DIMMs)
+* Disk: Intel DC S3520 480 GB 6G SATA SSD
+
+The above configuration is available on the `xl170` machines on the CloudLab platform.
+ 
 ---
 > **NOTE:** README from the original artifact for scalog below
 
