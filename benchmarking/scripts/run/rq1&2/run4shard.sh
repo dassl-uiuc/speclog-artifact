@@ -5,7 +5,7 @@ pushd $benchmark_dir/scripts
 
 # parameters
 runtime_secs=60
-computation_time=(100 500 1000 1500 2000 2500 3000 4000 5000)
+computation_time=(100 500 1000 1500 2000 2500 3000 4000 5000 50000)
 num_shards=(2)
 
 for ct in "${computation_time[@]}";
