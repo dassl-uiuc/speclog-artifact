@@ -251,7 +251,7 @@ gnuplot_cdf=r"""
 	set output "rq1-cdf.eps"
 	set xlabel "E2E Latency (ms)" font "Times-new-roman,22" offset 0,0.2,0
 	set ylabel "CDF" font "Times-new-roman,22" offset 1.5,0,0
-	set tmargin 3.1
+	set tmargin 2.1
 	set lmargin 6
 	set encoding utf8
 	set rmargin 1.2
@@ -278,7 +278,7 @@ subprocess.run(['bash'], input=gnuplot_cdf, text=True)
 subprocess.run(['bash'], input="epstopdf rq1-dlat.eps", text=True)
 subprocess.run(['bash'], input="epstopdf rq1-e2elat.eps", text=True)
 subprocess.run(['bash'], input="epstopdf rq1-cdf.eps", text=True)
-# subprocess.run(['bash'], input="rm *.eps *.dat cdfdata", text=True)
+subprocess.run(['bash'], input="rm *.eps *.dat cdfdata", text=True)
 subprocess.run(['bash'], input="mv rq1-dlat.pdf 6a.pdf", text=True)
 subprocess.run(['bash'], input="mv rq1-e2elat.pdf 6b.pdf", text=True)
 subprocess.run(['bash'], input="mv rq1-cdf.pdf 6c.pdf", text=True)
