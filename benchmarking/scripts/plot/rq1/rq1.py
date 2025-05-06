@@ -104,6 +104,48 @@ for path in glob.glob(results_dir + "/e2e/speclog/e2e_4shard/e2e_1500"):
 for path in glob.glob(results_dir + "/e2e/scalog/e2e_4shard/e2e_1500"):
     df_e2e_scalog_4shard = get_e2e_metrics_scalog(path + "/", df_e2e_scalog_4shard)
 
+latencies_speclog = {"e2e": []}
+latencies_scalog = {"e2e": []}
+
+speclog_path = results_dir + "/e2e/speclog/e2e_4shard/e2e_1500/"
+scalog_path = results_dir + "/e2e/scalog/e2e_4shard/e2e_1500/"
+
+
+for file_name in os.listdir(speclog_path):
+    if file_name.startswith("e2e") and file_name.endswith(".csv"):
+        file_path = os.path.join(speclog_path, file_name)
+        df = pd.read_csv(file_path)
+        latencies_speclog['e2e'].extend(df['e2e latency (us)'])
+
+for file_name in os.listdir(scalog_path):
+    if file_name.startswith("e2e") and file_name.endswith(".csv"):
+        file_path = os.path.join(scalog_path, file_name)
+        df = pd.read_csv(file_path)
+        latencies_scalog['e2e'].extend(df['e2e latency (us)'])
+
+for key, value in latencies_scalog.items():
+    latencies_scalog[key] = np.sort(np.array(value))
+
+for key, value in latencies_speclog.items():
+    latencies_speclog[key] = np.sort(np.array(value))
+
+
+cdf_speclog = {'e2e': []}
+cdf_scalog = {'e2e': []}
+
+# get array of percentiles from 1 to 99
+percentiles = np.linspace(0.01, 100.0, 10000)
+for key, value in latencies_speclog.items():
+    cdf_speclog[key] = np.percentile(value, percentiles)
+for key, value in latencies_scalog.items():
+    cdf_scalog[key] = np.percentile(value, percentiles)
+
+
+with open(f"cdfdata", 'w') as f:
+    f.write("#percentile\tspeclog\tscalog\n")
+    for i in range(len(cdf_speclog['e2e'])):
+        f.write(f"{percentiles[i]:.2f}\t{cdf_speclog['e2e'][i]:.2f}\t{cdf_scalog['e2e'][i]:.2f}\n")
+
 # print(df_e2e_scalog_2shard)
 # print(df_e2e_scalog_4shard)
 # print(df_e2e_speclog_2shard)
@@ -196,13 +238,50 @@ EOF
 ) | gnuplot -persist
 """
 
+gnuplot_cdf=r"""
+#! /bin/bash
+#run this script to generate the lat vs thrpt graphs for c and w
+
+#./plot_lat_thrpt.sh ../paper_results/wc-2 sync w 2;
+#./plot_lat_thrpt.sh ../paper_results/wc-2 async w 2;
+#./plot_lat_thrpt.sh ../paper_results/wc-2 sync c 2;
+
+(cat <<EOF
+	set terminal postscript eps enhanced color size 2.3, 1.7 font "Times-new-roman,19"
+	set output "rq1-cdf.eps"
+	set xlabel "E2E Latency (ms)" font "Times-new-roman,22" offset 0,0.2,0
+	set ylabel "CDF" font "Times-new-roman,22" offset 1.5,0,0
+	set tmargin 3.1
+	set lmargin 6
+	set encoding utf8
+	set rmargin 1.2
+	set bmargin 3
+	#set yrange [0:7.2]
+	set xrange [0:10]
+	#set y2tics nomirror
+	#set ytics nomirror
+	#set y2range[1:]
+	set ytics 20
+	#set ytics 0,25,110 scale 0.4
+	#set xtics (1,3,5,7,10) scale 0.4
+	set key top center outside font "Times-new-roman,21" samplen 1.4 maxrows 1
+	set style function linespoints
+	plot "cdfdata" using (\$3/1000):1 title "Scalog" with lines lc rgb 'coral' dashtype 3 lw 5,\
+		"cdfdata" using (\$2/1000):1 title 'Belfast' with lines lc rgb '#009988'  dashtype 1 lw 4
+EOF
+) | gnuplot -persist
+"""
+
 subprocess.run(['bash'], input=gnuplot_script_delivery, text=True)
 subprocess.run(['bash'], input=gnuplot_script_e2e, text=True)
+subprocess.run(['bash'], input=gnuplot_cdf, text=True)
 subprocess.run(['bash'], input="epstopdf rq1-dlat.eps", text=True)
 subprocess.run(['bash'], input="epstopdf rq1-e2elat.eps", text=True)
-subprocess.run(['bash'], input="rm *.eps *.dat", text=True)
+subprocess.run(['bash'], input="epstopdf rq1-cdf.eps", text=True)
+# subprocess.run(['bash'], input="rm *.eps *.dat cdfdata", text=True)
 subprocess.run(['bash'], input="mv rq1-dlat.pdf 6a.pdf", text=True)
 subprocess.run(['bash'], input="mv rq1-e2elat.pdf 6b.pdf", text=True)
+subprocess.run(['bash'], input="mv rq1-cdf.pdf 6c.pdf", text=True)
 
 
 

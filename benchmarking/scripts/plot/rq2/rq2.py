@@ -3,6 +3,8 @@ import glob
 import pandas as pd
 import subprocess
 import os 
+import matplotlib.pyplot as plt
+from brokenaxes import brokenaxes
 
 results_dir = os.getenv("results_dir")
 
@@ -403,6 +405,71 @@ EOF
 ) | gnuplot -persist
 """
 
+# Function to read data from a file
+def read_data(filename):
+    data = []
+    with open(filename, 'r') as f:
+        for line in f:
+            if line.startswith('#') or line.strip() == '':
+                continue
+            values = line.split()
+            data.append([float(value) for value in values])
+    return np.array(data)
+
+data = read_data('speclog-4shard')
+plt.rcParams['font.family'] = 'Times New Roman'
+plt.rcParams['font.weight'] = 'regular'
+
+computation_time = data[:, 0] / 1000
+benefit_ratio = data[:, -1]
+
+fig = plt.figure(figsize=(4.2, 3))  # Reduced figure size
+bax = brokenaxes(xlims=((0, 6), (49, 51)), hspace=0.05)
+
+plt.rcParams['font.size'] = 16  # Reduced font size
+bax.set_xlabel('Compute Time (ms)', fontsize=21, labelpad=18)
+bax.set_ylabel('Benefit Ratio', fontsize=20)
+bax.set_ylim(1, 1.7)
+
+bax.plot(computation_time, benefit_ratio, label='Benefit Ratio', color='#009988',
+         linestyle='-', marker='x', markersize=8, markeredgewidth=3, linewidth=2.5)
+legend = bax.legend(loc='upper right', bbox_to_anchor=(1.05, 1), fontsize=20, frameon=False)
+
+# Set y-ticks at every 0.1
+bax.set_yticks(np.arange(1, 1.71, 0.1))
+
+# Set x-ticks for both x-axes manually
+bax.axs[0].set_xticks(np.arange(0, 7, 1))     # First segment: 0 to 6 ms
+bax.axs[1].set_xticks(np.arange(49, 52, 1))   # Second segment: 49 to 51 ms
+
+# Customize tick params
+bax.axs[0].tick_params(axis='x', color='black', length=6, width=0.5, top=True, bottom=True, direction='in', labelsize=16)
+bax.axs[0].tick_params(axis='y', color='black', length=6, width=0.5, left=True, right=False, direction='in', labelsize=16)
+bax.axs[1].tick_params(axis='x', color='black', length=6, width=0.5, top=True, bottom=True, direction='in', labelsize=16)
+bax.axs[1].tick_params(axis='y', color='black', length=6, width=0.5, left=False, right=True, direction='in', labelsize=16)
+bax.axs[0].spines['left'].set_visible(True)
+bax.axs[0].spines['bottom'].set_visible(True)
+bax.axs[0].spines['top'].set_visible(True)
+# bax.axs[0].spines['right'].set_visible(True)
+bax.axs[0].spines['left'].set_linewidth(1.3)
+bax.axs[0].spines['bottom'].set_linewidth(1.3)
+bax.axs[0].spines['top'].set_linewidth(1.3)
+# bax.axs[0].spines['right'].set_linewidth(1.3)
+# bax.axs[0].spines['right'].set_linestyle('--')
+
+bax.axs[1].spines['right'].set_visible(True)
+bax.axs[1].spines['bottom'].set_visible(True)
+bax.axs[1].spines['top'].set_visible(True)
+# bax.axs[1].spines['left'].set_visible(True)
+bax.axs[1].spines['right'].set_linewidth(1.3)
+bax.axs[1].spines['bottom'].set_linewidth(1.3)
+bax.axs[1].spines['top'].set_linewidth(1.3)
+# bax.axs[1].spines['left'].set_linewidth(1.3)
+# bax.axs[1].spines['left'].set_linestyle('--')
+
+plt.savefig('benefitratio-kink.eps', bbox_inches="tight", format='eps')
+# plt.savefig('benefitratio-kink.pdf', bbox_inches="tight", dpi=600)
+
 
 subprocess.run(['bash'], input=gnuplot_script_benefit, text=True)
 subprocess.run(['bash'], input=gnuplot_script_e2e, text=True)
@@ -410,10 +477,12 @@ subprocess.run(['bash'], input=gnuplot_script_split, text=True)
 subprocess.run(['bash'], input="epstopdf benefitratio.eps", text=True)
 subprocess.run(['bash'], input="epstopdf e2evscompute.eps", text=True)
 subprocess.run(['bash'], input="epstopdf splitup.eps", text=True)
+subprocess.run(['bash'], input="epstopdf benefitratio-kink.eps", text=True)
 subprocess.run(['bash'], input="rm *.eps stacked-data-4 speclog-4shard scalog-4shard", text=True)
 subprocess.run(['bash'], input="mv splitup.pdf 7c.pdf", text=True)
 subprocess.run(['bash'], input="mv benefitratio.pdf 7b.pdf", text=True)
 subprocess.run(['bash'], input="mv e2evscompute.pdf 7a.pdf", text=True)
+subprocess.run(['bash'], input="mv benefitratio-kink.pdf 7b-kink.pdf", text=True)
 
 
 

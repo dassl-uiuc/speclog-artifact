@@ -33,3 +33,7 @@ sudo chown -R $username ~
 # install packages
 sudo apt-get install pip texlive-font-utils gnuplot -y 
 
+# run on any one node
+# TODO
+# sudo apt-get install msttcorefonts -qq -y
+
