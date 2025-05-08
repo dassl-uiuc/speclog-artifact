@@ -3,22 +3,22 @@ import matplotlib.pyplot as plt
 num_replicas = 2
 num_append_clients_per_replica = 10
 num_read_clients_per_replica = 1
-num_trials = 1
+num_trials = 3
 gsn_threshold = 250000
 def analyze():
     analyzing_trial = 1
     while analyzing_trial <= num_trials:
-        append_throughput_file_path = "analytics/intrusion_detection_run_" + str(analyzing_trial) + "/data/append_throughput_"
-        append_start_timestamps_file_path = "analytics/intrusion_detection_run_" + str(analyzing_trial) + "/data/append_start_timestamps_"
-        compute_e2e_end_times_file_path = "analytics/intrusion_detection_run_" + str(analyzing_trial) + "/data/compute_e2e_end_times_"
-        delivery_latencies_file_path = "analytics/intrusion_detection_run_" + str(analyzing_trial) + "/data/delivery_latencies_"
-        confirm_latencies_file_path = "analytics/intrusion_detection_run_" + str(analyzing_trial) + "/data/confirm_latencies_"
-        read_throughput_file_path = "analytics/intrusion_detection_run_" + str(analyzing_trial) + "/data/read_throughput_"
-        append_records_produced_file_path = "analytics/intrusion_detection_run_" + str(analyzing_trial) + "/data/append_records_produced_"
-        records_received_file_path = "analytics/intrusion_detection_run_" + str(analyzing_trial) + "/data/records_received_"
+        append_throughput_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/append_throughput_"
+        append_start_timestamps_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/append_start_timestamps_"
+        compute_e2e_end_times_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/compute_e2e_end_times_"
+        delivery_latencies_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/delivery_latencies_"
+        confirm_latencies_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/confirm_latencies_"
+        read_throughput_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/read_throughput_"
+        append_records_produced_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/append_records_produced_"
+        records_received_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/records_received_"
         stats_file_path = "analytics/stats_trial_" + str(analyzing_trial) + ".txt"
-        start_compute_times_file_path = "analytics/intrusion_detection_run_" + str(analyzing_trial) + "/data/start_compute_times_"
-        avg_batch_size_file_path = "analytics/intrusion_detection_run_" + str(analyzing_trial) + "/data/batch_sizes_"
+        start_compute_times_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/start_compute_times_"
+        avg_batch_size_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/batch_sizes_"
 
         records_produced = 0
         for i in range(num_replicas):
@@ -54,6 +54,7 @@ def analyze():
 
         # Start calculating the latencies
         append_start_timestamps = {}
+        gsn_node_map = {}
         num_append_timestamps = 0
         for i in range(num_replicas):
             for j in range(num_append_clients_per_replica):
@@ -62,6 +63,7 @@ def analyze():
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
                         append_start_timestamps[int(gsn)] = int(timestamp)
+                        gsn_node_map[int(gsn)] = i
                         num_append_timestamps += 1
 
         compute_e2e_latency = 0
@@ -91,6 +93,16 @@ def analyze():
                         gsn, timestamp = line.strip().split(",")
                         if int(gsn) > gsn_threshold:
                             delivery_e2e_latencies_map[int(gsn)] = int(timestamp)
+        
+        delivery_e2e_latencies_map = {}
+        for i in range(num_replicas):
+            for j in range(num_read_clients_per_replica):
+                delivery_latencies_file_path_i = f"{delivery_latencies_file_path}{i}_{j}.txt"
+                with open(delivery_latencies_file_path_i, 'r') as file:
+                    for line in file:
+                        gsn, timestamp = line.strip().split(",")
+                        if int(gsn) > gsn_threshold:
+                            delivery_e2e_latencies_map[int(gsn)] = int(timestamp)
 
         confirm_e2e_latencies_map = {}
         for i in range(num_replicas):
@@ -100,7 +112,8 @@ def analyze():
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
                         if int(gsn) > gsn_threshold:
-                            confirm_e2e_latencies_map[int(gsn)] = int(timestamp)
+                            if int(gsn) in gsn_node_map and gsn_node_map[int(gsn)] == i:
+                                confirm_e2e_latencies_map[int(gsn)] = int(timestamp)
         
         confirm_e2e_latencies = 0
         confirm_e2e_latencies_list = []
