@@ -33,7 +33,8 @@ type Scalog struct {
 	Stop        chan bool // stop scalog client subscribing, must be closed by app, closes confirmation thread
 	stopConf    chan bool // stop confirmation thread
 	StopAck     chan bool // stop ack thread, must be closed by app
-	misSpecC    chan client.MisSpecRange
+	MisSpecC    chan client.MisSpecRange
+	ConfC       chan client.SpeculationConf
 }
 
 func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) error {
@@ -50,6 +51,29 @@ func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) error {
 	}
 
 	_, _, err = s.client.AppendToAssignedShard(appenderId, record)
+	if err != nil {
+		log.Errorf("%v", err)
+	}
+
+	s.Stats.AppendStartTimeChan <- time.Now()
+
+	return err
+}
+
+func (s *Scalog) FilterAppendToAssignedShard(appenderId int32, record string, recordId int32) error {
+	// first call creates rate limiter
+	if s.rateLimiter == nil {
+		s.rateLimiter = rateLimiter.NewLimiter(rateLimiter.Limit(s.rate), 1)
+		// start ack thread
+		go s.Ack()
+	}
+
+	err := s.rateLimiter.Wait(context.Background())
+	if err != nil {
+		return fmt.Errorf("rate limiter error: %v", err)
+	}
+
+	_, _, err = s.client.FilterAppendToAssignedShard(appenderId, record, recordId)
 	if err != nil {
 		log.Errorf("%v", err)
 	}
@@ -199,6 +223,7 @@ func (s *Scalog) ConfirmationThread(conf chan client.SpeculationConf) {
 				s.Stats.ConfirmTime[i] = tconf
 				confirmed++
 			}
+			s.ConfC <- c
 			continue
 		case <-printTicker.C:
 			log.Printf("[scalog_api]: confirmed %v records", confirmed)
@@ -242,8 +267,8 @@ func (s *Scalog) FilterSubscribe(startGsn int64, readerId int32, filterValue int
 }
 
 func (s *Scalog) SubscribeThread(startGsn int64) {
-	stream, conf, misSpecC, err := s.client.Subscribe(startGsn)
-	s.misSpecC = misSpecC
+	stream, conf, MisSpecC, err := s.client.Subscribe(startGsn)
+	s.MisSpecC = MisSpecC
 	if err != nil {
 		log.Errorf("%v", err)
 	}
@@ -296,8 +321,8 @@ func (s *Scalog) Read(index int64) client.CommittedRecord {
 
 func (s *Scalog) CheckMisSpec() (bool, client.MisSpecRange) {
 	select {
-	case misSpecRange := <-s.misSpecC:
-		<-s.misSpecC
+	case misSpecRange := <-s.MisSpecC:
+		<-s.MisSpecC
 		return true, misSpecRange
 	default:
 		return false, client.MisSpecRange{}
@@ -358,7 +383,7 @@ func CreateClient(rateLimit int, shardingHint int, configFile string) *Scalog {
 		Stats:     stats,
 		Stop:      make(chan bool, 1),
 		StopAck:   make(chan bool, 1),
-		misSpecC:  make(chan client.MisSpecRange, 4096),
+		MisSpecC:  make(chan client.MisSpecRange, 4096),
 	}
 
 	return scalogClient
@@ -409,7 +434,8 @@ func CreateBurstClient(shardingHint int, configFile string, burstSize int32) *Sc
 		Stats:     stats,
 		Stop:      make(chan bool, 1),
 		StopAck:   make(chan bool, 1),
-		misSpecC:  make(chan client.MisSpecRange, 4096),
+		MisSpecC:  make(chan client.MisSpecRange, 4096),
+		ConfC:     make(chan client.SpeculationConf, 4096),
 	}
 
 	return scalogClient

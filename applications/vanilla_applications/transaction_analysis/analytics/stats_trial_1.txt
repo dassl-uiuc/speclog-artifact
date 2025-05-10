@@ -1,0 +1,36 @@
+compute_e2e_latency in microseconds: 4717.60836485258
+shared_log_e2e_latency in microseconds: 1928.1804702623633
+confirm_e2e_latency in microseconds: 3653.429005288161
+total_e2e_latency in microseconds: 4833.650789907204
+queuing_delay in microseconds: 887.8686111557022
+append_throughput (ops/s): 39382.6875
+read_throughput (ops/s): 40007.796610000005
+records_produced: 2520492
+records_consumed: 2360460
+num append timestamps: 2520318
+num delivery e2e latencies: 2161621
+num confirm e2e latencies: 2161621
+num total e2e latencies: 2161621
+num queuing delays: 2161621
+num compute e2e latencies: 2161621
+std compute_e2e_latency: 1857.9284826539779
+std delivery_e2e_latency: 1038.5940540833133
+std queuing_delay: 791.807264780167
+std confirm_e2e_latency: 1113.5756453655606
+std total_e2e_latency: 1860.130919143666
+p50 compute_e2e_latency: 4346.408
+p99 compute_e2e_latency: 11197.520599999982
+p99.99 compute_e2e_latency: 33205.988385999844
+p50 delivery_e2e_latency: 1825.245
+p99 delivery_e2e_latency: 4111.719599999999
+p99.99 delivery_e2e_latency: 29991.60999799995
+p50 queuing_delay: 742.371
+p99 queuing_delay: 3563.0081999999984
+p99.99 queuing_delay: 12853.64535799997
+p50 confirm_e2e_latency: 3636.211
+p99 confirm_e2e_latency: 5829.1493999999975
+p99.99 confirm_e2e_latency: 34956.68782799894
+p50 total_e2e_latency: 4413.473
+p99 total_e2e_latency: 11481.577599999964
+p99.99 total_e2e_latency: 35830.108477999944
+avg_batch_size: 15.875150999999999

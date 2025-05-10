@@ -1,24 +1,24 @@
 import matplotlib.pyplot as plt
 
-num_replicas = 2
+num_replicas = 4
 num_append_clients_per_replica = 10
 num_read_clients_per_replica = 1
-num_trials = 3
+num_trials = 1
 gsn_threshold = 250000
 def analyze():
     analyzing_trial = 1
     while analyzing_trial <= num_trials:
-        append_throughput_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/append_throughput_"
-        append_start_timestamps_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/append_start_timestamps_"
-        compute_e2e_end_times_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/compute_e2e_end_times_"
-        delivery_latencies_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/delivery_latencies_"
-        confirm_latencies_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/confirm_latencies_"
-        read_throughput_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/read_throughput_"
-        append_records_produced_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/append_records_produced_"
-        records_received_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/records_received_"
+        append_throughput_file_path = "data/append_throughput_"
+        append_start_timestamps_file_path = "data/append_start_timestamps_"
+        compute_e2e_end_times_file_path = "data/compute_e2e_end_times_"
+        delivery_latencies_file_path = "data/delivery_latencies_"
+        confirm_latencies_file_path = "data/confirm_latencies_"
+        read_throughput_file_path = "data/read_throughput_"
+        append_records_produced_file_path = "data/append_records_produced_"
+        records_received_file_path = "data/records_received_"
         stats_file_path = "analytics/stats_trial_" + str(analyzing_trial) + ".txt"
-        start_compute_times_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/start_compute_times_"
-        avg_batch_size_file_path = "analytics/transaction_analysis_run_" + str(analyzing_trial) + "/data/batch_sizes_"
+        start_compute_times_file_path = "data/start_compute_times_"
+        avg_batch_size_file_path = "data/batch_sizes_"
 
         records_produced = 0
         for i in range(num_replicas):
@@ -149,7 +149,7 @@ def analyze():
 
         # Queuing delay
         compute_start_times_map = {}
-        for i in range(num_replicas):
+        for i in range(num_replicas): 
             for j in range(num_read_clients_per_replica):
                 start_compute_times_file_path_i = f"{start_compute_times_file_path}{i}_{j}.txt"
                 with open(start_compute_times_file_path_i, 'r') as file:

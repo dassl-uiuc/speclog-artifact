@@ -537,6 +537,24 @@ func (c *Client) AppendToAssignedShard(appenderId int32, record string) (int64, 
 	return 0, 0, nil
 }
 
+func (c *Client) FilterAppendToAssignedShard(appenderId int32, record string, recordId int32) (int64, int32, error) {
+	select {
+	case c.outstandingRequestsChan <- true:
+	case <-time.After(1 * time.Second):
+		log.Printf("Timeout waiting for outstanding requests")
+		return 0, 0, fmt.Errorf("timeout waiting for outstanding requests")
+	}
+	r := &datapb.Record{
+		ClientID:   c.clientID,
+		ClientSN:   c.getNextClientSN(),
+		Record:     record,
+		AppenderID: appenderId,
+		RecordID:   recordId,
+	}
+	c.assignedAppendC <- r
+	return 0, 0, nil
+}
+
 func (c *Client) AppendOneToAssignedShard(appenderId int32, record string) (int64, int32, error) {
 	r := &datapb.Record{
 		ClientID: c.clientID,

@@ -88,11 +88,13 @@ func Append_Stream_Ping(appenderId int32, clientNumber int, offsetForShardingPol
 
 		var recordId int32
 		if appenderId == 0 {
-			// Even
-			recordId = int32(rand.Int31n(numUsers/2) * 2)
+			recordId = int32(rand.Int31n(numUsers/4) * 4)
 		} else if appenderId == 1 {
-			// Odd
-			recordId = int32(rand.Int31n(numUsers/2)*2 + 1)
+			recordId = int32(rand.Int31n(numUsers/4)*4 + 1)
+		} else if appenderId == 2 {
+			recordId = int32(rand.Int31n(numUsers/4)*4 + 2)
+		} else if appenderId == 3 {
+			recordId = int32(rand.Int31n(numUsers/4)*4 + 3)
 		} else {
 			log.Fatal("Invalid appender id")
 		}
