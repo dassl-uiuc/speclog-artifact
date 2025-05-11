@@ -24,17 +24,18 @@ type BenchmarkStats struct {
 }
 
 type Scalog struct {
-	client      *client.Client
-	records     []client.CommittedRecord
-	atomicInt   int64
-	rateLimiter *rateLimiter.Limiter
-	rate        int // rate used by rate limiter
-	Stats       BenchmarkStats
-	Stop        chan bool // stop scalog client subscribing, must be closed by app, closes confirmation thread
-	stopConf    chan bool // stop confirmation thread
-	StopAck     chan bool // stop ack thread, must be closed by app
-	MisSpecC    chan client.MisSpecRange
-	ConfC       chan client.SpeculationConf
+	client        *client.Client
+	records       []client.CommittedRecord
+	atomicInt     int64
+	rateLimiter   *rateLimiter.Limiter
+	rate          int // rate used by rate limiter
+	Stats         BenchmarkStats
+	Stop          chan bool // stop scalog client subscribing, must be closed by app, closes confirmation thread
+	stopConf      chan bool // stop confirmation thread
+	StopAck       chan bool // stop ack thread, must be closed by app
+	MisSpecC      chan client.MisSpecRange
+	ConfC         chan client.SpeculationConf
+	RelayToClient bool
 }
 
 func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) error {
@@ -223,11 +224,14 @@ func (s *Scalog) ConfirmationThread(conf chan client.SpeculationConf) {
 				s.Stats.ConfirmTime[i] = tconf
 				confirmed++
 			}
-			s.ConfC <- c
+			if s.RelayToClient {
+				s.ConfC <- c
+			}
 			continue
 		case <-printTicker.C:
 			log.Printf("[scalog_api]: confirmed %v records", confirmed)
 		case <-s.stopConf:
+			close(s.ConfC)
 			return
 		}
 	}
@@ -427,15 +431,16 @@ func CreateBurstClient(shardingHint int, configFile string, burstSize int32) *Sc
 		AppendStartTimeChan: make(chan time.Time, 100), // do not need more than this
 	}
 	scalogClient := &Scalog{
-		client:    c,
-		records:   records,
-		atomicInt: 0,
-		rate:      1000000, // arbitrarily high
-		Stats:     stats,
-		Stop:      make(chan bool, 1),
-		StopAck:   make(chan bool, 1),
-		MisSpecC:  make(chan client.MisSpecRange, 4096),
-		ConfC:     make(chan client.SpeculationConf, 4096),
+		client:        c,
+		records:       records,
+		atomicInt:     0,
+		rate:          1000000, // arbitrarily high
+		Stats:         stats,
+		Stop:          make(chan bool, 1),
+		StopAck:       make(chan bool, 1),
+		MisSpecC:      make(chan client.MisSpecRange, 4096),
+		ConfC:         make(chan client.SpeculationConf, 4096),
+		RelayToClient: false,
 	}
 
 	return scalogClient

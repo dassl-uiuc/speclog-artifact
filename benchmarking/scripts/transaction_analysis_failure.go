@@ -184,7 +184,11 @@ func CreateDatabase() *bolt.DB {
 func confirmationThread(c *scalog_api.Scalog) {
 	for {
 		select {
-		case conf := <-c.ConfC:
+		case conf, ok := <-c.ConfC:
+			if !ok {
+				log.Printf("[confirmation_thread]: confirmation channel closed, returning")
+				return
+			}
 			for gsn := conf.StartGSN; gsn <= conf.EndGSN; gsn++ {
 				if _, ok := unconfirmedStateChanges[gsn]; ok {
 					delete(unconfirmedStateChanges, gsn)
@@ -200,6 +204,7 @@ func confirmationThread(c *scalog_api.Scalog) {
 
 func computationThread(c *scalog_api.Scalog) {
 	// Create database
+	go confirmationThread(c)
 	db := CreateDatabase()
 	totalBatchSize := float64(0)
 	numBatches := float64(0)
