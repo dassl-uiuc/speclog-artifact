@@ -356,7 +356,8 @@ func main() {
 	var consumer *scalog_api.Scalog
 	// start consumer
 	for i := 0; i < 1; i++ {
-		consumer = scalog_api.CreateClient(0, -1, "../../.scalog.yaml")
+		// client that relays confirmations to the consumer
+		consumer = scalog_api.CreateClientWithRelay(0, -1, "../../.scalog.yaml")
 		consumer.Subscribe(0)
 		go computationThread(consumer)
 	}

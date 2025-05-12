@@ -380,6 +380,65 @@ func CreateClient(rateLimit int, shardingHint int, configFile string) *Scalog {
 		AppendStartTimeChan: make(chan time.Time, 100), // do not need more than this
 	}
 	scalogClient := &Scalog{
+		client:    c,
+		records:   records,
+		atomicInt: 0,
+		rate:      rateLimit,
+		Stats:     stats,
+		Stop:      make(chan bool, 1),
+		StopAck:   make(chan bool, 1),
+		MisSpecC:  make(chan client.MisSpecRange, 4096),
+		ConfC:     make(chan client.SpeculationConf, 4096),
+	}
+
+	return scalogClient
+}
+
+func CreateClientWithRelay(rateLimit int, shardingHint int, configFile string) *Scalog {
+	var err error
+
+	// read configuration file
+	viper.SetConfigFile(configFile)
+	viper.AutomaticEnv()
+	err = viper.ReadInConfig()
+	if err != nil {
+		log.Errorf("read config file error: %v", err)
+	}
+
+	numReplica := int32(viper.GetInt("data-replication-factor"))
+	discPort := uint16(viper.GetInt("disc-port"))
+	discIp := viper.GetString(fmt.Sprintf("disc-ip"))
+	discAddr := address.NewGeneralDiscAddr(discIp, discPort)
+	dataPort := uint16(viper.GetInt("data-port"))
+	dataAddr := address.NewGeneralDataAddr("data-%v-%v-ip", numReplica, dataPort)
+
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+	}
+
+	var c *client.Client
+	if shardingHint == -1 {
+		c, err = client.NewClient(dataAddr, discAddr, numReplica)
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
+	} else {
+		c, err = client.NewClientWithShardingHint(dataAddr, discAddr, numReplica, int64(shardingHint))
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
+	}
+
+	records := make([]client.CommittedRecord, 10000000)
+
+	stats := BenchmarkStats{
+		DeliveryTime:        make(map[int64]time.Time),
+		ConfirmTime:         make(map[int64]time.Time),
+		AppendEndTime:       make(map[int64]time.Time),
+		AppendStartTime:     make(map[int64]time.Time),
+		AppendStartTimeChan: make(chan time.Time, 100), // do not need more than this
+	}
+	scalogClient := &Scalog{
 		client:        c,
 		records:       records,
 		atomicInt:     0,
