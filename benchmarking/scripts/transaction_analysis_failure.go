@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/boltdb/bolt"
@@ -37,7 +38,12 @@ var runTimeSecs int
 
 // global stop signal
 var stop chan bool
-
+var pause chan bool = make(chan bool)
+var resume chan bool = make(chan bool)
+var nextExpectedOffset int64 = 0
+var confirmedGsn int64 = 0
+var maxComputedGsn atomic.Int64 = atomic.Int64{}
+var db *bolt.DB
 var dbEntrySize = 2048
 var padding = util.GenerateRandomString(dbEntrySize)
 
@@ -56,7 +62,8 @@ type StateChange struct {
 	NewState *UserState
 }
 
-var unconfirmedStateChanges map[int64]StateChange = make(map[int64]StateChange)
+var StateChangesMutex sync.Mutex
+var StateChanges map[int64]StateChange = make(map[int64]StateChange)
 
 func GenerateRecord(length int) string {
 	padding := util.GenerateRandomString(length - 4)
@@ -76,6 +83,9 @@ func AnalyzeTransaction(committedRecords []client.CommittedRecord, db *bolt.DB) 
 		}
 		// Loop through the committed records and update each one
 		for _, record := range committedRecords {
+			if record.GSN > maxComputedGsn.Load() {
+				maxComputedGsn.Store(record.GSN)
+			}
 			userID := record.RecordID
 			transactionAmount, err := strconv.Atoi(record.Record[0:4])
 			if err != nil {
@@ -93,11 +103,13 @@ func AnalyzeTransaction(committedRecords []client.CommittedRecord, db *bolt.DB) 
 				if err != nil {
 					log.Printf("Failed to insert new record for user %s: %v", userIDStr, err)
 				}
-				unconfirmedStateChanges[record.GSN] = StateChange{
+				StateChangesMutex.Lock()
+				StateChanges[record.GSN] = StateChange{
 					UserId:   userID,
 					OldState: nil,
 					NewState: &UserState{AvgTransaction: transactionAmount, MaxTransaction: transactionAmount, MinTransaction: transactionAmount, NumTransactions: 1},
 				}
+				StateChangesMutex.Unlock()
 				continue
 			}
 			existingValue := string(value)
@@ -124,11 +136,13 @@ func AnalyzeTransaction(committedRecords []client.CommittedRecord, db *bolt.DB) 
 			if err != nil {
 				log.Printf("Failed to update record for user %s: %v", userIDStr, err)
 			}
-			unconfirmedStateChanges[record.GSN] = StateChange{
+			StateChangesMutex.Lock()
+			StateChanges[record.GSN] = StateChange{
 				UserId:   userID,
 				OldState: &oldState,
 				NewState: &newState,
 			}
+			StateChangesMutex.Unlock()
 		}
 		return nil
 	})
@@ -189,13 +203,57 @@ func confirmationThread(c *scalog_api.Scalog) {
 				log.Printf("[confirmation_thread]: confirmation channel closed, returning")
 				return
 			}
+			gsns := make([]int64, 0)
 			for gsn := conf.StartGSN; gsn <= conf.EndGSN; gsn++ {
-				if _, ok := unconfirmedStateChanges[gsn]; ok {
-					delete(unconfirmedStateChanges, gsn)
+				gsns = append(gsns, gsn)
+			}
+			StateChangesMutex.Lock()
+			for _, gsn := range gsns {
+				if _, ok := StateChanges[gsn]; ok {
+					delete(StateChanges, gsn)
 				}
 			}
+			StateChangesMutex.Unlock()
 		case misSpec := <-c.MisSpecC:
 			log.Printf("misSpec %v", misSpec)
+			if misSpec.Begin != 0 {
+				// pause the computation thread
+				pause <- true
+				// iterate over unconfirmed state and print the gsns
+				updatedGsns := make([]int64, 0)
+				StateChangesMutex.Lock()
+				db.Update(func(tx *bolt.Tx) error {
+					bucket := tx.Bucket([]byte("users"))
+					if bucket == nil {
+						log.Printf("Bucket 'users' does not exist")
+						return nil
+					}
+					for gsn := maxComputedGsn.Load(); gsn >= misSpec.Begin; gsn-- {
+						if _, ok := StateChanges[gsn]; ok {
+							// undo state change
+							userID := StateChanges[gsn].UserId
+							oldState := StateChanges[gsn].OldState
+							userData := fmt.Sprintf("%d,%d,%d,%d,", oldState.AvgTransaction, oldState.MaxTransaction, oldState.MinTransaction, oldState.NumTransactions)
+							userData = userData + padding[:dbEntrySize-len(userData)]
+							key := []byte(fmt.Sprintf("%d", userID))
+							err := bucket.Put(key, []byte(userData))
+							if err != nil {
+								log.Printf("Failed to update record for user %v: %v", userID, err)
+							}
+							updatedGsns = append(updatedGsns, gsn)
+						}
+					}
+					return nil
+				})
+				StateChangesMutex.Unlock()
+				timeStamp := time.Now()
+				for _, gsn := range updatedGsns {
+					timeRecompute[gsn] = timeStamp
+				}
+				// resume the computation thread
+				nextExpectedOffset = misSpec.Begin
+				resume <- true
+			}
 		default:
 			continue
 		}
@@ -205,11 +263,10 @@ func confirmationThread(c *scalog_api.Scalog) {
 func computationThread(c *scalog_api.Scalog) {
 	// Create database
 	go confirmationThread(c)
-	db := CreateDatabase()
+	db = CreateDatabase()
 	totalBatchSize := float64(0)
 	numBatches := float64(0)
 	printTicker := time.NewTicker(1 * time.Second)
-	nextExpectedOffset := int64(0)
 	for {
 		latestOffset := c.GetLatestOffset()
 		latestOffset -= 1
@@ -239,6 +296,17 @@ func computationThread(c *scalog_api.Scalog) {
 			log.Printf("[single_client_e2e]: consumer thread terminating")
 			c.Stop <- true
 			return
+		case <-pause:
+			for {
+				select {
+				case <-resume:
+					break
+				case <-stop:
+					log.Printf("[single_client_e2e]: consumer thread terminating")
+					c.Stop <- true
+					return
+				}
+			}
 		default:
 			continue
 		}

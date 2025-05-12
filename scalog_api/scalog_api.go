@@ -380,14 +380,16 @@ func CreateClient(rateLimit int, shardingHint int, configFile string) *Scalog {
 		AppendStartTimeChan: make(chan time.Time, 100), // do not need more than this
 	}
 	scalogClient := &Scalog{
-		client:    c,
-		records:   records,
-		atomicInt: 0,
-		rate:      rateLimit,
-		Stats:     stats,
-		Stop:      make(chan bool, 1),
-		StopAck:   make(chan bool, 1),
-		MisSpecC:  make(chan client.MisSpecRange, 4096),
+		client:        c,
+		records:       records,
+		atomicInt:     0,
+		rate:          rateLimit,
+		Stats:         stats,
+		Stop:          make(chan bool, 1),
+		StopAck:       make(chan bool, 1),
+		MisSpecC:      make(chan client.MisSpecRange, 4096),
+		ConfC:         make(chan client.SpeculationConf, 4096),
+		RelayToClient: true,
 	}
 
 	return scalogClient
@@ -431,16 +433,15 @@ func CreateBurstClient(shardingHint int, configFile string, burstSize int32) *Sc
 		AppendStartTimeChan: make(chan time.Time, 100), // do not need more than this
 	}
 	scalogClient := &Scalog{
-		client:        c,
-		records:       records,
-		atomicInt:     0,
-		rate:          1000000, // arbitrarily high
-		Stats:         stats,
-		Stop:          make(chan bool, 1),
-		StopAck:       make(chan bool, 1),
-		MisSpecC:      make(chan client.MisSpecRange, 4096),
-		ConfC:         make(chan client.SpeculationConf, 4096),
-		RelayToClient: false,
+		client:    c,
+		records:   records,
+		atomicInt: 0,
+		rate:      1000000, // arbitrarily high
+		Stats:     stats,
+		Stop:      make(chan bool, 1),
+		StopAck:   make(chan bool, 1),
+		MisSpecC:  make(chan client.MisSpecRange, 4096),
+		ConfC:     make(chan client.SpeculationConf, 4096),
 	}
 
 	return scalogClient

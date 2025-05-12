@@ -1349,6 +1349,7 @@ func (s *DataServer) processCommittedEntry() {
 												GlobalSN:       representStartGSN,
 												GlobalSN1:      representStartGSN + int64(rprDiff) - 1,
 												NumHoles:       rprDiff,
+												Record:         "0xDEADBEEF",
 											}
 											log.Debugf("sending hole speculation between [%v, %v] on behalf of %v", representStartGSN, representStartGSN+int64(diff)-1, representRid)
 										} else {
