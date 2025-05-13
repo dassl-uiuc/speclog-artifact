@@ -219,6 +219,8 @@ func confirmationThread(c *scalog_api.Scalog) {
 			if misSpec.Begin != 0 {
 				// pause the computation thread
 				pause <- true
+				// update to holes
+				c.UpdateToHoles(misSpec, misSpec.FailedShards)
 				// iterate over unconfirmed state and print the gsns
 				updatedGsns := make([]int64, 0)
 				StateChangesMutex.Lock()
@@ -276,11 +278,19 @@ func computationThread(c *scalog_api.Scalog) {
 			committedRecords := make([]client.CommittedRecord, 0)
 			for i := nextExpectedOffset; i <= latestOffset; i++ {
 				record := c.Read(i)
+				if record == (client.CommittedRecord{}) {
+					log.Printf("skipping over failure hole: %v", c.Read(i).GSN)
+					continue
+				}
 				committedRecords = append(committedRecords, record)
 				timeBeginCompute[record.GSN] = start
 			}
 			AnalyzeTransaction(committedRecords, db)
 			for i := nextExpectedOffset; i <= latestOffset; i++ {
+				record := c.Read(i)
+				if record == (client.CommittedRecord{}) {
+					continue
+				}
 				timeCompute[c.Read(i).GSN] = time.Now()
 			}
 			totalBatchSize += float64(lenBatch)
@@ -308,7 +318,7 @@ func computationThread(c *scalog_api.Scalog) {
 					return
 				}
 			}
-			log.Printf("[single_client_e2e]: consumer thread resumed")
+			log.Printf("[single_client_e2e]: consumer thread resumed from nextExpectedOffset %v", nextExpectedOffset)
 		default:
 			continue
 		}

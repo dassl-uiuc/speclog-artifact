@@ -22,6 +22,9 @@ const backendOnly = false
 const reconfigExpt bool = false
 const lagfixExpt bool = false
 
+// very ad-hoc
+var failedShards []int32
+
 type clientSubscriber struct {
 	state    clientSubscriberState
 	respChan chan *datapb.Record
@@ -1165,6 +1168,7 @@ func (s *DataServer) processCommittedEntry() {
 			rid := s.shardID*s.numReplica + s.replicaID
 
 			if len(entry.FailedShards) > 0 {
+				failedShards = entry.FailedShards
 				log.Printf("receive failed shards: %v, entry: %v", entry.FailedShards, entry)
 				if rid == entry.FailedShards[1]+1 {
 					for _, fr := range entry.FailedShards {
@@ -1350,6 +1354,7 @@ func (s *DataServer) processCommittedEntry() {
 												GlobalSN1:      representStartGSN + int64(rprDiff) - 1,
 												NumHoles:       rprDiff,
 												Record:         "0xDEADBEEF",
+												FailedShards:   failedShards,
 											}
 											log.Debugf("sending hole speculation between [%v, %v] on behalf of %v", representStartGSN, representStartGSN+int64(diff)-1, representRid)
 										} else {

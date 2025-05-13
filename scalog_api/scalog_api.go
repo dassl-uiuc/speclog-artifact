@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,8 +39,9 @@ type Scalog struct {
 	ConfC         chan client.SpeculationConf
 	RelayToClient bool
 	// reverse map only for failure analysis
-	gsnToIndex  []int64
-	gsnMapMutex sync.Mutex
+	gsnToIndex     []int64
+	gsnMapMutex    sync.Mutex
+	DataNumReplica int32
 }
 
 func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) error {
@@ -182,6 +184,21 @@ func (s *Scalog) FilterAppend(record string, recordId int32) error {
 	return err
 }
 
+func (s *Scalog) UpdateToHoles(misSpec client.MisSpecRange, failedShards []int32) {
+	s.gsnMapMutex.Lock()
+	defer s.gsnMapMutex.Unlock()
+	for gsn := misSpec.Begin; gsn <= misSpec.End; gsn++ {
+		if s.gsnToIndex[gsn] != -1 {
+			idx := s.gsnToIndex[gsn]
+			rid := s.records[idx].ReplicaId + s.records[idx].ShardId*s.DataNumReplica
+			if slices.Contains(failedShards, rid) {
+				log.Printf("updated to hole: %v, %v", gsn, rid)
+				s.records[idx].Record = "0xDEADBEEF"
+			}
+		}
+	}
+}
+
 func (s *Scalog) FilterSubscribeThread(startGsn int64, readerId int32, filterValue int32) {
 	stream, conf, err := s.client.FilterSubscribe(startGsn, readerId, filterValue)
 	if err != nil {
@@ -319,6 +336,7 @@ func (s *Scalog) FindFirstRealRecordAfterGsn(gsn int64) int64 {
 	defer s.gsnMapMutex.Unlock()
 	for i := gsn; i < int64(len(s.gsnToIndex)); i++ {
 		if s.gsnToIndex[i] != -1 {
+			log.Printf("found first real record after gsn: %v, %v", i, s.gsnToIndex[i])
 			return s.gsnToIndex[i]
 		}
 	}
@@ -344,6 +362,9 @@ func (s *Scalog) GetLatestOffset() int64 {
 }
 
 func (s *Scalog) Read(index int64) client.CommittedRecord {
+	if s.records[index].Record == "0xDEADBEEF" {
+		return client.CommittedRecord{}
+	}
 	return s.records[index]
 }
 
@@ -463,18 +484,19 @@ func CreateClientWithRelay(rateLimit int, shardingHint int, configFile string) *
 		AppendStartTimeChan: make(chan time.Time, 100), // do not need more than this
 	}
 	scalogClient := &Scalog{
-		client:        c,
-		records:       records,
-		atomicInt:     0,
-		rate:          rateLimit,
-		Stats:         stats,
-		Stop:          make(chan bool, 1),
-		StopAck:       make(chan bool, 1),
-		MisSpecC:      make(chan client.MisSpecRange, 4096),
-		ConfC:         make(chan client.SpeculationConf, 4096),
-		RelayToClient: true,
-		gsnToIndex:    make([]int64, 0),
-		gsnMapMutex:   sync.Mutex{},
+		client:         c,
+		records:        records,
+		atomicInt:      0,
+		rate:           rateLimit,
+		Stats:          stats,
+		Stop:           make(chan bool, 1),
+		StopAck:        make(chan bool, 1),
+		MisSpecC:       make(chan client.MisSpecRange, 4096),
+		ConfC:          make(chan client.SpeculationConf, 4096),
+		RelayToClient:  true,
+		gsnToIndex:     make([]int64, 0),
+		gsnMapMutex:    sync.Mutex{},
+		DataNumReplica: numReplica,
 	}
 
 	return scalogClient

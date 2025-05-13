@@ -38,15 +38,18 @@ type SpeculationConf struct {
 }
 
 type CommittedRecord struct {
-	GSN      int64
-	Record   string
-	RecordID int32
+	GSN       int64
+	Record    string
+	RecordID  int32
+	ShardId   int32
+	ReplicaId int32
 	// ViewID int32
 }
 
 type MisSpecRange struct {
-	Begin int64
-	End   int64
+	Begin        int64
+	End          int64
+	FailedShards []int32
 }
 
 type Client struct {
@@ -680,7 +683,7 @@ func (c *Client) subscribeShardServer(shard, replica int32) {
 	globalSN := &datapb.GlobalSN{GSN: c.nextGSN}
 	stream, err := dataClient.Subscribe(context.Background(), globalSN, opts...)
 	misSpecSent := false
-	misSpecRange := MisSpecRange{0, 0}
+	misSpecRange := MisSpecRange{0, 0, []int32{}}
 	inFailureHandling := false
 	if err != nil {
 		log.Errorf("%v", err)
@@ -701,13 +704,15 @@ func (c *Client) subscribeShardServer(shard, replica int32) {
 		if record.ClientID != -1 {
 			respond := false
 			if misSpecRange.Begin > 0 && record.GlobalSN >= misSpecRange.End {
-				misSpecRange = MisSpecRange{0, 0}
+				misSpecRange = MisSpecRange{0, 0, []int32{}}
 				c.misSpecC <- misSpecRange // notify that correct records have all been delivered
 			}
 			if record.GlobalSN1 == 0 { // regular record
 				c.committedRecords[record.GlobalSN] = CommittedRecord{
-					GSN:    record.GlobalSN,
-					Record: record.Record,
+					GSN:       record.GlobalSN,
+					Record:    record.Record,
+					ShardId:   record.ShardID,
+					ReplicaId: record.LocalReplicaID,
 				}
 			} else {
 				log.Debugf("from (%v,%v) filling holes for %v:%v, [%v, %v] nextGSN %v, nextConf %v", shard, replica, record.ShardID, record.LocalReplicaID, record.GlobalSN, record.GlobalSN1, c.nextGSN, c.nextConf)
@@ -726,12 +731,13 @@ func (c *Client) subscribeShardServer(shard, replica int32) {
 				if record.GlobalSN < c.nextGSN {
 					if !misSpecSent { // todo: very ad-hoc, only inform once
 						misSpecRange = MisSpecRange{
-							Begin: c.nextConf,
-							End:   c.nextGSN - 1,
+							Begin:        c.nextConf,
+							End:          c.nextGSN - 1,
+							FailedShards: record.FailedShards,
 						}
 						c.misSpecC <- misSpecRange // ad-hoc: only notify
 						misSpecSent = true
-						log.Printf("[%v, %v] sent from (%v, %v)", misSpecRange.Begin, misSpecRange.End, shard, replica)
+						log.Printf("[%v, %v, %v] sent from (%v, %v)", misSpecRange.Begin, misSpecRange.End, misSpecRange.FailedShards, shard, replica)
 					}
 					if record.GlobalSN1 >= c.nextGSN { // this is needed when only part of the entries in that quota are received
 						for i := c.nextGSN; i <= record.GlobalSN1; i++ {
