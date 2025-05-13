@@ -251,7 +251,7 @@ func confirmationThread(c *scalog_api.Scalog) {
 					timeRecompute[gsn] = timeStamp
 				}
 				// resume the computation thread
-				nextExpectedOffset = misSpec.Begin
+				nextExpectedOffset = c.FindFirstRealRecordAfterGsn(misSpec.Begin)
 				resume <- true
 			}
 		default:
@@ -297,16 +297,18 @@ func computationThread(c *scalog_api.Scalog) {
 			c.Stop <- true
 			return
 		case <-pause:
-			for {
+			done := false
+			for !done {
 				select {
 				case <-resume:
-					break
+					done = true
 				case <-stop:
 					log.Printf("[single_client_e2e]: consumer thread terminating")
 					c.Stop <- true
 					return
 				}
 			}
+			log.Printf("[single_client_e2e]: consumer thread resumed")
 		default:
 			continue
 		}

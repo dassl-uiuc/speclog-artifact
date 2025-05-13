@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +37,9 @@ type Scalog struct {
 	MisSpecC      chan client.MisSpecRange
 	ConfC         chan client.SpeculationConf
 	RelayToClient bool
+	// reverse map only for failure analysis
+	gsnToIndex  []int64
+	gsnMapMutex sync.Mutex
 }
 
 func (s *Scalog) AppendToAssignedShard(appenderId int32, record string) error {
@@ -295,10 +299,30 @@ func (s *Scalog) SubscribeThread(startGsn int64) {
 				s.records[index] = r
 				atomic.AddInt64(&s.atomicInt, 1)
 				s.Stats.DeliveryTime[r.GSN] = time.Now()
+				s.gsnMapMutex.Lock()
+				s.gsnToIndex = append(s.gsnToIndex, index)
+				s.gsnMapMutex.Unlock()
+			} else {
+				s.gsnMapMutex.Lock()
+				s.gsnToIndex = append(s.gsnToIndex, -1)
+				s.gsnMapMutex.Unlock()
 			}
+
 			continue
 		}
 	}
+}
+
+// find first real record after gsn
+func (s *Scalog) FindFirstRealRecordAfterGsn(gsn int64) int64 {
+	s.gsnMapMutex.Lock()
+	defer s.gsnMapMutex.Unlock()
+	for i := gsn; i < int64(len(s.gsnToIndex)); i++ {
+		if s.gsnToIndex[i] != -1 {
+			return s.gsnToIndex[i]
+		}
+	}
+	return -1
 }
 
 // read desc in client/client.go
@@ -449,6 +473,8 @@ func CreateClientWithRelay(rateLimit int, shardingHint int, configFile string) *
 		MisSpecC:      make(chan client.MisSpecRange, 4096),
 		ConfC:         make(chan client.SpeculationConf, 4096),
 		RelayToClient: true,
+		gsnToIndex:    make([]int64, 0),
+		gsnMapMutex:   sync.Mutex{},
 	}
 
 	return scalogClient
