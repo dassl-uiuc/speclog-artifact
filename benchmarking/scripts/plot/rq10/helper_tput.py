@@ -54,14 +54,12 @@ all_append_lat = [l[1] for l in all_append_metric]
 
 df = pd.DataFrame({
     'e2e_latency': all_e2e_lat,
-    'app_latency': all_append_lat,
     'time': all_time,
 })
 df = df.sort_values(by='time')
 
 
 df['e2e_mov_avg'] = df['e2e_latency'].rolling(window=10, min_periods=1).mean()/1e3
-df['app_mov_avg'] = df['app_latency'].rolling(window=10, min_periods=1).mean()/1e3
 min_time = df['time'].min()
 df['relative_time_s'] = (df['time'] - min_time).dt.total_seconds()
 
@@ -84,7 +82,6 @@ print("view change notified:" + str((viewchange_ev - min_time).total_seconds()))
 
 plot, ax = plt.subplots(figsize=(10,6))
 ax.plot(df_zoomed['relative_time_s'], df_zoomed['e2e_mov_avg'], label='e2e latency')
-ax.plot(df_zoomed['relative_time_s'], df_zoomed['app_mov_avg'], color='grey', label='append latency')
 ax.axvline((failure_ev - min_time).total_seconds(), color='brown', alpha=0.7, linestyle='--', label="shard fail")
 ax.axvline((viewchange_ev - min_time).total_seconds(), color='crimson', alpha=0.7, linestyle='--', label="view change notified")
 ax.set_xlim(left=zoom[0], right=zoom[1])
