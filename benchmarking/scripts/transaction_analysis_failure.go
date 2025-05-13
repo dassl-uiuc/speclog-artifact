@@ -446,11 +446,14 @@ func main() {
 				appendStartTimeMap[latency.GSN].Format("15:04:05.000000"),
 			})
 		} else {
-			e2eWriter.Write([]string{
-				strconv.Itoa(int(latency.GSN)),
-				strconv.FormatBool(inConfirm),
-				strconv.FormatBool(inCompute),
-				strconv.FormatBool(inDelivery)})
+			// these are failed appends
+			if !(inConfirm && !inCompute && !inDelivery) {
+				e2eWriter.Write([]string{
+					strconv.Itoa(int(latency.GSN)),
+					strconv.FormatBool(inConfirm),
+					strconv.FormatBool(inCompute),
+					strconv.FormatBool(inDelivery)})
+			}
 		}
 	}
 	e2eWriter.Flush()
