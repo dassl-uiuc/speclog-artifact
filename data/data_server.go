@@ -26,7 +26,7 @@ const lagfixExpt bool = false
 const qcExpt bool = false
 const qcEnabled bool = true
 const postReplicationLoad bool = true
-const staggeringFactor int64 = 4
+const staggeringFactor int64 = -1
 
 var qcBurstLSN int64 = -1
 var qcBurstLocalCutNumber int64 = -1

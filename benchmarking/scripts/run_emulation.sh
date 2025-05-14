@@ -2,7 +2,7 @@
 
 source ./common.sh
 
-num_shards=(8)
+num_shards=(6 8 10 12 16 20)
 rate=10000
 for num_shard in "${num_shards[@]}"
 do
