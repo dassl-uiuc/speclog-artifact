@@ -65,7 +65,6 @@ for ((j=0; j<n; j++)); do
     cat <<EOL > $dir/run_goreman.sh
 #!/bin/bash
 
-export PATH=\$PATH:/users/sgbhat3/go/bin/
 goreman start
 EOL
     chmod +x $dir/run_goreman.sh
