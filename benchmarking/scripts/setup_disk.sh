@@ -1,11 +1,4 @@
 #!/bin/bash
 
-# mount /dev/sda4 and create fs
-# sudo mkfs.ext4 /dev/sda4
-# if sudo grep -qs "/dev/sda4" /proc/mounts; then
-#     sudo umount /dev/sda4
-# fi
-# sudo mount /dev/sda4 /users/sgbhat3/scalog-storage
-sudo chown -R sgbhat3 /data
-sudo rm -rf /data/*
-sudo chown -R sgbhat3 ~
+sudo chown -R $username $LOGDIR
+sudo rm -rf $LOGDIR/*
