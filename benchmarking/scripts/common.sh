@@ -23,6 +23,18 @@ modify_batching_intervals() {
     sed -i "s|data-batching-interval: .*|data-batching-interval: $1|" "${benchmark_dir}/../.scalog.yaml"
 }
 
+check_sync() {
+    shas=$1
+    first_sha=$(echo "$shas" | head -n 1)
+    while read -r sha; do
+        if [ "$sha" != "$first_sha" ]; then
+            echo "Error: NFS out of sync"
+            exit 1
+        fi
+    done <<< "$shas"
+}
+
+
 clear_server_logs() {
     # mount storage and clear existing logs if any
     ./run_script_on_servers.sh ./setup_disk.sh $run_server_suffix

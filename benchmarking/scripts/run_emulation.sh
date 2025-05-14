@@ -2,6 +2,7 @@
 
 source ./common.sh
 
+# best numbers at sc 4 4 4 8 8 10
 num_shards=(6 8 10 12 16 20)
 rate=10000
 for num_shard in "${num_shards[@]}"

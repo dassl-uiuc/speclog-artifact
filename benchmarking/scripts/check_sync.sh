@@ -1,0 +1,1 @@
+sha256sum $benchmark_dir/../scalog
