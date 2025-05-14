@@ -69,7 +69,7 @@ def average_emulation_metrics(directory):
     return averages
 
     
-for num_shards in [8]:
+for num_shards in [6, 8, 10, 12, 16, 20]:
     # Define input directory
     input_directory = "../results/emulation_" + str(num_shards)
 
