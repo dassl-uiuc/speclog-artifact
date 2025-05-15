@@ -4,6 +4,7 @@ output = subprocess.run(["python3", "helper_tput.py"], capture_output=True, text
 shard_failure = None 
 view_change = None 
 failure_detected = None
+app_resume = None
 for line in output.stdout.splitlines():
     if "shard failure:" in line:
         shard_failure = line.split(":")[-1].strip()
@@ -11,9 +12,13 @@ for line in output.stdout.splitlines():
         view_change = line.split(":")[-1].strip()
     if "shard failure detected" in line:
         failure_detected = line.split(":")[-1].strip()
+    if "app resume" in line:
+        app_resume = line.split(":")[-1].strip()
+
 print(f"shard_failure: {shard_failure}")
 print(f"view_change: {view_change}")
 print(f"failure_detected: {failure_detected}")
+print(f"app_resume: {app_resume}")
 
 zoomstart = int(float(shard_failure))
 zoomend = zoomstart + 1
@@ -96,10 +101,45 @@ EOF
 ) | gnuplot -persist
 """
 
+gnuplot_breakdown=rf"""
+#! /bin/bash
+# We are plotting columns 2, 3 and 4 as y-values,
+# the x-ticks are coming from column 1
+
+
+(cat <<EOF
+set terminal postscript eps enhanced color size 2, 1.7 font "Times-new-roman,20"
+set output 'breakdown.eps'
+
+set style line 2 lc rgb 'black' lt 1 lw 2
+set style data histogram
+set style histogram rowstacked
+set style fill pattern border 0
+set xtics format "" scale 0 offset 0,.3 font "Times-new-roman,19"
+set boxwidth 0.4
+set yrange[0:60]
+set xrange [-0.6:.6]
+set ytics 10
+set ylabel "Time (ms)" font "Times-new-roman,23" offset 1,0,0
+set lmargin 6
+set rmargin 4
+set tmargin 3
+set key outside top center font "Times-new-roman,19" samplen 2.5 maxrows 2 width -5
+plot 'breakdown' using (\$2*1000) title 'detect' fs pattern 3 border rgb "black" lc rgb 'gray60' lw 2,\
+    '' using (\$4*1000) title 'view change' fs pattern 7 lw 2,\
+    '' using (\$6*1000) title 'rollback' fs pattern 6 lw 2
+
+EOF
+) | gnuplot -persist
+"""
+
 subprocess.run(["bash"], input=gnuplot_lat, text=True)
 subprocess.run(["bash"], input=gnuplot_tput, text=True)
+subprocess.run(["bash"], input=gnuplot_breakdown, text=True)
 subprocess.run(["bash"], input="epstopdf fail_e2e.eps", text=True)
 subprocess.run(["bash"], input="epstopdf fail_tput.eps", text=True)
+subprocess.run(["bash"], input="epstopdf breakdown.eps", text=True)
+subprocess.run(["bash"], input="rm breakdown.eps breakdown", text=True)
 subprocess.run(["bash"], input="rm fail_e2e.eps fail_tput.eps e2elat tput", text=True)
 subprocess.run(["bash"], input="mv fail_e2e.pdf 14a.pdf", text=True)
 subprocess.run(["bash"], input="mv fail_tput.pdf 14b.pdf", text=True)

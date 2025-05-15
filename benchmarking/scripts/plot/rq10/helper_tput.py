@@ -10,6 +10,7 @@ results_dir = os.getenv("results_dir")
 
 failure_ev : datetime = None
 viewchange_ev : datetime = None
+app_resume : datetime = None
 with open('{0}/app_failure/e2e_2000/client_node13_0.log'.format(results_dir), 'r') as f:
     for line in f.readlines():
         if 'rpc error:' in line and failure_ev is None:
@@ -18,6 +19,9 @@ with open('{0}/app_failure/e2e_2000/client_node13_0.log'.format(results_dir), 'r
         elif 'misSpec' in line and viewchange_ev is None:
             viewchange_ev = datetime.strptime(line.split(' ')[2], '%H:%M:%S.%f')
             print(viewchange_ev)
+        elif 'consumer thread resumed' in line and app_resume is None:
+            app_resume = datetime.strptime(line.split(' ')[2], '%H:%M:%S.%f')
+            print(app_resume)
 
 
 
@@ -79,6 +83,7 @@ with open("e2elat", 'w') as f:
 
 print("shard failure:" + str((failure_ev - min_time).total_seconds()))
 print("view change notified:" + str((viewchange_ev - min_time).total_seconds()))
+print("app resume:" + str((app_resume - min_time).total_seconds()))
 
 plot, ax = plt.subplots(figsize=(10,6))
 ax.plot(df_zoomed['relative_time_s'], df_zoomed['e2e_mov_avg'], label='e2e latency')
@@ -131,6 +136,17 @@ ax.grid(True)
 ax.set_xlabel("Time (seconds)")
 ax.set_ylabel("Throughput (ops/sec)")
 ax.set_title("Throughput change")
+
+
+
+# get breakdown data 
+failure_time = (failure_ev - min_time).total_seconds()
+failure_detected_time = (event['shard failure detected'][0] - min_time).total_seconds()
+view_change_time = (viewchange_ev - min_time).total_seconds()
+app_resume_time = (app_resume - min_time).total_seconds()
+
+with open("breakdown", 'w') as f:
+    f.write(f"detection {failure_detected_time - failure_time} viewchange {view_change_time - failure_detected_time} app_resume {app_resume_time - view_change_time}")
 
 for e, t in sorted(event.items(), key=lambda it: it[1][0]):  # sort by time
     print(e, t[0]-start_time)
