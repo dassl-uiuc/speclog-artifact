@@ -19,9 +19,11 @@ def analyze_speclog(root_path):
         append_start_timestamps_file_path = root_path + str(analyzing_trial) + "/data/append_start_timestamps_"
         compute_e2e_end_times_file_path = root_path + str(analyzing_trial) + "/data/compute_e2e_end_times_"
         delivery_latencies_file_path = root_path + str(analyzing_trial) + "/data/delivery_latencies_"
+        confirm_latencies_file_path = root_path + str(analyzing_trial) + "/data/confirm_latencies_"
         read_throughput_file_path = root_path + str(analyzing_trial) + "/data/read_throughput_"
         append_records_produced_file_path = root_path + str(analyzing_trial) + "/data/append_records_produced_"
         records_received_file_path = root_path + str(analyzing_trial) + "/data/records_received_"
+        stats_file_path = root_path + str(analyzing_trial) + ".txt"
         start_compute_times_file_path = root_path + str(analyzing_trial) + "/data/start_compute_times_"
         avg_batch_size_file_path = root_path + str(analyzing_trial) + "/data/batch_sizes_"
 
@@ -59,6 +61,7 @@ def analyze_speclog(root_path):
 
         # Start calculating the latencies
         append_start_timestamps = {}
+        gsn_node_map = {}
         num_append_timestamps = 0
         for i in range(num_replicas):
             for j in range(num_append_clients_per_replica):
@@ -67,6 +70,7 @@ def analyze_speclog(root_path):
                     for line in file:
                         gsn, timestamp = line.strip().split(",")
                         append_start_timestamps[int(gsn)] = int(timestamp)
+                        gsn_node_map[int(gsn)] = i
                         num_append_timestamps += 1
 
         compute_e2e_latency = 0
@@ -97,19 +101,58 @@ def analyze_speclog(root_path):
                         if int(gsn) > gsn_threshold:
                             delivery_e2e_latencies_map[int(gsn)] = int(timestamp)
         
+        delivery_e2e_latencies_map = {}
+        for i in range(num_replicas):
+            for j in range(num_read_clients_per_replica):
+                delivery_latencies_file_path_i = f"{delivery_latencies_file_path}{i}_{j}.txt"
+                with open(delivery_latencies_file_path_i, 'r') as file:
+                    for line in file:
+                        gsn, timestamp = line.strip().split(",")
+                        if int(gsn) > gsn_threshold:
+                            delivery_e2e_latencies_map[int(gsn)] = int(timestamp)
+
+        confirm_e2e_latencies_map = {}
+        for i in range(num_replicas):
+            for j in range(num_read_clients_per_replica):
+                confirm_latencies_file_path_i = f"{confirm_latencies_file_path}{i}_{j}.txt"
+                with open(confirm_latencies_file_path_i, 'r') as file:
+                    for line in file:
+                        gsn, timestamp = line.strip().split(",")
+                        if int(gsn) > gsn_threshold:
+                            if int(gsn) in gsn_node_map and gsn_node_map[int(gsn)] == i:
+                                confirm_e2e_latencies_map[int(gsn)] = int(timestamp)
+        
+        confirm_e2e_latencies = 0
+        confirm_e2e_latencies_list = []
+        confirm_e2e_duration_map = {}
+        num_confirm_e2e_latencies = 0
         delivery_e2e_latencies = 0
         delivery_e2e_latencies_list = []
         delivery_e2e_duration_map = {}
         num_delivery_e2e_latencies = 0
+        total_e2e_latencies = 0
+        total_e2e_latencies_list = []
+        total_e2e_duration_map = {}
+        num_total_e2e_latencies = 0
         for gsn, timestamp in append_start_timestamps.items():
-            if gsn in delivery_e2e_latencies_map and gsn in compute_e2e_latencies_map:
+            if gsn in delivery_e2e_latencies_map and gsn in confirm_e2e_latencies_map and gsn in compute_e2e_latencies_map:
                 delivery_e2e_latencies += delivery_e2e_latencies_map[gsn] - timestamp
                 delivery_e2e_latencies_list.append(delivery_e2e_latencies_map[gsn] - timestamp)
                 delivery_e2e_duration_map[gsn] = delivery_e2e_latencies_map[gsn] - timestamp
+                confirm_e2e_latencies += confirm_e2e_latencies_map[gsn] - timestamp
+                confirm_e2e_latencies_list.append(confirm_e2e_latencies_map[gsn] - timestamp)
+                confirm_e2e_duration_map[gsn] = confirm_e2e_latencies_map[gsn] - timestamp
                 num_delivery_e2e_latencies += 1
+                num_confirm_e2e_latencies += 1
+
+                total_e2e_latencies += max((confirm_e2e_latencies_map[gsn] - timestamp), compute_e2e_latencies_map[gsn])
+                total_e2e_latencies_list.append(max((confirm_e2e_latencies_map[gsn] - timestamp), compute_e2e_latencies_map[gsn]))
+                total_e2e_duration_map[gsn] = max((confirm_e2e_latencies_map[gsn] - timestamp), compute_e2e_latencies_map[gsn])
+                num_total_e2e_latencies += 1
 
         avg_delivery_e2e_latency = delivery_e2e_latencies / num_delivery_e2e_latencies / 1000
-        avg_total_e2e_latency = avg_compute_e2e_latency
+        avg_confirm_e2e_latency = confirm_e2e_latencies / num_confirm_e2e_latencies / 1000
+        avg_total_e2e_latency = total_e2e_latencies / num_total_e2e_latencies / 1000
 
         # Queuing delay
         compute_start_times_map = {}
@@ -140,6 +183,8 @@ def analyze_speclog(root_path):
         compute_e2e_latency_std = np.std(compute_e2e_latencies_list) / 1000
         delivery_e2e_latency_std = np.std(delivery_e2e_latencies_list) / 1000
         queuing_delay_std = np.std(queuing_delays_list) / 1000
+        confirm_e2e_latency_std = np.std(confirm_e2e_latencies_list) / 1000
+        total_e2e_latency_std = np.std(total_e2e_latencies_list) / 1000
 
         p50_compute_e2e_latency = np.percentile(compute_e2e_latencies_list, 50) / 1000
         p99_compute_e2e_latency = np.percentile(compute_e2e_latencies_list, 99) / 1000
@@ -153,6 +198,14 @@ def analyze_speclog(root_path):
         p99_queuing_delay = np.percentile(queuing_delays_list, 99) / 1000
         p99_99_queuing_delay = np.percentile(queuing_delays_list, 99.99) / 1000
 
+        p50_confirm_e2e_latency = np.percentile(confirm_e2e_latencies_list, 50) / 1000
+        p99_confirm_e2e_latency = np.percentile(confirm_e2e_latencies_list, 99) / 1000
+        p99_99_confirm_e2e_latency = np.percentile(confirm_e2e_latencies_list, 99.99) / 1000
+
+        p50_total_e2e_latency = np.percentile(total_e2e_latencies_list, 50) / 1000
+        p99_total_e2e_latency = np.percentile(total_e2e_latencies_list, 99) / 1000
+        p99_99_total_e2e_latency = np.percentile(total_e2e_latencies_list, 99.99) / 1000
+
         # Batch size
         batch_size = 0
         for i in range(num_replicas):
@@ -161,6 +214,8 @@ def analyze_speclog(root_path):
                 with open(avg_batch_size_file_path_i, 'r') as file:
                     for line in file:
                         batch_size += float(line)
+
+        avg_batch_size = batch_size / num_replicas
 
         avg_batch_size = batch_size / num_replicas
 
