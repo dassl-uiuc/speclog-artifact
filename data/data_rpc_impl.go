@@ -82,6 +82,11 @@ func (s *DataServer) Replicate(stream datapb.Data_ReplicateServer) error {
 			log.Errorf("Receive replicate error: %v", err)
 			return err
 		}
+
+		if failMaskExpt && s.ignoreBackupCC.Load() && record.LocalReplicaID == 0 {
+			continue
+		}
+
 		s.diskWriteMu.Lock()
 		id := int64(record.ClientID)<<32 + int64(record.ClientSN)
 		c := make(chan bool)

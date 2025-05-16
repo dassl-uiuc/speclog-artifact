@@ -22,13 +22,21 @@ elif [ "$apps" = "true" ]; then
     
     run_server_suffix="7"
     run_client_suffix="2"
+elif [ "$fail_mask" = "true" ]; then
+    data_pri=("node3")
+    data_sec=("node4")
+    data_ter=("node5")
+
+    client_nodes=("node13" "node14" "node15")
+    run_server_suffix="6"
+    run_client_suffix="3"
 else 
     data_pri=("node3" "node5" "node7" "node9")
     data_sec=("node4" "node6" "node8" "node10")
 
-    client_nodes=("node13" "node14" "node15" "node12")
-    run_server_suffix="11"
-    run_client_suffix="4"
+    client_nodes=("node13")
+    run_server_suffix="6"
+    run_client_suffix="1"
 fi 
 intrusion_detection_dir="../../applications/vanilla_applications/intrusion_detection"
 transaction_analysis_dir="../../applications/vanilla_applications/transaction_analysis"
@@ -45,6 +53,16 @@ check_sync() {
             exit 1
         fi
     done <<< "$shas"
+}
+
+push_three_way_yaml() {
+    cp $benchmark_dir/../.scalog.yaml $benchmark_dir/../.scalog.yaml.bak
+    cp $benchmark_dir/../.3wayscalog.yaml $benchmark_dir/../.scalog.yaml
+}
+
+pop_three_way_yaml() {
+    cp $benchmark_dir/../.scalog.yaml.bak $benchmark_dir/../.scalog.yaml
+    rm $benchmark_dir/../.scalog.yaml.bak
 }
 
 modify_batching_intervals() {
@@ -105,6 +123,12 @@ collect_logs() {
     do 
         scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $svr:/data/*.log $benchmark_dir/logs/ &
     done 
+    if [ "$fail_mask" = "true" ]; then
+        for svr in ${data_ter[@]};
+        do 
+            scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $svr:/data/*.log $benchmark_dir/logs/ &
+        done
+    fi
     for svr in ${client_nodes[@]};
     do 
         scp -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $svr:/data/*.log $benchmark_dir/logs/ &
@@ -135,6 +159,14 @@ start_data_nodes() {
         echo "Starting secondary for shard $i on ${data_sec[$i]}"
         ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_sec[$i]} "sh -c \"cd $benchmark_dir/data-$i-1; nohup ./run_goreman.sh > ${LOGDIR}/data-$i-1.log 2>&1 &\""
     done
+
+    if [ "$fail_mask" = "true" ]; then
+        for ((i=0; i<$1; i++))
+        do
+            echo "Starting tertiary for shard $i on ${data_ter[$i]}"
+            ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_ter[$i]} "sh -c \"cd $benchmark_dir/data-$i-2; nohup ./run_goreman.sh > ${LOGDIR}/data-$i-2.log 2>&1 &\""
+        done
+    fi
 }
 
 ## Note: Always start discovery before starting data nodes
@@ -158,6 +190,14 @@ check_data_log() {
         echo "Checking data node data-$i-1..."
         ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_sec[$i]} "grep error ${LOGDIR}/data-$i-1.log"
     done
+
+    if [ "$fail_mask" = "true" ]; then
+        for ((i=0; i<$1; i++))
+        do
+            echo "Checking data node data-$i-2..."
+            ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY ${data_ter[$i]} "grep error ${LOGDIR}/data-$i-2.log"
+        done
+    fi
 }
 
 
@@ -169,6 +209,12 @@ start_append_clients() {
 start_e2e_clients() {
     go_path="/usr/local/go/bin/go"
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run single_client_e2e.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1_$4.log 2>&1" &
+}
+
+# args: client node, computation time, runtime secs, shardId, numAppenders, filepath
+start_e2e_clients_3way() {
+    go_path="/usr/local/go/bin/go"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run single_client_e2e_3way.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1_$4.log 2>&1" &
 }
 
 # args: client node, computation time, runtime secs, shardId, numAppenders, filepath

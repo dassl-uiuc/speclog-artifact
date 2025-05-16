@@ -21,6 +21,7 @@ import (
 const backendOnly = false
 const reconfigExpt bool = false
 const lagfixExpt bool = false
+const failMaskExpt bool = false
 
 // very ad-hoc
 var failedShards []int32
@@ -164,6 +165,7 @@ type DataServer struct {
 	replicateConfWg map[int64]*sync.WaitGroup
 	// for hole replication optimization, marker to delete wg after these many records have used the wg
 	replicateCountDown map[int64]int
+	replicateCounter   map[int64]int32
 	replicateConfMu    sync.RWMutex
 
 	// written to disk
@@ -201,6 +203,8 @@ type DataServer struct {
 	// this is needed in case the confirmation records are accessible before the actual records have been speculated on
 	// in such a case we buffer the confirmation records in the subsequent array @confirmationRecords and send them only after the actual records have been submitted to the clients
 	confirmationRecords map[int64]*datapb.Record
+
+	ignoreBackupCC atomic.Bool
 }
 
 func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.Duration, dataAddr address.DataAddr, orderAddr address.OrderAddr) *DataServer {
@@ -242,6 +246,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.stats.timeToOrderCut = movingaverage.Concurrent(movingaverage.New(1000))
 	s.holeWg = sync.WaitGroup{}
 	s.replicateCountDown = make(map[int64]int)
+	s.replicateCounter = make(map[int64]int32)
 	s.replStartTime = make(map[int64]time.Time)
 	s.localCutChan = make(chan int64, 4096)
 	s.speculativeSubC = make(chan *datapb.Record, 4096)
@@ -249,6 +254,7 @@ func NewDataServer(replicaID, shardID, numReplica int32, batchingInterval time.D
 	s.nextAssignableWindowAndQuotas = make(chan *WindowAndQuota, 4096)
 	s.confirmationRecords = make(map[int64]*datapb.Record)
 	s.views = make(map[int64]int32)
+	s.ignoreBackupCC.Store(false)
 	// s.outstandingCuts = make(chan bool, 2)
 
 	if lagfixExpt {
@@ -548,9 +554,20 @@ func (s *DataServer) confirmReplication(client *datapb.Data_ReplicateClient) {
 			return
 		}
 		id := int64(ack.ClientID)<<32 + int64(ack.ClientSN)
-		s.replicateConfMu.RLock()
-		s.replicateConfWg[id].Done()
-		s.replicateConfMu.RUnlock()
+		if failMaskExpt {
+			s.replicateConfMu.Lock()
+			if _, ok := s.replicateConfWg[id]; ok {
+				if s.replicateCounter[id] > 0 {
+					s.replicateConfWg[id].Done()
+					s.replicateCounter[id]--
+				}
+			}
+			s.replicateConfMu.Unlock()
+		} else {
+			s.replicateConfMu.RLock()
+			s.replicateConfWg[id].Done()
+			s.replicateConfMu.RUnlock()
+		}
 	}
 }
 
@@ -563,7 +580,12 @@ func (s *DataServer) processAppend() {
 		id := int64(record.ClientID)<<32 + int64(record.ClientSN)
 		s.replicateConfMu.Lock()
 		s.replicateConfWg[id] = &sync.WaitGroup{}
-		s.replicateConfWg[id].Add(int(s.numReplica - 1))
+		if failMaskExpt {
+			s.replicateConfWg[id].Add(int(s.numReplica - 2))
+			s.replicateCounter[id] = s.numReplica - 2
+		} else {
+			s.replicateConfWg[id].Add(int(s.numReplica - 1))
+		}
 		if record.ClientID == s.holeID {
 			s.replicateCountDown[id] = int(record.NumHoles)
 		}
@@ -586,6 +608,10 @@ func (s *DataServer) processAppend() {
 
 // processReplicate writes my peers records to local storage
 func (s *DataServer) processReplicate() {
+	var timer *time.Timer
+	if failMaskExpt {
+		timer = time.NewTimer(10 * time.Second)
+	}
 	for record := range s.replicateC {
 		var err error
 		_, err = s.storage.WriteToPartition(record.LocalReplicaID, record.Record, record.NumHoles)
@@ -599,6 +625,16 @@ func (s *DataServer) processReplicate() {
 			c <- true
 		}
 		s.diskWriteMu.RUnlock()
+		if failMaskExpt {
+			select {
+			case <-timer.C:
+				if s.replicaID == 1 {
+					log.Printf("killing backup for shard 0")
+					s.ignoreBackupCC.Store(true)
+				}
+			default:
+			}
+		}
 	}
 }
 
@@ -1277,7 +1313,7 @@ func (s *DataServer) processCommittedEntry() {
 							start = l
 							diff = int32(lsn - l)
 						}
-						if diff > 0 {
+						if diff > 0 && !(failMaskExpt && s.ignoreBackupCC.Load() && (i == 0)) {
 							diff := int32(s.quotas[s.nextExpectedWindowNum][rid])
 							err := s.storage.Assign(i, start, diff, startGSN)
 							if err != nil {
@@ -1373,6 +1409,8 @@ func (s *DataServer) processCommittedEntry() {
 								}
 							}
 							startGSN += int64(diff)
+						} else if failMaskExpt && diff > 0 {
+							startGSN += int64(s.quotas[s.nextExpectedWindowNum][rid])
 						}
 					}
 				}

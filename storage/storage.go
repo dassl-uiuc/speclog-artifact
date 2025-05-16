@@ -4,6 +4,8 @@ import (
 	"fmt"
 )
 
+const failMaskExpt bool = false
+
 type Storage struct {
 	path          string
 	numPartitions int32
@@ -41,7 +43,16 @@ func (s *Storage) WriteToPartition(id int32, record string, holeSkip int32) (int
 
 func (s *Storage) Assign(partitionID int32, lsn int64, length int32, gsn int64) error {
 	// TODO handle errors: keep retrying
-	return s.partitions[partitionID].Assign(lsn, length, gsn)
+	if failMaskExpt {
+		for {
+			err := s.partitions[partitionID].Assign(lsn, length, gsn)
+			if err == nil {
+				return nil
+			}
+		}
+	} else {
+		return s.partitions[partitionID].Assign(lsn, length, gsn)
+	}
 }
 
 func (s *Storage) Read(gsn int64) (string, error) {

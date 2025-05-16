@@ -119,9 +119,8 @@ def get_splits(path):
     print(f"mean, {np.mean(delivery_latency_array):.2f}, {np.mean(queuing_delay_array):.2f}, {np.mean(compute):.2f}, {np.mean(wait_for_confirmation):.2f}")
     print(f"p50, {np.percentile(delivery_latency_array, 50):.2f}, {np.percentile(queuing_delay_array, 50):.2f}, {np.percentile(compute, 50):.2f}, {np.percentile(wait_for_confirmation, 50):.2f}")
     print(f"p99, {np.percentile(delivery_latency_array, 99):.2f}, {np.percentile(queuing_delay_array, 99):.2f}, {np.percentile(compute, 99):.2f}, {np.percentile(wait_for_confirmation, 99):.2f}")
-
-results_dir = os.getenv("results_dir")
-path = results_dir + "/app_failure/"
+ 
+path =  "../results/"
 
 for dir in glob.glob(path + "*/"):
     get_append_metrics(dir)
