@@ -212,12 +212,6 @@ start_e2e_clients() {
 }
 
 # args: client node, computation time, runtime secs, shardId, numAppenders, filepath
-start_e2e_clients_3way() {
-    go_path="/usr/local/go/bin/go"
-    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run single_client_e2e_3way.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1_$4.log 2>&1" &
-}
-
-# args: client node, computation time, runtime secs, shardId, numAppenders, filepath
 start_straggler_clients() {
     go_path="/usr/local/go/bin/go"
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run straggler.go $2 $3 $4 $5 $6 > ${LOGDIR}/client_$1_$4.log 2>&1" &
@@ -322,4 +316,9 @@ start_hft_generator_clients() {
 start_transaction_analysis_failure_clients() {
     go_path="/usr/local/go/bin/go"
     ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run transaction_analysis_failure.go $2 $3 $4 $5 $6 $7 > ${LOGDIR}/client_$1_$4.log 2>&1" &
+}
+
+start_transaction_analysis_failure_3way_clients() {
+    go_path="/usr/local/go/bin/go"
+    ssh -o StrictHostKeyChecking=no -i $PASSLESS_ENTRY $1 "cd $benchmark_dir/scripts; $go_path run transaction_analysis_failure_3way.go $2 $3 $4 $5 $6 $7 > ${LOGDIR}/client_$1_$4.log 2>&1" &
 }

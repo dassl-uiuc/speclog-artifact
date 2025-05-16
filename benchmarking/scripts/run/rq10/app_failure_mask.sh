@@ -21,8 +21,6 @@ popd
 
 sleep 5
 
-
-
 # parameters
 runtime_secs=60
 computation_time=(1500)
@@ -40,7 +38,7 @@ do
     start_data_nodes $num_shards
 
     sleep 1
-    start_e2e_clients_3way ${client_nodes[0]} $computation_time $runtime_secs 0 15 $benchmark_dir/logs/
+    start_transaction_analysis_failure_3way_clients ${client_nodes[0]} $computation_time $runtime_secs 0 15 $benchmark_dir/logs/ 100000
     echo "Waiting for clients to terminate"
 
     wait 
@@ -50,8 +48,8 @@ do
     collect_logs $num_shards
 
     # move logs to a different folder
-    mkdir -p "$results_dir/failure_mask/e2e_${computation_time}"
-    mv $benchmark_dir/logs/* "$results_dir/failure_mask/e2e_${computation_time}"
+    mkdir -p "$results_dir/app_failure_mask/e2e_${computation_time}"
+    mv $benchmark_dir/logs/* "$results_dir/app_failure_mask/e2e_${computation_time}"
 done
 
 set_bool_variable_in_file \
