@@ -9,6 +9,9 @@ This repository builds on the publicly available artifact for [scalog](https://g
 ## Setup
 Belfast is a distributed system that contains multiple components, namely a sequencing layer, storage shards, clients and a discovery service. For a minimal setup a cluster with 6 nodes suffices (3 (sequencer nodes) + 2 (two storage shards with discovery service) + 1 (client)). However, for full reproduction of all the experiments in a paper, a cluster with 16 nodes is required. For ease of setup, we request that the source code and binaries be hosted on a network file-system such as NFS/AFS so that all the nodes in this system can share them. From this point on, we assume that the repository is cloned on a shared file-system mounted at `/sharedfs`, all paths in this readme are relative to the root of the repository at `/sharedfs/speclog-artifact`. We also assume that each node (`node0` to `node15`) contains a local disk mounted at `/data`. Additionally, we assume that ssh connections can be established from any node to the others. 
 
+### Aside: On NFS/AFS usage
+A distributed file system such as NFS/AFS is used to host the program binary, configuration and scripts consistently across the servers. Therefore, it only simplifies the development and experimental cycle, and is not fundamental to Belfast. For CloudLab-based setups note that CloudLab already provides NFS-based sharing as part of the [`/proj` heirarchy](https://docs.cloudlab.us/advanced-storage.html#(part._shared-storage)). 
+
 
 ### Environment Variables
 Create a `.env` file at `benchmarking/scripts` based on the template in `benchmarking/scripts/.env.example`. 
@@ -40,7 +43,7 @@ cd ..
 mkdir logs
 ```
 
-To compile the binary, run the following 
+To compile the Belfast binary, run the following 
 ```bash
 ssh node0
 cd /sharedfs/speclog-artifact
@@ -87,9 +90,13 @@ p99, 1864.00, 3539.00, 5111.00, 5132.00, 999.00
 
 ### Reproducing the results 
 Using the base scripts from earlier, we have constructed individual scripts for each research question in the evaluation section of the paper. These scripts are available in 
-`benchmarking/scripts/run/rq*`. For our baseline, we have Scalog which is hosted in a separate branch `scalog-impl`. This branch also contains similar scripts to reproduce results from the paper at the same path. Additionally, for RQ9, our code is hosted on a separate branch `failure-expt`.  
+`benchmarking/scripts/run/rq*`. For our baseline, we have Scalog which is hosted in a separate branch `scalog-impl`. This branch also contains similar scripts to reproduce results from the paper at the same paths. Additionally, for RQ9, the fault-tolerance experiment, our code is hosted on a separate branch `failure-expt`.  
+
+To run experiments related to an individual research question, simply navigate to the required `benchmarking/scripts/run/rq*` directory and run the corresponding scripts. For ease-of-reproduction we have stitched together all the run scripts in a `run_all.sh` script. The commands below describe how to run the `run_all.sh` scripts from each branch to generate all the experimental data to plot results. 
 
 To run all the experiments from the paper, run the following sequence of commands
+
+* Build Belfast
 ```bash
 cd /sharedfs/speclog-artifact
 git checkout main
@@ -97,12 +104,17 @@ git checkout main
 # build the belfast binary 
 go build
 go mod vendor
+```
 
-
+* Run all experiments for Belfast
+```bash
 cd benchmarking/scripts/run
 # run all experiments, this step should take about 100-110 mins
 ./run_all.sh 
+```
 
+* Build the failure handling experiment version of Belfast 
+```bash
 # go back to root and checkout to the failure experiment branch (for RQ9)
 cd ../../..
 git checkout failure-expt
@@ -110,11 +122,17 @@ git checkout failure-expt
 # build this version
 go build
 go mod vendor
+```
 
+* Run failure experiment on Belfast
+```bash
 # run RQ9 (should take about a minute)
 cd benchmarking/scripts/run
 ./run_all.sh 
+```
 
+* Build Scalog
+```bash
 # go back to root and checkout to scalog
 cd ../../..
 git checkout scalog-impl
@@ -122,13 +140,16 @@ git checkout scalog-impl
 # build scalog 
 go build
 go mod vendor
+```
 
+* Run all experiments for Scalog
+```bash
 cd benchmarking/scripts/run
 # run all experiments for scalog, this step should take about 105-110 mins
 ./run_all.sh 
 ```
 
-These steps generate all the result files under `$results_dir`. To analyze the results and generate plots, run the following
+These steps generate all the experimental data files under `$results_dir`. To analyze the results and generate plots, run the following
 
 ```bash
 cd /sharedfs/speclog-artifact
@@ -142,9 +163,25 @@ mkdir figs
 ./plot_all.sh figs/
 ```
 
+This step generates all the figures as per the figure numbering in the paper. For example, Figure 6(a) from the paper will appear as `figs/6a.pdf`. 
+
+
+## Code Organization
+This repository is structured as follows
+1. The `client/` sub-directory contains client-side code that implements the `Client` struct. This sub-directory implements a part of the client-library responsibilities such as connecting to shard replicas, sending appended records to the corresponding replica, subscribing to records, waiting for acknowledgements/confirmations/mis-speculations. 
+2. The `scalog_api/` sub-directory is a wrapper around the `Client` struct to present a further simplified interface to end applications. For example, it filters the no-op records added by Belfast before delivering records to the application. 
+3. The `order/` sub-directory implements the sequencing layer logic for Belfast. This includes listening to the shard replicas for join/leave requests, listening to the shard replica reports, assigning quotas, sending actual cuts. Most of the logic is encapsulated within `order/order_server.go`. The `order/orderpb` sub-directory contains the protocol buffer messages and RPCs used for shard-to-sequencer communications. 
+4. The `data/` sub-directory implements the shard-side logic for Belfast. This includes sending reports, join/leave requests, delivering records to clients, assigning sequence numbers, sending confirmations/acknowledgements/mis-speculations to clients, storing log records persistently etc. Most of the logic is contained within `data/data_server.go`. Similarly, the `data/datapb` contains the protocol buffer messages and RPCs used for client-to-shard communication. 
+5. The `storage/` sub-directory implements the shard-side component for managing log records on disk. 
+6. The `discovery/` sub-directory implements the discovery service for clients to learn about view changes (shards joining/leaving/failing). 
+7. The `benchmarking/` sub-directory contains scripts for running the experiments as described above. 
+8. The `applications/vanilla_applications` implements the code for the applications evaluated in the paper.  
+
+
+### Building applications atop Belfast 
+Applications interact with Belfast through the `Scalog` struct and API in `scalog_api/scalog_api.go`. For a detailed interface and usage, refer to any application under `applications/vanilla_applications`. For example, `applications/vanilla_applications/intrusion_detection/intrusion_detection_generator.go` contains the appender side code for the application and `applications/vanilla_applications/intrusion_detection/intrusion_detection_devices.go` contains the downstream consumer logic.
 
 ## For artifact evaluators
-
 For artifact evaluators, we provide a cluster with 16 nodes. These nodes are already setup with the installation and setup steps. In these nodes, the repository would be hosted in an NFS at `/proj/rasl-PG0/<username>/speclog-artifact`. Please talk to us through HotCRP for further instructions to access this cluster. 
 
 If any step or script gets stuck at any point, exit from the script and perform the following steps to cleanup any stale processes on the servers and clients
