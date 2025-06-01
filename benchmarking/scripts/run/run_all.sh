@@ -5,9 +5,10 @@
 
 echo "Running all experiments..."   
 
-echo "Running RQ9..."
-pushd rq9
-./rq9.sh
+echo "Running RQ11..."
+pushd rq11
+./app_failure.sh
+./app_failure_mask.sh
 popd
 
 echo "Done!"
