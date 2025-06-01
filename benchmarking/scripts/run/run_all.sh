@@ -26,17 +26,15 @@ pushd rq5
 ./rq5.sh
 popd
 
-echo "Running RQ6..."
-pushd rq6
-./rq6.sh
-popd
-
 echo "Running RQ7..."
 pushd rq7
 ./rq7.sh
 popd
 
-# TODO RQ9
+echo "Running RQ8..."
+pushd rq8
+./rq8.sh
+popd
 
 echo "Running RQ10..."
 pushd rq10
