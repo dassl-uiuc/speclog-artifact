@@ -8,43 +8,45 @@ subprocess.run(["python3", "analyze_ta.py", results_dir + "/apps/transaction_ana
 subprocess.run(["python3", "analyze_hft.py", results_dir + "/apps/hft/"], check=True)
 
 
-gnuplot = rf"""
-#! /bin/bash
+gnuplot = rf"""(cat <<EOF
+	set terminal postscript eps enhanced color size 2.3,1.5 font "Times-new-roman,17"
+	set output "splitup.eps"
+	#set xlabel "Value size (bytes)" font "Times-new-roman,16" offset 0,0.5,0
+	set ylabel "E2E latency (ms)" font "Times-new-roman,16" offset 1.5,0,0
+	set tmargin 2.5
+	set lmargin 5
+	set rmargin .6
+	set bmargin 3.6
+	set style data histogram
+	set style histogram rowstacked
+	set style fill solid border -1
+	set boxwidth 0.55
+	set border lw 0.25
+	set tics scale 0.3
+	set xtics scale 0
+	set xtics offset 0,.3 font "Times-new-roman,18"
+	#set xrange[0:10]
+	set yrange[0:10]
+	set key vertical at 2.5,12 center samplen 0.8 font "Times-new-roman,15" autotitle columnheader maxrows 2 width -3
+	set border 3
+	set tics nomirror
+	set label 'S: Scalog' at  -0.6,8.45 font "Times-new-roman,16"
+	set label 'B: Belfast' at  -0.6,6.85 font "Times-new-roman,16"
+	set label "Intrusion\nDetect" at 	-0.5,-3 font "Times-new-roman,16" enhanced
+	set label "Fraud\nMonitor" at  2.7,-3 font "Times-new-roman,16" enhanced
+	set label "High-Freq\nTrade" at  5.4,-3 font "Times-new-roman,16"  enhanced
+    plot "splitup" using (\$3/1000):xtic(1) lt -1 fs solid 0.5, \
+	    '' using (\$4/1000) lt -1 fs pattern 7, \
+	    '' using (\$5/1000) lt -1 fs solid 0 ,\
+	    '' using (\$6/1000) lt -1 fs solid 1 , \
+	    '' using (\$9+0.2):(\$7/1000+0.9):8 title "" with labels center font "Times-new-roman,14"
 
-(cat <<EOF
-set terminal postscript eps enhanced color size 2.5, 1.6 font "Times-new-roman,20"
-set output 'apps.eps'
-
-#set yrange [0:20]
-set style line 2 lc rgb 'black' lt 1 lw 2
-set style data histogram
-set style histogram cluster gap 2
-set style fill pattern border 0
-set xtics format "" scale 0
-set boxwidth 0.975
-set ytics scale 0.5
-set ytics 2
-set xrange [-0.5:2.5]
-set yrange [0:8]
-set tmargin 1.7
-set lmargin 5
-set rmargin 2
-set bmargin 2.5
-
-#BB5566
-#004488
-#77AADD
-set key at 2.8,9.5 font "Times-new-roman,21" samplen 2.5 maxrows 1
-set ylabel "E2E Latency (ms)" font "Times-new-roman,21" offset 0.5,0,0
-plot 'scalog' using (\$2/1000):xtic(1) title "Scalog" fs pattern 7 border rgb "coral" lc rgb 'coral' lw 2,\
- 	 'speclog' using (\$2/1000):xtic(1) title "Belfast" fs pattern 3 border rgb "#009988" lc rgb '#009988' lw 2,\
- 	 'speclog' using (\$3+0.25):(\$2/1000+0.75):4 title "" with labels center font "Times-new-roman,18"
- 	
+	    
 EOF
 ) | gnuplot -persist
 """
 
 subprocess.run(['bash'], input=gnuplot, text=True)
-subprocess.run(["bash"], input="epstopdf apps.eps", text=True)
-subprocess.run(["bash"], input="rm apps.eps scalog speclog", text=True)
-subprocess.run(["bash"], input="mv apps.pdf 15.pdf", text=True)
+subprocess.run(["bash"], input="epstopdf splitup.eps", text=True)
+subprocess.run(["bash"], input="rm splitup.eps scalog speclog splitup", text=True)
+subprocess.run(["bash"], input="mv splitup.pdf 16.pdf", text=True)

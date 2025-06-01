@@ -171,7 +171,7 @@ def get_splits_scalog(path, df):
     return df
 
 
-comp_lat = [100, 500, 1000, 1500, 2000, 2500, 3000, 4000, 5000]
+comp_lat = [100, 500, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 50000]
 
 
 df_splits_scalog_4shard = pd.DataFrame(columns=[
@@ -284,12 +284,12 @@ with open("stacked-data-4", "w") as f:
 with open("speclog-4shard", "w") as f:
     f.write("#computation_time e2e_latency ratio\n")
     for comp in comp_lat:
-        f.write("{} {} {}X\n".format(comp, df_e2e_speclog_4shard.loc[comp]['mean_e2e_latency'], round(df_e2e_scalog_4shard.loc[comp]['mean_e2e_latency']/df_e2e_speclog_4shard.loc[comp]['mean_e2e_latency'], 2)))
+        f.write("{} {} {}\n".format(comp, df_e2e_speclog_4shard.loc[comp]['mean_e2e_latency'], round(df_e2e_scalog_4shard.loc[comp]['mean_e2e_latency']/df_e2e_speclog_4shard.loc[comp]['mean_e2e_latency'], 2)))
 
 with open("scalog-4shard", "w") as f:
     f.write("#computation_time e2e_latency ratio\n")
     for comp in comp_lat:
-        f.write("{} {} {}X\n".format(comp, df_e2e_scalog_4shard.loc[comp]['mean_e2e_latency'], round(df_e2e_scalog_4shard.loc[comp]['mean_e2e_latency']/df_e2e_speclog_4shard.loc[comp]['mean_e2e_latency'], 2)))
+        f.write("{} {} {}\n".format(comp, df_e2e_scalog_4shard.loc[comp]['mean_e2e_latency'], round(df_e2e_scalog_4shard.loc[comp]['mean_e2e_latency']/df_e2e_speclog_4shard.loc[comp]['mean_e2e_latency'], 2)))
 
 
 gnuplot_script_e2e = r"""

@@ -462,7 +462,11 @@ if os.path.exists("speclog"):
 with open("speclog", "a") as f:
     f.write(f"\"Intrusion \\nDetect\"\t{np.mean(speclog_latencies)}\t{lines}\t{(np.mean(scalog_latencies)/np.mean(speclog_latencies)):.2f}\n")
 
-with open("splitup-id", "w") as f:
-    f.write(f"System\tDelivery\tQueuing\tDownstreamCompute\tWaitForConfirm\n")
-    f.write(f"Scalog\t{np.mean(scalog_delivery_split)}\t{np.mean(scalog_queuing_split)}\t{np.mean(scalog_compute_split)}\t{0}\n")
-    f.write(f"Speclog\t{np.mean(speclog_delivery_split)}\t{np.mean(speclog_queuing_split)}\t{np.mean(speclog_compute_split)}\t{np.mean(speclog_wait_for_confirm_split)}\n")
+with open("splitup", "w") as f:
+    scalog_sanitye2e = np.mean(scalog_delivery_split) + np.mean(scalog_queuing_split) + np.mean(scalog_compute_split)
+    speclog_sanitye2e = np.mean(speclog_delivery_split) + np.mean(speclog_queuing_split) + np.mean(speclog_compute_split) + np.mean(speclog_wait_for_confirm_split)
+    xfac=round(scalog_sanitye2e/speclog_sanitye2e, 2)
+    f.write(f"System\tComputationTime\tDelivery\tQueuing\tDownstreamCompute\tWaitForConfirm\tsanitye2e\n")
+    f.write("{} {} {} {} {} {} {} {} {}\n".format("S", 0, np.mean(scalog_delivery_split), np.mean(scalog_queuing_split), np.mean(scalog_compute_split), 0, scalog_sanitye2e, "\"\\240\"", 0))
+    f.write("{} {} {} {} {} {} {} {}X {}\n".format("B", 0, np.mean(speclog_delivery_split), np.mean(speclog_queuing_split), np.mean(speclog_compute_split), np.mean(speclog_wait_for_confirm_split), speclog_sanitye2e, xfac, 1))
+    f.write("\"\\240\" 	0	0	0	0	0\n")

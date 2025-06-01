@@ -32,11 +32,14 @@ exec bash
 source /sharedfs/speclog-artifact/benchmarking/scripts/.env
 ```
 
-`node0` will be used to generate the plots from the paper for which we require some additional python libraries which can be installed as follows
+`node0` will be used to generate the plots from the paper for which we require some additional python libraries and dependencies which can be installed as follows
 ```bash
 ssh node0
 cd /sharedfs/speclog-artifact/benchmarking/scripts
 pip install -r requirements.txt
+
+# install fonts
+sudo apt-get install msttcorefonts -qq -y # needs manual acknowledgement
 
 # create a logs directory
 cd ..

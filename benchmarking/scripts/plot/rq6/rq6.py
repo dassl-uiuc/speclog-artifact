@@ -134,5 +134,5 @@ EOF
 
 subprocess.run(['bash'], input=gnuplot_script, text=True)
 subprocess.run(['bash'], input="epstopdf wsize.eps", text=True)
-subprocess.run(['bash'], input="rm ws_data", text=True)
+subprocess.run(['bash'], input="rm ws_data wsize.eps", text=True)
 subprocess.run(['bash'], input="mv wsize.pdf 12.pdf", text=True)

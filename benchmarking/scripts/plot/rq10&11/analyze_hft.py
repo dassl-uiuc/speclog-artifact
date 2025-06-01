@@ -6,7 +6,7 @@ import numpy as np
 num_replicas = 2
 num_append_clients_per_replica = 10
 num_read_clients_per_replica = 1
-num_trials = 5
+num_trials = 3
 
 def largest_common_key(*maps):
     # Find the intersection of all keys across the maps
@@ -484,7 +484,10 @@ if os.path.exists("speclog"):
 with open("speclog", "a") as f:
     f.write(f"\"High-Freq \\nTrade\"\t{np.mean(speclog_latencies):.2f}\t{lines}\t{(np.mean(scalog_latencies)/np.mean(speclog_latencies)):.2f}\n")
 
-with open("splitup-hft", "w") as f:
-    f.write(f"System\tDelivery\tQueuing\tDownstreamCompute\tWaitForConfirm\n")
-    f.write(f"Scalog\t{np.mean(scalog_delivery_split)}\t{np.mean(scalog_queuing_split)}\t{np.mean(scalog_compute_split)}\t{0}\n")
-    f.write(f"Speclog\t{np.mean(speclog_delivery_split)}\t{np.mean(speclog_queuing_split)}\t{np.mean(speclog_compute_split)}\t{np.mean(speclog_wait_for_confirm_split)}\n")
+with open("splitup", "a") as f:
+    scalog_sanitye2e = np.mean(scalog_delivery_split) + np.mean(scalog_queuing_split) + np.mean(scalog_compute_split)
+    speclog_sanitye2e = np.mean(speclog_delivery_split) + np.mean(speclog_queuing_split) + np.mean(speclog_compute_split) + np.mean(speclog_wait_for_confirm_split)
+    xfac=round(scalog_sanitye2e/speclog_sanitye2e, 2)
+    f.write("{} {} {} {} {} {} {} {} {}\n".format("S", 0, np.mean(scalog_delivery_split), np.mean(scalog_queuing_split), np.mean(scalog_compute_split), 0, scalog_sanitye2e, "\"\\240\"", 0))
+    f.write("{} {} {} {} {} {} {} {}X {}\n".format("B", 0, np.mean(speclog_delivery_split), np.mean(speclog_queuing_split), np.mean(speclog_compute_split), np.mean(speclog_wait_for_confirm_split), speclog_sanitye2e, xfac, 7))
+    f.write("\"\\240\" 	0	0	0	0	0\n")
