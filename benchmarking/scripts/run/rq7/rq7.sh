@@ -1,115 +1,106 @@
 #!/bin/bash
 
-five_shard=true
-source ../../common.sh 
+source ../../common.sh
 pushd $benchmark_dir/scripts
+
+# change params in files
+set_bool_variable_in_file \
+    ../../data/data_server.go \
+    "reconfigExpt" \
+    "true"
+
+set_bool_variable_in_file \
+    ../../order/order_server.go \
+    "reconfigExpt" \
+    "true"
+
+set_bool_variable_in_file \
+    ../../client/client.go \
+    "reconfigExpt" \
+    "true"
+
+# run expt 
+pushd $benchmark_dir/../
+go build 
+popd 
+
+sleep 5
+shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
+check_sync $shas
+
+
+# two shards involved in this expt
+num_shards=2
+
+# when does shard 1 join?
+shard_join_time=15
+
+# when does shard 1 leave
+# shard 1 leaves 30 seconds after joining, uncomment code in data_server.go to achieve this. 
+# also uncomment timeout code in client.go
 
 # parameters
 runtime_secs=60
-computation_time=(1200)
-num_shards=(1 2 3 4 5)
-num_iter=3
+computation_time=(800)
 
-for ct in "${computation_time[@]}";
-do 
-    for shards in "${num_shards[@]}";
-    do 
-        if [ "$shards" -ge 3 ]; then 
-            # switch to the staggered version 
-            sed -i "s/const staggeringFactor int64 = -1/const staggeringFactor int64 = 2/" ../../order/order_server.go
-            sed -i "s/const staggeringFactor int64 = -1/const staggeringFactor int64 = 2/" ../../data/data_server.go
+cleanup_clients
+cleanup_servers
+clear_server_logs
+clear_client_logs
 
-            pushd $benchmark_dir/../ 
-            go build
-            popd 
+start_order_nodes
+start_discovery
 
-            # wait for NFS to sync
-            sleep 5 
-            shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
-            check_sync $shas
-        fi
-        for iter in $(seq 1 $num_iter);
-        do
-            cleanup_clients
-            cleanup_servers
-            clear_server_logs
-            clear_client_logs
+# start shard 0 with rid 0 and rid 1
+start_specific_shard 0
 
-            start_order_nodes
-            start_discovery
-            start_data_nodes $shards
+# sleep for a bit befor starting clients
+sleep 5
 
-            sleep 5
-            num_clients=$((2*$shards))
-            for (( i = 0; i < $num_clients; i++ )); do
-                start_e2e_clients ${client_nodes[i % ${#client_nodes[@]}]} $ct $runtime_secs $i 10 $benchmark_dir/logs/
-            done
-            echo "Waiting for clients to terminate"
+new_client_runtime_secs=$(($runtime_secs - $shard_join_time))
+# start clients
+start_reconfig_clients ${client_nodes[0]} $computation_time $runtime_secs $new_client_runtime_secs 10 $benchmark_dir/logs/ 1
+echo "Waiting for clients to terminate"
 
-            wait 
+# sleep for a bit before starting shard 1
+sleep $shard_join_time
 
-            cleanup_clients
-            cleanup_servers
-            collect_logs $shards
+# start shard 1 with rid 2 and rid 3
+start_specific_shard 1
 
-            suffix="wo_sc"
-            if [ "$shards" -ge 3 ]; then 
-                suffix="wi_sc"
-            fi
-            mkdir -p "$results_dir/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
-            mv $benchmark_dir/logs/* "$results_dir/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
-        done
-        if [ "$shards" -ge 3 ]; then 
-            # switch back 
-            sed -i "s/const staggeringFactor int64 = 2/const staggeringFactor int64 = -1/" ../../order/order_server.go
-            sed -i "s/const staggeringFactor int64 = 2/const staggeringFactor int64 = -1/" ../../data/data_server.go
-            pushd $benchmark_dir/../ 
-            go build
-            popd 
+wait 
 
-            # wait for NFS to sync
-            sleep 5 
-            shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
-            check_sync $shas
-        fi
-    done 
-done
+cleanup_clients
+cleanup_servers
 
-# also run 5 shard wo sc 3 times
-for ct in "${computation_time[@]}";
-do 
-    shards=5
-    for iter in $(seq 1 $num_iter);
-    do 
-        cleanup_clients
-        cleanup_servers
-        clear_server_logs
-        clear_client_logs
+collect_logs $num_shards
 
-        start_order_nodes
-        start_discovery
-        start_data_nodes $shards
-
-        sleep 5
-        num_clients=$((2*$shards))
-        for (( i = 0; i < $num_clients; i++ )); do
-            start_e2e_clients ${client_nodes[i % ${#client_nodes[@]}]} $ct $runtime_secs $i 10 $benchmark_dir/logs/
-        done
-        echo "Waiting for clients to terminate"
-
-        wait 
-
-        cleanup_clients
-        cleanup_servers
-        collect_logs $shards
-
-        suffix="wo_sc"
-        mkdir -p "$results_dir/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
-        mv $benchmark_dir/logs/* "$results_dir/e2e_scalability/runs_3_${suffix}/$iter/e2e_${ct}_${shards}"
-    done 
-done
+# move logs to a different folder
+mkdir -p "$results_dir/reconfig_${computation_time}_speclog_with_e2e"
+mv $benchmark_dir/logs/* "$results_dir/reconfig_${computation_time}_speclog_with_e2e"
 
 
+set_bool_variable_in_file \
+    ../../data/data_server.go \
+    "reconfigExpt" \
+    "false"
 
+set_bool_variable_in_file \
+    ../../order/order_server.go \
+    "reconfigExpt" \
+    "false"
+
+set_bool_variable_in_file \
+    ../../client/client.go \
+    "reconfigExpt" \
+    "false"
+
+pushd $benchmark_dir/../
+go build 
+popd 
+
+sleep 5
+shas=$(./run_script_on_servers.sh ./check_sync.sh $run_server_suffix)
+check_sync $shas
 
 popd

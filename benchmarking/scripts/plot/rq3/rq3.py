@@ -155,6 +155,6 @@ EOF
 subprocess.run(['bash'], input=gnuplot_script, text=True)
 subprocess.run(['bash'], input="epstopdf rq3-append-lat.eps", text=True)
 subprocess.run(['bash'], input="rm *.eps data", text=True)
-subprocess.run(['bash'], input="mv rq3-append-lat.pdf 8.pdf", text=True)
+subprocess.run(['bash'], input="mv rq3-append-lat.pdf 9.pdf", text=True)
 
 

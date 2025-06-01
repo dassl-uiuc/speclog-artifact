@@ -1,225 +1,91 @@
-import numpy as np
-import glob
-import pandas as pd
 import subprocess
-import os
-import matplotlib.pyplot as plt
-import os 
 
-results_dir = os.getenv("results_dir")
-num_iter = 3
-
-def get_append_metrics(path, df):
-    file_pattern = path + "append_metrics*.csv"
-
-    total_throughput = 0
-    latency_values = []
-
-    for file in glob.glob(file_pattern):
-        with open(file, 'r') as f:
-            lines = f.readlines()[1:]
-            for line in lines:
-                parts = line.strip().split(',')
-                gsn, latency, throughput = int(parts[0]), float(parts[1]), float(parts[2])
-                latency_values.append(latency)
-            
-            total_throughput += throughput
-
-    latency_array = np.array(latency_values)
-
-    mean_latency = np.mean(latency_array)
-    p50_latency = np.percentile(latency_array, 50)
-    p99_latency = np.percentile(latency_array, 99)
-
-    num_shards = int(path.split("_")[-1].split("/")[0]) 
-
-    df.loc[num_shards] = {
-        'throughput': total_throughput,
-        'mean_e2e_latency': 0.0,
-    }
-
-    return df
-
-def get_e2e_metrics_speclog(path, df):
-    file_pattern = path + "e2e_metrics*.csv"
-
-    delivery_latency_values = []
-    compute_latency_values = []
-    confirmation_latency_values = []
-    e2e_latency_values = []
-    queuing_delay_values = []
-
-    for file in glob.glob(file_pattern):
-        with open(file, 'r') as f:
-            lines = f.readlines()[1:]
-            for line in lines:
-                parts = line.strip().split(',')
-                delivery, confirm, compute, e2e, queuing_delay = float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])
-                delivery_latency_values.append(delivery)
-                compute_latency_values.append(compute)
-                confirmation_latency_values.append(confirm)
-                e2e_latency_values.append(e2e)
-                queuing_delay_values.append(queuing_delay)
-
-    
-    delivery_latency_array = np.array(delivery_latency_values)
-    compute_latency_array = np.array(compute_latency_values)
-    confirmation_latency_array = np.array(confirmation_latency_values)
-    e2e_latency_array = np.array(e2e_latency_values)
-    queuing_delay_array = np.array([x for x in queuing_delay_values if x > 0])
-
-    num_shards = int(path.split("_")[-1].split("/")[0])
-
-    df.loc[num_shards, 'mean_e2e_latency'] = np.mean(e2e_latency_array)
-
-    return df
-
-def get_e2e_metrics_scalog(path, df):
-    file_pattern = path + "e2e_metrics*.csv"
-
-    delivery_latency_values = []
-    e2e_latency_values = []
-    queuing_delay_values = []
-
-    for file in glob.glob(file_pattern):
-        with open(file, 'r') as f:
-            lines = f.readlines()[1:]
-            for line in lines:
-                parts = line.strip().split(',')
-                delivery, e2e, queuing_delay = float(parts[1]), float(parts[2]), float(parts[3])
-                delivery_latency_values.append(delivery)
-                e2e_latency_values.append(e2e)
-                queuing_delay_values.append(queuing_delay)
-
-    
-    delivery_latency_array = np.array(delivery_latency_values)
-    e2e_latency_array = np.array(e2e_latency_values)
-    queuing_delay_array = np.array([x for x in queuing_delay_values if x > 0])
-
-    num_shards = int(path.split("_")[-1].split("/")[0])
-    df.loc[num_shards, 'mean_e2e_latency'] = np.mean(e2e_latency_array)
-
-    return df
+speclog_tput = subprocess.run(["python3", "tput_speclog.py"], capture_output=True)
+join, new_window, leave = None, None, None
+for line in speclog_tput.stdout.decode("utf-8").splitlines():
+    if "shard requests to join" in line:
+        join = float(line.split("\t")[0])
+    if "first cut committed from new shard" in line:
+        new_window = float(line.split("\t")[0])
+    if "shard requests to leave" in line:
+        leave = float(line.split("\t")[0])
+scalog_tput = subprocess.run(["python3", "tput_scalog.py"], capture_output=True)
+subprocess.run(["python3", "lat_scalog.py", str(join*1000)])
+subprocess.run(["python3", "lat_speclog.py", str(join*1000)])
 
 
-df_speclog = pd.DataFrame(columns=[
-    'throughput', 'mean_e2e_latency'
-])
+gnuplot_tput = rf"""
+#! /bin/bash
+#run this script to generate the lat vs thrpt graphs for c and w
 
-df_scalog = pd.DataFrame(columns=[
-    'throughput', 'mean_e2e_latency'
-])
+#./plot_lat_thrpt.sh ../paper_results/wc-2 sync w 2;
+#./plot_lat_thrpt.sh ../paper_results/wc-2 async w 2;
+#./plot_lat_thrpt.sh ../paper_results/wc-2 sync c 2;
 
-
-dfs = {}
-for run in range(1, num_iter + 1):
-    scalog = pd.DataFrame(columns=[
-        'throughput', 'mean_e2e_latency'
-    ])
-    speclog = pd.DataFrame(columns=[
-        'throughput', 'mean_e2e_latency'
-    ])
-
-    for shards in [1, 2, 3, 4, 5]:
-        path_scalog = results_dir + f"/e2e_scalability/runs_3_scalog/{run}/e2e_1200_{shards}/"
-        path_speclog = results_dir + f"/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_{shards}/"
-        if shards >= 3: 
-            path_speclog = results_dir + f"/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_{shards}/" 
-        scalog = get_append_metrics(path_scalog, scalog)
-        scalog = get_e2e_metrics_scalog(path_scalog, scalog)
-        speclog = get_append_metrics(path_speclog, speclog)
-        speclog = get_e2e_metrics_speclog(path_speclog, speclog)
-
-    dfs[run] = {
-        'scalog': scalog,
-        'speclog': speclog
-    }
-
-# avg over runs
-for run in range(1, num_iter + 1):
-    scalog = dfs[run]['scalog']
-    speclog = dfs[run]['speclog']
-
-    if run == 1:
-        df_speclog = speclog
-        df_scalog = scalog
-    else:
-        df_speclog += speclog
-        df_scalog += scalog
-
-df_speclog = df_speclog / num_iter
-df_scalog = df_scalog / num_iter
+(cat <<EOF
+	set terminal postscript eps enhanced color size 2.4, 1.8 font "Times-new-roman,19" 
+	#set multiplot
+	set output "reconfig-tput.eps"
+	set multiplot
+	set xlabel "Time (s)" font "Times-new-roman,21" offset 0,0.4,0
+	set ylabel "Throughput (KOps/s)" font "Times-new-roman,20" offset 1,-0.2,0
+	set tmargin 3
+	set lmargin 5.5
+	set encoding utf8
+	set rmargin .5
+	set bmargin 3
+	set yrange [0:11]
+	set xrange [0:57]
+	#set y2tics nomirror
+	#set ytics nomirror
+	#set y2range[1:]
+	set tics scale 0.4
+	#set ytics 0,200,800 scale 0.4
+	#set xtics (1,3,5,7,10) scale 0.4
+	set trange [-100:100]
+	set parametric
+	set key at 59.8,14.5 font "Times-new-roman,19" samplen 1.5 maxrows 2 width -5.5
+	set style function linespoints
+	set label "close-up" at 23,8.2
+	plot {join},t title "Join" dt 1 lw 4 ps 0,\
+		{new_window},t title "New Window" dt 3 lw 4 ps 0 lc rgb "black",\
+		{leave},t title "Leave" dt 2 lw 4 ps 0 lc rgb "red",\
+		"scalog_tput.csv" using 1:(\$2/1000) title 'Scalog' with lines lc rgb 'coral'  dashtype 1 lw 4,\
+		"speclog_tput.csv" using 1:(\$2/1000) title 'Belfast' with lines lc rgb '#009988'  dashtype 1 lw 4
+	
 
 
-with open("data", "w") as f:
-    f.write("#shards\tSpeclog\tScalog\n")
-    for shards in df_speclog.index:
-        f.write(f"{shards*2}\t{df_speclog.loc[shards]['throughput']}\t{df_scalog.loc[shards]['throughput']}\n")
-
-with open("lat_data", "w") as f:
-    f.write("#shards\tSpeclog\tScalog\n")
-    for shards in df_speclog.index:
-        f.write(f"{shards*2}\t{df_speclog.loc[shards]['mean_e2e_latency']}\t{df_scalog.loc[shards]['mean_e2e_latency']}\n")
-
-
-for run in range(1, num_iter + 1):
-    latencies_wo_staggering = {"e2e": []}
-    latencies_wi_staggering = {"e2e": []}
-    latencies_scalog = {"e2e": []}
-
-    wo_staggering = results_dir + f"/e2e_scalability/runs_3_wo_sc/{run}/e2e_1200_5/"
-    wi_staggering = results_dir + f"/e2e_scalability/runs_3_wi_sc/{run}/e2e_1200_5/"
-    scalog = results_dir + f"/e2e_scalability/runs_3_scalog/{run}/e2e_1200_5/"
-
-
-    for file_name in os.listdir(wo_staggering):
-        if file_name.startswith("e2e") and file_name.endswith(".csv"):
-            file_path = os.path.join(wo_staggering, file_name)
-            df = pd.read_csv(file_path)
-            latencies_wo_staggering['e2e'].extend(df['e2e latency (us)'])
-
-    for file_name in os.listdir(wi_staggering):
-        if file_name.startswith("e2e") and file_name.endswith(".csv"):
-            file_path = os.path.join(wi_staggering, file_name)
-            df = pd.read_csv(file_path)
-            latencies_wi_staggering['e2e'].extend(df['e2e latency (us)'])
+	unset xlabel
+	unset ylabel
+	unset object
+	unset label
+	unset tics
+	unset arrow
+	set border lw 0.5
+	#set yrange [95:100]
+	set xrange [13:13.5]
+	set xtics 0.2 font "Times-new-roman,19" offset 0,0.2 nomirror
+	set ytics 3 font "Times-new-roman,19" offset 0.65,0 nomirror
+	set origin 0.26,0.13	
+	set size 0.5,0.67
+	#set object rectangle from screen 0.25,0.14 to screen 0.5,0.7 behind fillcolor rgb 'white' fillstyle solid noborder
+	unset format x
+	set tics scale 0.5
+	set arrow heads filled from 365,99 to 215,99 lt 2 lw 2 lc rgb "black" front
+	set label '1.7x' at 310,98 font "Times-new-roman,20" front
+	#set label '5%' at 225, 97 font "Times-new-roman,20" front 
 
 
-    for file_name in os.listdir(scalog):
-        if file_name.startswith("e2e") and file_name.endswith(".csv"):
-            file_path = os.path.join(scalog, file_name)
-            df = pd.read_csv(file_path)
-            latencies_scalog['e2e'].extend(df['e2e latency (us)'])
+	unset key
+	plot {join},t title "Shard Join" dt 1 lw 2 ps 0,\
+		{new_window},t title "New Window" dt 3 lw 3 ps 0 lc rgb "black",\
+		"scalog_tput.csv" using 1:(\$2/1000) title 'Scalog' with lines lc rgb 'coral'  dashtype 1 lw 3,\
+		"speclog_tput.csv" using 1:(\$2/1000) title 'Speclog' with lines lc rgb '#009988'  dashtype 1 lw 3
 
-
-    for key, value in latencies_wi_staggering.items():
-        latencies_wi_staggering[key] = np.sort(np.array(value))
-
-    for key, value in latencies_wo_staggering.items():
-        latencies_wo_staggering[key] = np.sort(np.array(value))
-
-    for key, value in latencies_scalog.items():
-        latencies_scalog[key] = np.sort(np.array(value))
-
-
-    cdf_wi_staggering = {'e2e': []}
-    cdf_wo_staggering = {'e2e': []}
-    cdf_scalog = {'e2e': []}
-
-    # get array of percentiles from 1 to 99
-    percentiles = np.linspace(0.01, 100.0, 10000)
-    for key, value in latencies_wi_staggering.items():
-        cdf_wi_staggering[key] = np.percentile(value, percentiles)
-    for key, value in latencies_wo_staggering.items():
-        cdf_wo_staggering[key] = np.percentile(value, percentiles)
-    for key, value in latencies_scalog.items():
-        cdf_scalog[key] = np.percentile(value, percentiles)
-
-
-    with open(f"cdfdata_{run}", 'w') as f:
-        f.write("#percentile\two\twi\tscalog\n")
-        for i in range(len(cdf_wi_staggering['e2e'])):
-            f.write(f"{percentiles[i]:.2f}\t{cdf_wo_staggering['e2e'][i]:.2f}\t{cdf_wi_staggering['e2e'][i]:.2f}\t{cdf_scalog['e2e'][i]:.2f}\n")
+	unset multiplot
+	
+EOF
+) | gnuplot -persist"""
 
 
 gnuplot_lat = rf"""
@@ -231,115 +97,42 @@ gnuplot_lat = rf"""
 #./plot_lat_thrpt.sh ../paper_results/wc-2 sync c 2;
 
 (cat <<EOF
-	set terminal postscript eps enhanced color size 2.3, 1.8 font "Times-new-roman,19"
-	set output "scalee2e.eps"
-	set xlabel "Shards" font "Times-new-roman,22" offset 0,0
-	set ylabel "E2E Latency (ms)" font "Times-new-roman,22" offset .5,-0.2,0
-	set tmargin .5
-	set lmargin 6
+	set terminal postscript eps enhanced color size 2.1, 1.7 font "Times-new-roman,19" 
+	set output "reconfig-e2e.eps"
+	set xlabel "Time (s)" font "Times-new-roman,21" offset -0.2,0.4,0
+	set ylabel "E2E Latency (ms)" font "Times-new-roman,20" offset 1,-0.2,0
+	set tmargin 2.65
+	set lmargin 5
 	set encoding utf8
-	set rmargin 1.2
+	set rmargin .5
 	set bmargin 3
-	set yrange [0:6]
-	set xrange [0:11]
+	set yrange [0:7]
+	set xrange [0:57]
 	#set y2tics nomirror
 	#set ytics nomirror
 	#set y2range[1:]
-	#set ytics 0,25,110 scale 0.4
+	set tics scale 0.4
+	#set ytics 0,200,800 scale 0.4
 	#set xtics (1,3,5,7,10) scale 0.4
-	set key at 10,2.5 font "Times-new-roman,22" samplen 2.5 maxrows 2
+	set trange [-100:100]
+	set parametric
+	set key at 56,9 font "Times-new-roman,19" samplen 1.5 maxrows 2 
 	set style function linespoints
-	plot "lat_data" using 1:(\$3/1000) title "Scalog" with linespoints lc rgb 'coral' dashtype 3 lw 5 pt 4 ps 1.3,\
-		"lat_data" using 1:(\$2/1000) title 'Belfast' with linespoints lc rgb '#009988'  dashtype 1 lw 5 pt 3 ps 1.3,\
-		
+	plot {join},t title "Join" dt 1 lw 4 ps 0,\
+		{leave},t title "Leave" dt 2 lw 4 ps 0 lc rgb "red",\
+		"scalog_lat.csv" using (\$1/1000):(\$2/1000) title 'Scalog' with lines lc rgb 'coral'  dashtype 1 lw 4,\
+		"speclog_lat.csv" using (\$1/1000):(\$2/1000) title 'Belfast' with lines lc rgb '#009988'  dashtype 1 lw 4
+	
+
+
+	
 EOF
-) | gnuplot -persist
-"""
-
-gnuplot_tput = rf"""
-#! /bin/bash
-#run this script to generate the lat vs thrpt graphs for c and w
-
-#./plot_lat_thrpt.sh ../paper_results/wc-2 sync w 2;
-#./plot_lat_thrpt.sh ../paper_results/wc-2 async w 2;
-#./plot_lat_thrpt.sh ../paper_results/wc-2 sync c 2;
-
-(cat <<EOF
-	set terminal postscript eps enhanced color size 2.3, 1.7 font "Times-new-roman,19"
-	set output "scaletput.eps"
-	set xlabel "Shards" font "Times-new-roman,22" offset 0,0,0
-	set ylabel "Throughput (KOps/s)" font "Times-new-roman,22" offset 1,-0.2,0
-	set tmargin .5
-	set lmargin 6.5
-	set encoding utf8
-	set rmargin 1.2
-	set bmargin 3
-	set yrange [0:110]
-	set xrange [0:]
-	#set y2tics nomirror
-	#set ytics nomirror
-	#set y2range[1:]
-	set ytics 0,25,110 scale 0.4
-	#set xtics (1,3,5,7,10) scale 0.4
-	set key at 10,35 font "Times-new-roman,22" samplen 2.5 maxrows 2
-	set style function linespoints
-	plot "data" using 1:(\$3/1000) title "Scalog" with linespoints lc rgb 'coral' dashtype 3 lw 5 pt 4 ps 1.3,\
-		"data" using 1:(\$2/1000) title 'Belfast' with linespoints lc rgb '#009988'  dashtype 1 lw 5 pt 3 ps 1.3,\
-		
-EOF
-) | gnuplot -persist
-"""
-
-gnuplot_cdf = lambda run: rf"""
-#! /bin/bash
-#run this script to generate the lat vs thrpt graphs for c and w
-
-#./plot_lat_thrpt.sh ../paper_results/wc-2 sync w 2;
-#./plot_lat_thrpt.sh ../paper_results/wc-2 async w 2;
-#./plot_lat_thrpt.sh ../paper_results/wc-2 sync c 2;
-
-(cat <<EOF
-	set terminal postscript eps enhanced color size 2.3, 1.7 font "Times-new-roman,19"
-	set output "scalecdf_{run}.eps"
-	set xlabel "E2E Latency (ms)" font "Times-new-roman,22" offset 0,0.2,0
-	set ylabel "CDF" font "Times-new-roman,22" offset 1.5,0,0
-	set tmargin 3.1
-	set lmargin 6
-	set encoding utf8
-	set rmargin 1.2
-	set bmargin 3
-	#set yrange [0:7.2]
-	set xrange [0:10]
-	#set y2tics nomirror
-	#set ytics nomirror
-	#set y2range[1:]
-	set ytics 20
-	#set ytics 0,25,110 scale 0.4
-	#set xtics (1,3,5,7,10) scale 0.4
-	set key at 10.5,143 font "Times-new-roman,21" samplen 1.4 maxrows 2 width -13
-	set style function linespoints
-	plot "cdfdata_{run}" using (\$4/1000):1 title "Scalog" with lines lc rgb 'coral' dashtype 3 lw 5,\
-		"cdfdata_{run}" using (\$2/1000):1 title "Belfast no-stagger" with lines lc rgb '#A9A9A9' dashtype 2 lw 4,\
-		"" using (\$3/1000):1 title 'Belfast' with lines lc rgb '#009988'  dashtype 1 lw 4,\
-
-		
-EOF
-) | gnuplot -persist
-"""
+) | gnuplot -persist"""
 
 subprocess.run(['bash'], input=gnuplot_lat, text=True)
 subprocess.run(['bash'], input=gnuplot_tput, text=True)
-subprocess.run(['bash'], input=gnuplot_cdf(1), text=True)
-subprocess.run(['bash'], input=gnuplot_cdf(2), text=True)
-subprocess.run(['bash'], input=gnuplot_cdf(3), text=True)
-subprocess.run(['bash'], input="epstopdf scalee2e.eps", text=True)
-subprocess.run(['bash'], input="epstopdf scaletput.eps", text=True)
-subprocess.run(['bash'], input=f"epstopdf scalecdf_{1}.eps", text=True)
-subprocess.run(['bash'], input=f"epstopdf scalecdf_{2}.eps", text=True)
-subprocess.run(['bash'], input=f"epstopdf scalecdf_{3}.eps", text=True)
-subprocess.run(['bash'], input="rm scalee2e.eps scaletput.eps scalecdf*.eps data lat_data cdfdata*", text=True)
-subprocess.run(['bash'], input="mv scaletput.pdf 12a.pdf", text=True)
-subprocess.run(['bash'], input="mv scalee2e.pdf 12b.pdf", text=True)
-subprocess.run(['bash'], input=f"mv scalecdf_{1}.pdf 12c-sample{1}.pdf", text=True)
-subprocess.run(['bash'], input=f"mv scalecdf_{2}.pdf 12c-sample{2}.pdf", text=True)
-subprocess.run(['bash'], input=f"mv scalecdf_{3}.pdf 12c-sample{3}.pdf", text=True)
+subprocess.run(['bash'], input="epstopdf reconfig-tput.eps", text=True)
+subprocess.run(['bash'], input="epstopdf reconfig-e2e.eps", text=True)
+subprocess.run(['bash'], input="rm *.eps *.csv", text=True)
+subprocess.run(['bash'], input="mv reconfig-tput.pdf 13a.pdf", text=True)
+subprocess.run(['bash'], input="mv reconfig-e2e.pdf 13b.pdf", text=True)

@@ -279,9 +279,9 @@ subprocess.run(['bash'], input="epstopdf rq1-dlat.eps", text=True)
 subprocess.run(['bash'], input="epstopdf rq1-e2elat.eps", text=True)
 subprocess.run(['bash'], input="epstopdf rq1-cdf.eps", text=True)
 subprocess.run(['bash'], input="rm *.eps *.dat cdfdata", text=True)
-subprocess.run(['bash'], input="mv rq1-dlat.pdf 6a.pdf", text=True)
-subprocess.run(['bash'], input="mv rq1-e2elat.pdf 6b.pdf", text=True)
-subprocess.run(['bash'], input="mv rq1-cdf.pdf 6c.pdf", text=True)
+subprocess.run(['bash'], input="mv rq1-dlat.pdf 7a.pdf", text=True)
+subprocess.run(['bash'], input="mv rq1-e2elat.pdf 7b.pdf", text=True)
+subprocess.run(['bash'], input="mv rq1-cdf.pdf 7c.pdf", text=True)
 
 
 

@@ -41,7 +41,10 @@ pushd rq8
 ./rq8.sh
 popd
 
-# TODO RQ9
+echo "Running RQ9..."
+pushd rq9
+./rq9.sh
+popd
 
 echo "Running RQ10..."
 pushd rq10

@@ -49,8 +49,9 @@ python3 rq9.py
 mv *.pdf ../$1
 popd
 
-pushd rq10
+pushd rq10\&11
 python3 rq10.py
+python3 rq11.py
 mv *.pdf ../$1
 popd
 
