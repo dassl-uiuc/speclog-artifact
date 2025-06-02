@@ -93,9 +93,9 @@ p99, 1864.00, 3539.00, 5111.00, 5132.00, 999.00
 
 ### Reproducing the results 
 Using the base scripts from earlier, we have constructed individual scripts for each research question in the evaluation section of the paper. These scripts are available in 
-`benchmarking/scripts/run/rq*`. For our baseline, we have Scalog which is hosted in a separate branch `scalog-impl`. This branch also contains similar scripts to reproduce results from the paper at the same paths. Additionally, for RQ9, the fault-tolerance experiment, our code is hosted on a separate branch `failure-expt`.  
+`benchmarking/scripts/run/rq*`. For our baseline, we have Scalog which is hosted in a separate branch `scalog-impl`. This branch also contains similar scripts to reproduce results from the paper at the same paths. For the fault-tolerance experiment, our code is hosted on a separate branch `failure-expt`. Emulation code for the scalability experiment is on `speclog-emulation` and `scalog-emulation`. 
 
-To run experiments related to an individual research question, simply navigate to the required `benchmarking/scripts/run/rq*` directory and run the corresponding scripts. For ease-of-reproduction we have stitched together all the run scripts in a `run_all.sh` script. The commands below describe how to run the `run_all.sh` scripts from each branch to generate all the experimental data to plot results. 
+To run experiments related to an individual research question, simply navigate to the required `benchmarking/scripts/run/rq*` directory and run the corresponding scripts. For ease-of-reproduction we have stitched together all the run scripts in a `run_all.sh` script for each branch. The commands below describe how to run the `run_all.sh` scripts from each branch to generate all the experimental data to plot results. 
 
 To run all the experiments from the paper, run the following sequence of commands
 
@@ -151,6 +151,40 @@ cd benchmarking/scripts/run
 # run all experiments for scalog, this step should take about 105-110 mins
 ./run_all.sh 
 ```
+
+* Build emulation for Belfast
+```bash 
+cd ../../..
+git checkout speclog-emulation
+
+# build
+go build
+go mod vendor
+```
+
+* Run all emulation experiments for Belfast
+```bash
+cd benchmarking/scripts/run
+./run_all.sh
+```
+
+* Build emulation version of Scalog
+```bash
+cd ../../..
+git checkout scalog-emulation
+
+# build variant
+go build
+go mod vendor
+```
+
+* Run all emulation experiments for Scalog
+```bash
+cd benchmarking/scripts/run
+./run_all.sh
+```
+
+
 
 These steps generate all the experimental data files under `$results_dir`. To analyze the results and generate plots, run the following
 
