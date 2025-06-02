@@ -222,6 +222,165 @@ for run in range(1, num_iter + 1):
             f.write(f"{percentiles[i]:.2f}\t{cdf_wo_staggering['e2e'][i]:.2f}\t{cdf_wi_staggering['e2e'][i]:.2f}\t{cdf_scalog['e2e'][i]:.2f}\n")
 
 
+queueing_delay = {'1200': 600, '2000': 1000}
+delivery_add = 1000
+append_add = 700
+
+import os
+import re
+import fnmatch
+
+def average_emulation_metrics_speclog(directory):
+    """
+    Calculates the average of the `mean`, `p50`, and `p99` metrics across all files in a directory matching the pattern `data*.log`.
+
+    Args:
+        directory (str): Path to the directory containing log files.
+
+    Returns:
+        dict: A dictionary containing the averages of `mean`, `p50`, and `p99` metrics.
+    """
+    data_regex = re.compile(r"(mean|p50|p99),\s*([\d.e+-]+),\s*([\d.e+-]+)")
+    tput_regex = re.compile(r"tput: ([\d.]+)")
+    
+    append_metrics = {"mean": [], "p50": [], "p99": []}
+    delivery_metrics = {"mean": [], "p50": [], "p99": []}
+    tput_metrics = {"mean": []}
+
+    for filename in os.listdir(directory):
+        if fnmatch.fnmatch(filename, 'data*.log'):  
+            filepath = os.path.join(directory, filename)
+            
+            # Temporary dictionaries to track the last occurrence in the current file
+            last_append_metrics = {}
+            last_delivery_metrics = {}
+            last_tput = {}
+
+            with open(filepath, 'r') as file:
+                for line in file:
+                    match = data_regex.search(line)
+                    if match:
+                        metric, append_latency, delivery_latency = match.groups()
+                        # Update the last seen values for the current file
+                        last_append_metrics[metric] = float(append_latency)
+                        last_delivery_metrics[metric] = float(delivery_latency)
+                    if "tput:" in line:
+                        tput = float(line.split()[-1])
+                        last_tput["mean"] = tput
+
+            # Append the last occurrence values from the current file to the global lists
+            for metric in append_metrics.keys():
+                if metric in last_append_metrics:
+                    append_metrics[metric].append(last_append_metrics[metric])
+                if metric in last_delivery_metrics:
+                    delivery_metrics[metric].append(last_delivery_metrics[metric])
+            if "mean" in last_tput:
+                tput_metrics["mean"].append(last_tput["mean"])
+
+    # Compute averages across all files for the last occurrences
+    averages = {
+        "append": {
+            metric: sum(values) / len(values) if values else None
+            for metric, values in append_metrics.items()
+        },
+        "delivery": {
+            metric: sum(values) / len(values) if values else None
+            for metric, values in delivery_metrics.items()
+        },
+        "tput": {
+            metric: sum(values) if values else None
+            for metric, values in tput_metrics.items()
+        }
+    }
+    print("found values across " + str(len(append_metrics["mean"])) + " files")
+    
+    return averages
+
+def average_emulation_metrics_scalog(directory):
+    """
+    Calculates the average of the `mean`, `p50`, and `p99` metrics across all files in a directory matching the pattern `data*.log`.
+
+    Args:
+        directory (str): Path to the directory containing log files.
+
+    Returns:
+        dict: A dictionary containing the averages of `mean`, `p50`, and `p99` metrics.
+    """
+    data_regex = re.compile(r"(mean|p50|p99),\s*([\d.e+-]+),\s*([\d.e+-]+)")
+    
+    append_metrics = {"mean": [], "p50": [], "p99": []}
+    delivery_metrics = {"mean": [], "p50": [], "p99": []}
+    tput_metrics = {"mean": []}
+
+    for filename in os.listdir(directory):
+        if fnmatch.fnmatch(filename, 'data*.log'):  
+            filepath = os.path.join(directory, filename)
+            
+            # Temporary dictionaries to track the last occurrence in the current file
+            last_append_metrics = {}
+            last_delivery_metrics = {}
+            last_tput = {}
+
+            with open(filepath, 'r') as file:
+                for line in file:
+                    match = data_regex.search(line)
+                    if match:
+                        metric, append_latency, delivery_latency = match.groups()
+                        # Update the last seen values for the current file
+                        last_append_metrics[metric] = float(append_latency)
+                        last_delivery_metrics[metric] = float(delivery_latency)
+                    if "tput:" in line:
+                        tput = float(line.split()[-1])
+                        last_tput["mean"] = tput
+
+            # Append the last occurrence values from the current file to the global lists
+            for metric in append_metrics.keys():
+                if metric in last_append_metrics:
+                    append_metrics[metric].append(last_append_metrics[metric])
+                if metric in last_delivery_metrics:
+                    delivery_metrics[metric].append(last_delivery_metrics[metric])
+            if "mean" in last_tput:
+                tput_metrics["mean"].append(last_tput["mean"])
+
+
+    # Compute averages across all files for the last occurrences
+    averages = {
+        "append": {
+            metric: sum(values) / len(values) if values else None
+            for metric, values in append_metrics.items()
+        },
+        "delivery": {
+            metric: sum(values) / len(values) if values else None
+            for metric, values in delivery_metrics.items()
+        },
+        "tput": {
+            metric: sum(values) if values else None
+            for metric, values in tput_metrics.items()
+        }
+    }
+    print("found values across " + str(len(append_metrics["mean"])) + " files")
+    
+    return averages
+
+
+with open("lat_tput_data_em", "w") as f:
+    f.write("#shards\tspeclog1.2\tspeclog2\tscalog1.2\tscalog2\tSpecLog\tScalog\n")
+    for num_shards in [6, 8, 10, 12, 16, 20]:
+        input_directory = results_dir + "/speclog_em/emulation_" + str(num_shards)
+        averages_speclog = average_emulation_metrics_speclog(input_directory)
+
+        input_directory = results_dir + "/scalog_em/emulation_" + str(num_shards)
+        averages_scalog = average_emulation_metrics_scalog(input_directory)
+
+        speclog_e2e_12 = max(averages_speclog['append']['mean'] + append_add, averages_speclog['delivery']['mean'] + delivery_add + 1200 + queueing_delay['1200'])
+        scalog_e2e_12 = averages_scalog['delivery']['mean'] + delivery_add + 1200 + queueing_delay['1200']
+
+        speclog_e2e_2 = max(averages_speclog['append']['mean'] + append_add, averages_speclog['delivery']['mean'] + delivery_add + 2000 + queueing_delay['2000'])
+        scalog_e2e_2 = averages_scalog['delivery']['mean'] + delivery_add + 2000 + queueing_delay['2000']
+
+        f.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(2*num_shards, round(speclog_e2e_12, 2), round(speclog_e2e_2, 2), round(scalog_e2e_12, 2), round(scalog_e2e_2, 2), round(averages_speclog['tput']['mean'], 2), round(averages_scalog['tput']['mean'], 2)))
+
+
 gnuplot_lat = rf"""
 #! /bin/bash
 #run this script to generate the lat vs thrpt graphs for c and w
@@ -327,19 +486,57 @@ EOF
 ) | gnuplot -persist
 """
 
+
+gnuplot_lat_tput = rf"""
+(cat <<EOF
+	set terminal postscript eps enhanced color size 3, 2.1 font "Times-new-roman,19"
+	set output "lat_tput_em.eps"
+	set xlabel "Throughput (KOps/s)" font "Times-new-roman,21" offset 0,0.5,0
+	set ylabel "E2E Latency (ms)" font "Times-new-roman,21" offset .5,-0.2,0
+	set tmargin 2.7
+	set lmargin 5.5
+	set encoding utf8
+	set rmargin 2
+	set bmargin 3
+	#set logscale x
+	set xtics 50
+	set yrange [0:]
+    set xrange [0:]
+	set ytics 1
+	#set xrange[:100]
+	#set y2tics nomirror
+	#set ytics nomirror
+	#set y2range[1:]
+	#set ytics 0,200,800 scale 0.4
+	#set xtics (1,3,5,7,10) scale 0.4
+    set key outside top center font "Times-new-roman,19" samplen 3 maxrows 2 spacing 1 width -4
+	set style function linespoints
+    plot "lat_tput_data_em" using (\$7/(1000)):(\$4/1000) title "Scalog (1.2ms)" with linespoints lc rgb 'coral' dashtype 3 lw 5 pt 4 ps 1.3,\
+     "lat_tput_data_em" using (\$6/(1000)):(\$2/1000) title 'Belfast (1.2ms)' with linespoints lc rgb '#009988'  dashtype 1 lw 5 pt 3 ps 1.3,\
+     "lat_tput_data_em" using (\$7/(1000)):(\$5/1000) title "Scalog (2ms)" with linespoints lc rgb 'coral' dashtype 5 lw 5 pt 4 ps 1.3,\
+     "lat_tput_data_em" using (\$6/(1000)):(\$3/1000) title 'Belfast (2ms)' with linespoints lc rgb '#009988'  dashtype 2 lw 5 pt 3 ps 1.3
+
+
+EOF
+) | gnuplot -persist
+"""
+
 subprocess.run(['bash'], input=gnuplot_lat, text=True)
 subprocess.run(['bash'], input=gnuplot_tput, text=True)
 subprocess.run(['bash'], input=gnuplot_cdf(1), text=True)
 subprocess.run(['bash'], input=gnuplot_cdf(2), text=True)
 subprocess.run(['bash'], input=gnuplot_cdf(3), text=True)
+subprocess.run(['bash'], input=gnuplot_lat_tput, text=True)
+subprocess.run(['bash'], input="epstopdf lat_tput_em.eps", text=True)
 subprocess.run(['bash'], input="epstopdf scalee2e.eps", text=True)
 subprocess.run(['bash'], input="epstopdf scaletput.eps", text=True)
 subprocess.run(['bash'], input=f"epstopdf scalecdf_{1}.eps", text=True)
 subprocess.run(['bash'], input=f"epstopdf scalecdf_{2}.eps", text=True)
 subprocess.run(['bash'], input=f"epstopdf scalecdf_{3}.eps", text=True)
-subprocess.run(['bash'], input="rm scalee2e.eps scaletput.eps scalecdf*.eps data lat_data cdfdata*", text=True)
+subprocess.run(['bash'], input="rm scalee2e.eps scaletput.eps scalecdf*.eps data lat_tput_data_em lat_tput_em.eps lat_data cdfdata*", text=True)
 subprocess.run(['bash'], input="mv scaletput.pdf 14a.pdf", text=True)
 subprocess.run(['bash'], input="mv scalee2e.pdf 14b.pdf", text=True)
 subprocess.run(['bash'], input=f"mv scalecdf_{1}.pdf 14c-sample{1}.pdf", text=True)
 subprocess.run(['bash'], input=f"mv scalecdf_{2}.pdf 14c-sample{2}.pdf", text=True)
 subprocess.run(['bash'], input=f"mv scalecdf_{3}.pdf 14c-sample{3}.pdf", text=True)
+subprocess.run(['bash'], input="mv lat_tput_em.pdf 14d.pdf", text=True)
