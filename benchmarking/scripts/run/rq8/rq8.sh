@@ -5,7 +5,7 @@ source ../../common.sh
 pushd $benchmark_dir/scripts
 
 # parameters
-runtime_secs=120
+runtime_secs=60
 computation_time=(1200)
 num_shards=(1 2 3 4 5)
 num_iter=3
