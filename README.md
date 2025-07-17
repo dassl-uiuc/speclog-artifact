@@ -1,6 +1,6 @@
 # SpecLog
 
-This repository is the artifact for the OSDI'25 paper titled 
+This repository is the artifact for the [OSDI'25 paper](https://www.usenix.org/conference/osdi25/presentation/bhat) titled 
 ```
 Low End-to-End Latency atop a Speculative Shared Log with Fix-Ante Ordering
 Shreesha G. Bhat, Tony Hong, Xuhao Luo, Jiyu Hu, Aishwarya Ganesan, Ramnatthan Alagappan
